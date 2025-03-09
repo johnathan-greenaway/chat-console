@@ -1,0 +1,384 @@
+from typing import List, Dict, Any, Optional, Callable, Awaitable
+import time
+from datetime import datetime
+import re
+
+from rich.markdown import Markdown
+from rich.syntax import Syntax
+from rich.text import Text
+
+from textual.app import ComposeResult
+from textual.containers import Container, ScrollableContainer, Vertical
+from textual.reactive import reactive
+from textual.widgets import Button, Input, Label, Static
+from textual.widget import Widget
+from textual.message import Message
+ 
+from ..models import Message, Conversation
+from ..api.base import BaseModelClient
+from ..config import CONFIG
+
+class MessageDisplay(Static):
+    """Widget to display a single message"""
+    
+    DEFAULT_CSS = """
+    MessageDisplay {
+        width: 100%;
+        height: auto;
+        margin: 1 0;
+        overflow: auto;
+    }
+    
+    MessageDisplay.user-message {
+        background: $primary-darken-2;
+        border-right: wide $primary;
+        margin-right: 4;
+    }
+    
+    MessageDisplay.assistant-message {
+        background: $surface;
+        border-left: wide $secondary;
+        margin-left: 4;
+    }
+    
+    MessageDisplay.system-message {
+        background: $surface-darken-1;
+        border: dashed $primary-background;
+        margin: 1 4;
+    }
+    
+    .message {
+        width: 100%;
+        padding: 1;
+    }
+    
+    .message-content {
+        width: 100%;
+        text-align: left;
+    }
+    """
+    
+    def __init__(
+        self, 
+        message: Message,
+        highlight_code: bool = True,
+        name: Optional[str] = None
+    ):
+        super().__init__(name=name)
+        self.message = message
+        self.highlight_code = highlight_code
+        
+    def compose(self) -> ComposeResult:
+        """Set up the message display"""
+        # Add message type class to the MessageDisplay itself
+        if self.message.role == "user":
+            self.add_class("user-message")
+        elif self.message.role == "assistant":
+            self.add_class("assistant-message")
+        elif self.message.role == "system":
+            self.add_class("system-message")
+            
+        # Create message content
+        with Container(classes="message"):
+            yield Static(self._format_content(self.message.content), classes="message-content")
+        
+    def _format_content(self, content: str) -> Any:
+        """Format message content with markdown and code highlighting"""
+        if not self.highlight_code:
+            return Markdown(content)
+            
+        # Extract code blocks and replace with placeholders
+        code_blocks = []
+        code_pattern = r"```(\w*)\n(.*?)\n```"
+        
+        def code_replace(match):
+            lang = match.group(1) or "text"
+            code = match.group(2)
+            placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
+            code_blocks.append((lang, code))
+            return placeholder
+            
+        content_with_placeholders = re.sub(
+            code_pattern, 
+            code_replace, 
+            content, 
+            flags=re.DOTALL
+        )
+        
+        # Convert the rest to markdown
+        content_md = Markdown(content_with_placeholders)
+        
+        # If no code blocks, return the markdown directly
+        if not code_blocks:
+            return content_md
+            
+        # Otherwise, create a new Text object and replace the placeholders
+        result = Text.from_markup(str(content_md))
+        
+        for i, (lang, code) in enumerate(code_blocks):
+            placeholder = f"__CODE_BLOCK_{i}__"
+            syntax = Syntax(
+                code, 
+                lang, 
+                theme="monokai", 
+                line_numbers=True,
+                word_wrap=True,
+                indent_guides=True
+            )
+            try:
+                placeholder_idx = str(result).find(placeholder)
+                if placeholder_idx != -1:
+                    result.replace_range(
+                        placeholder_idx, 
+                        placeholder_idx + len(placeholder), 
+                        syntax
+                    )
+            except Exception:
+                # If replacement fails, just append the syntax highlighted code
+                result.append(syntax)
+                
+        return result
+
+class InputWithFocus(Input):
+    """Enhanced Input that better handles focus and maintains cursor position"""
+    
+    def on_key(self, event) -> None:
+        """Custom key handling for input"""
+        # Let control keys pass through
+        if event.is_control:
+            return super().on_key(event)
+            
+        # Handle Enter key
+        if event.key == "enter":
+            self.post_message(self.Submitted(self))
+            return
+            
+        # Normal input handling for other keys
+        super().on_key(event)
+
+class ChatInterface(Container):
+    """Main chat interface container"""
+    
+    DEFAULT_CSS = """
+    ChatInterface {
+        width: 100%;
+        height: 100%;
+        background: $surface;
+    }
+    
+    #messages-container {
+        width: 100%;
+        height: 1fr;
+        min-height: 10;
+        border-bottom: solid $primary-darken-2;
+        overflow: auto;
+        padding: 0 1;
+    }
+    
+    #input-area {
+        width: 100%;
+        height: auto;
+        min-height: 4;
+        max-height: 10;
+        padding: 1;
+    }
+    
+    #message-input {
+        width: 1fr;
+        min-height: 3;
+        height: auto;
+        margin-right: 1;
+        border: solid $primary-darken-2;
+    }
+    
+    #message-input:focus {
+        border: tall $primary;
+    }
+    
+    #send-button {
+        width: auto;
+        min-width: 10;
+        height: 3;
+    }
+    
+    #loading-indicator {
+        width: 100%;
+        height: 1;
+        background: $primary-darken-1;
+        color: $text;
+        display: none;
+        padding: 0 1;
+    }
+    """
+    
+    class MessageSent(Message):
+        """Sent when a message is sent"""
+        def __init__(self, content: str):
+            self.content = content
+            super().__init__()
+            
+    class StopGeneration(Message):
+        """Sent when generation should be stopped"""
+        
+    conversation = reactive(None)
+    is_loading = reactive(False)
+    
+    def __init__(
+        self,
+        conversation: Optional[Conversation] = None, 
+        name: Optional[str] = None,
+        id: Optional[str] = None
+    ):
+        super().__init__(name=name, id=id)
+        self.conversation = conversation
+        self.messages: List[Message] = []
+        if conversation and conversation.messages:
+            self.messages = conversation.messages
+            
+    def compose(self) -> ComposeResult:
+        """Compose the chat interface"""
+        # Messages area
+        with ScrollableContainer(id="messages-container"):
+            for message in self.messages:
+                yield MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
+        
+        # Input area with loading indicator and controls
+        with Container(id="input-area"):
+            yield Container(
+                Label("Generating response...", id="loading-text"),
+                id="loading-indicator"
+            )
+            yield Container(
+                InputWithFocus(placeholder="Type your message here...", id="message-input"),
+                Button("Send", id="send-button", variant="primary"),
+                id="controls"
+            )
+                
+    def on_mount(self) -> None:
+        """Initialize on mount"""
+        # Scroll to bottom initially
+        self.scroll_to_bottom()
+        
+    def _request_focus(self) -> None:
+        """Request focus for the input field"""
+        try:
+            input_field = self.query_one("#message-input")
+            if input_field and not input_field.has_focus:
+                # Only focus if not already focused and no other widget has focus
+                if not self.app.focused or self.app.focused.id == "message-input":
+                    self.app.set_focus(input_field)
+        except Exception:
+            pass
+                
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses"""
+        button_id = event.button.id
+        
+        if button_id == "send-button":
+            self.send_message()
+            
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle input submission"""
+        if event.input.id == "message-input":
+            self.send_message()
+            
+    def add_message(self, role: str, content: str) -> None:
+        """Add a message to the chat"""
+        message = Message(role=role, content=content)
+        self.messages.append(message)
+        
+        # Update without using batch_update which might be causing issues
+        messages_container = self.query_one("#messages-container")
+        messages_container.mount(
+            MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
+        )
+            
+        self.scroll_to_bottom()
+        
+    def send_message(self) -> None:
+        """Send a message"""
+        input_widget = self.query_one("#message-input")
+        content = input_widget.value.strip()
+        
+        if not content:
+            return
+            
+        # Clear input
+        input_widget.value = ""
+        
+        # Add user message to chat
+        self.add_message("user", content)
+        
+        # Emit message sent event
+        self.post_message(self.MessageSent(content))
+        
+        # Re-focus the input after sending if it was focused before
+        if input_widget.has_focus:
+            input_widget.focus()
+        
+    def start_loading(self) -> None:
+        """Show loading indicator"""
+        self.is_loading = True
+        loading = self.query_one("#loading-indicator")
+        loading.display = True
+        
+    def stop_loading(self) -> None:
+        """Hide loading indicator"""
+        self.is_loading = False
+        loading = self.query_one("#loading-indicator")
+        loading.display = False
+        
+    def clear_messages(self) -> None:
+        """Clear all messages"""
+        self.messages = []
+        messages_container = self.query_one("#messages-container")
+        messages_container.remove_children()
+        
+    def set_conversation(self, conversation: Conversation) -> None:
+        """Set the current conversation"""
+        self.conversation = conversation
+        self.messages = conversation.messages if conversation else []
+        
+        # Update UI
+        messages_container = self.query_one("#messages-container")
+        messages_container.remove_children()
+        
+        if self.messages:
+            # Mount messages directly without batch_update
+            for message in self.messages:
+                messages_container.mount(
+                    MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
+                )
+                    
+        self.scroll_to_bottom()
+        
+        # Re-focus the input field after changing conversation
+        self.query_one("#message-input").focus()
+        
+    def on_resize(self, event) -> None:
+        """Handle terminal resize events"""
+        try:
+            # Re-focus the input if it lost focus during resize
+            self.query_one("#message-input").focus()
+            
+            # Scroll to bottom to ensure the latest messages are visible
+            self.scroll_to_bottom()
+        except Exception:
+            # Ignore errors during resize handling
+            pass
+            
+    def scroll_to_bottom(self) -> None:
+        """Scroll to the bottom of the messages container"""
+        try:
+            messages_container = self.query_one("#messages-container")
+            messages_container.scroll_end(animate=False)
+        except Exception:
+            # Container might not be available yet or scroll_end might not work
+            pass
+        
+    def watch_is_loading(self, is_loading: bool) -> None:
+        """Watch the is_loading property"""
+        if is_loading:
+            self.start_loading()
+        else:
+            self.stop_loading()
