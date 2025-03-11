@@ -57,86 +57,57 @@ def format_code_blocks(text: str) -> str:
     return re.sub(pattern, code_replace, text, flags=re.DOTALL)
 
 def extract_code_blocks(text: str) -> List[Dict[str, str]]:
-    """Extract code blocks from a string"""
+    """Extract code blocks from text content"""
+    blocks = []
     pattern = r"```(\w*)\n(.*?)\n```"
-    matches = re.findall(pattern, text, re.DOTALL)
+    matches = re.finditer(pattern, text, re.DOTALL)
     
-    result = []
-    for lang, code in matches:
-        result.append({
-            "language": lang or "text",
-            "code": code
-        })
-        
-    return result
-
-def wrap_text(text: str, width: int = 80) -> str:
-    """Wrap text to the specified width"""
-    return '\n'.join(textwrap.wrap(text, width=width))
-
-def render_markdown(markdown_str: str) -> Text:
-    """Render a markdown string to a Rich Text object"""
-    return Markdown(markdown_str)
-
-def render_code(code: str, language: str = "text") -> Syntax:
-    """Render code with syntax highlighting"""
-    return Syntax(code, language, theme="monokai", line_numbers=True)
-
-def render_message(message: Message, highlight_code: bool = True) -> Any:
-    """Render a message to a Rich renderable"""
-    if not highlight_code:
-        return Markdown(message.content)
-        
-    # Extract code blocks and replace with placeholders
-    code_blocks = []
-    code_pattern = r"```(\w*)\n(.*?)\n```"
-    
-    def code_replace(match):
+    for match in matches:
         lang = match.group(1) or "text"
-        code = match.group(2)
-        placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
-        code_blocks.append((lang, code))
-        return placeholder
-        
-    content_with_placeholders = re.sub(
-        code_pattern, 
-        code_replace, 
-        message.content, 
-        flags=re.DOTALL
-    )
+        code = match.group(2).strip()
+        blocks.append({
+            "language": lang,
+            "code": code,
+            "start": match.start(),
+            "end": match.end()
+        })
     
-    # Convert the rest to markdown
-    content_md = Markdown(content_with_placeholders)
+    return blocks
+
+def format_text(text: str, highlight_code: bool = True) -> Text:
+    """Format text with optional code highlighting"""
+    result = Text()
     
-    # If no code blocks, return the markdown directly
-    if not code_blocks:
-        return content_md
-        
-    # Otherwise, create a new Text object and replace the placeholders
-    result = Text.from_markup(str(content_md))
+    if not highlight_code:
+        return Text(text)
     
-    for i, (lang, code) in enumerate(code_blocks):
-        placeholder = f"__CODE_BLOCK_{i}__"
-        syntax = Syntax(
-            code, 
-            lang, 
-            theme="monokai", 
-            line_numbers=True,
-            word_wrap=True,
-            indent_guides=True
-        )
-        try:
-            placeholder_idx = str(result).find(placeholder)
-            if placeholder_idx != -1:
-                result.replace_range(
-                    placeholder_idx, 
-                    placeholder_idx + len(placeholder), 
-                    syntax
+    # Split by code blocks
+    parts = re.split(r'(```\w*\n.*?\n```)', text, flags=re.DOTALL)
+    
+    for part in parts:
+        if part.startswith('```'):
+            # Handle code block
+            match = re.match(r'```(\w*)\n(.*?)\n```', part, re.DOTALL)
+            if match:
+                lang = match.group(1) or "text"
+                code = match.group(2).strip()
+                syntax = Syntax(
+                    code,
+                    lang,
+                    theme="monokai",
+                    line_numbers=True,
+                    word_wrap=True,
+                    indent_guides=True
                 )
-        except Exception:
-            # If replacement fails, just append the syntax highlighted code
-            result.append(syntax)
-            
+                result.append("\n")
+                result.append(syntax)
+                result.append("\n")
+        else:
+            # Handle regular text
+            if part.strip():
+                result.append(Text(part.strip()))
+                result.append("\n")
+    
     return result
 
 def create_new_conversation(db: ChatDatabase, model: str, style: str = "default") -> Conversation:

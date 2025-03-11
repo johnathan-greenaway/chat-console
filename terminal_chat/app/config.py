@@ -15,6 +15,7 @@ CONFIG_PATH = APP_DIR / "config.json"
 # API Keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # Default configuration
 DEFAULT_CONFIG = {
@@ -49,6 +50,26 @@ DEFAULT_CONFIG = {
             "provider": "anthropic",
             "max_tokens": 4096,
             "display_name": "Claude 3.7 Sonnet"
+        },
+        "llama2": {
+            "provider": "ollama",
+            "max_tokens": 4096,
+            "display_name": "Llama 2"
+        },
+        "mistral": {
+            "provider": "ollama",
+            "max_tokens": 4096,
+            "display_name": "Mistral"
+        },
+        "codellama": {
+            "provider": "ollama",
+            "max_tokens": 4096,
+            "display_name": "Code Llama"
+        },
+        "gemma": {
+            "provider": "ollama",
+            "max_tokens": 4096,
+            "display_name": "Gemma"
         }
     },
     "theme": "dark",

@@ -2,11 +2,7 @@ from typing import List, Dict, Any, Optional, Callable, Awaitable
 import time
 from datetime import datetime
 import re
-
-from rich.markdown import Markdown
-from rich.syntax import Syntax
-from rich.text import Text
-
+    
 from textual.app import ComposeResult
 from textual.containers import Container, ScrollableContainer, Vertical
 from textual.reactive import reactive
@@ -67,6 +63,7 @@ class MessageDisplay(Static):
         super().__init__(name=name)
         self.message = message
         self.highlight_code = highlight_code
+        self.content_widget = None
         
     def compose(self) -> ComposeResult:
         """Set up the message display"""
@@ -80,64 +77,21 @@ class MessageDisplay(Static):
             
         # Create message content
         with Container(classes="message"):
-            yield Static(self._format_content(self.message.content), classes="message-content")
-        
-    def _format_content(self, content: str) -> Any:
-        """Format message content with markdown and code highlighting"""
-        if not self.highlight_code:
-            return Markdown(content)
-            
-        # Extract code blocks and replace with placeholders
-        code_blocks = []
-        code_pattern = r"```(\w*)\n(.*?)\n```"
-        
-        def code_replace(match):
-            lang = match.group(1) or "text"
-            code = match.group(2)
-            placeholder = f"__CODE_BLOCK_{len(code_blocks)}__"
-            code_blocks.append((lang, code))
-            return placeholder
-            
-        content_with_placeholders = re.sub(
-            code_pattern, 
-            code_replace, 
-            content, 
-            flags=re.DOTALL
-        )
-        
-        # Convert the rest to markdown
-        content_md = Markdown(content_with_placeholders)
-        
-        # If no code blocks, return the markdown directly
-        if not code_blocks:
-            return content_md
-            
-        # Otherwise, create a new Text object and replace the placeholders
-        result = Text.from_markup(str(content_md))
-        
-        for i, (lang, code) in enumerate(code_blocks):
-            placeholder = f"__CODE_BLOCK_{i}__"
-            syntax = Syntax(
-                code, 
-                lang, 
-                theme="monokai", 
-                line_numbers=True,
-                word_wrap=True,
-                indent_guides=True
+            self.content_widget = Static(
+                self._format_content(self.message.content), 
+                classes="message-content"
             )
-            try:
-                placeholder_idx = str(result).find(placeholder)
-                if placeholder_idx != -1:
-                    result.replace_range(
-                        placeholder_idx, 
-                        placeholder_idx + len(placeholder), 
-                        syntax
-                    )
-            except Exception:
-                # If replacement fails, just append the syntax highlighted code
-                result.append(syntax)
-                
-        return result
+            yield self.content_widget
+            
+    def update_content(self, content: str) -> None:
+        """Update the message content"""
+        self.message.content = content
+        if self.content_widget:
+            self.content_widget.update(self._format_content(content))
+        
+    def _format_content(self, content: str) -> str:
+        """Format message content"""
+        return content
 
 class InputWithFocus(Input):
     """Enhanced Input that better handles focus and maintains cursor position"""
@@ -232,6 +186,7 @@ class ChatInterface(Container):
         super().__init__(name=name, id=id)
         self.conversation = conversation
         self.messages: List[Message] = []
+        self.current_message_display = None
         if conversation and conversation.messages:
             self.messages = conversation.messages
             
@@ -282,16 +237,21 @@ class ChatInterface(Container):
         if event.input.id == "message-input":
             self.send_message()
             
-    def add_message(self, role: str, content: str) -> None:
-        """Add a message to the chat"""
-        message = Message(role=role, content=content)
-        self.messages.append(message)
-        
-        # Update without using batch_update which might be causing issues
-        messages_container = self.query_one("#messages-container")
-        messages_container.mount(
-            MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
-        )
+    def add_message(self, role: str, content: str, update_last: bool = False) -> None:
+        """Add or update a message in the chat"""
+        if update_last and self.current_message_display and role == "assistant":
+            # Update existing message
+            self.current_message_display.update_content(content)
+        else:
+            # Add new message
+            message = Message(role=role, content=content)
+            self.messages.append(message)
+            messages_container = self.query_one("#messages-container")
+            self.current_message_display = MessageDisplay(
+                message, 
+                highlight_code=CONFIG["highlight_code"]
+            )
+            messages_container.mount(self.current_message_display)
             
         self.scroll_to_bottom()
         
@@ -308,6 +268,9 @@ class ChatInterface(Container):
         
         # Add user message to chat
         self.add_message("user", content)
+        
+        # Reset current message display for next assistant response
+        self.current_message_display = None
         
         # Emit message sent event
         self.post_message(self.MessageSent(content))
@@ -331,6 +294,7 @@ class ChatInterface(Container):
     def clear_messages(self) -> None:
         """Clear all messages"""
         self.messages = []
+        self.current_message_display = None
         messages_container = self.query_one("#messages-container")
         messages_container.remove_children()
         
@@ -338,6 +302,7 @@ class ChatInterface(Container):
         """Set the current conversation"""
         self.conversation = conversation
         self.messages = conversation.messages if conversation else []
+        self.current_message_display = None
         
         # Update UI
         messages_container = self.query_one("#messages-container")

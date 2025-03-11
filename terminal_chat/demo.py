@@ -11,7 +11,7 @@ import sqlite3
 
 from app.config import DB_PATH, APP_DIR
 from app.database import init_db
-from main import main
+from terminal_chat.legacy import main
 
 def setup_demo():
     """Set up a demo environment with sample conversations"""
