@@ -8,16 +8,16 @@ from textual.css.query import NoMatches
 # Define color palette
 COLORS = {
     "dark": {
-        "background": "#1E1E1E",
-        "foreground": "#FFFFFF",
-        "user_msg": "#9CDCFE",
-        "assistant_msg": "#DCDCAA",
-        "system_msg": "#6A9955",
-        "highlight": "#569CD6",
-        "selection": "#264F78",
-        "border": "#444444",
-        "error": "#F14C4C",
-        "success": "#6A9955",
+        "background": "#0C0C0C",
+        "foreground": "#33FF33",
+        "user_msg": "#00FFFF",
+        "assistant_msg": "#33FF33",
+        "system_msg": "#FF8C00",
+        "highlight": "#FFD700",
+        "selection": "#1A1A1A",
+        "border": "#33FF33",
+        "error": "#FF0000",
+        "success": "#33FF33",
     },
     "light": {
         "background": "#F0F0F0",
@@ -65,12 +65,14 @@ Screen {
 /* Chat message styles */
 .message {
     width: 100%;
-    padding: 1;
+    padding: 0 1;
+    margin: 0;
 }
 
 .message-content {
     width: 100%;
     text-align: left;
+    padding: 0;
 }
 
 /* Code blocks */
@@ -87,16 +89,16 @@ Screen {
 #input-container {
     height: auto;
     background: $surface;
-    border-top: solid $primary;
-    padding: 1;
+    border-top: solid $primary-darken-2;
+    padding: 0;
 }
 
 #message-input {
     background: $surface-darken-1;
     color: $text;
-    border: tall $primary-darken-2;
-    min-height: 3;
-    padding: 1;
+    border: solid $primary-darken-2;
+    min-height: 2;
+    padding: 0 1;
 }
 
 #message-input:focus {
@@ -118,17 +120,17 @@ Screen {
 
 /* Sidebar */
 #sidebar {
-    width: 30%;
-    min-width: 20;
+    width: 25%;
+    min-width: 18;
     background: $surface-darken-1;
-    border-right: solid $primary-darken-2;
+    border-right: solid $primary-darken-2 1;
 }
 
 /* Chat list */
 .chat-item {
-    padding: 1;
-    height: 3;
-    border-bottom: solid $primary-darken-3;
+    padding: 0 1;
+    height: 2;
+    border-bottom: solid $primary-darken-3 1;
 }
 
 .chat-item:hover {
@@ -159,9 +161,9 @@ Screen {
 /* Search input */
 #search-input {
     width: 100%;
-    border: solid $primary-darken-2;
-    margin: 1 1 0 1;
-    height: 3;
+    border: solid $primary-darken-2 1;
+    margin: 0 1;
+    height: 2;
 }
 
 #search-input:focus {
@@ -171,39 +173,40 @@ Screen {
 /* Model selector */
 #model-selector {
     width: 100%;
-    height: 3;
+    height: 2;
     margin: 0 1;
     background: $surface-darken-1;
-    border: solid $primary-darken-2;
+    border: solid $primary-darken-2 1;
 }
 
 /* Style selector */
 #style-selector {
     width: 100%;
-    height: 3;
-    margin: 0 1 1 1;
+    height: 2;
+    margin: 0 1;
     background: $surface-darken-1;
-    border: solid $primary-darken-2;
+    border: solid $primary-darken-2 1;
 }
 
 /* Header */
 #app-header {
     width: 100%;
-    height: 3;
-    background: $primary-darken-1;
+    height: 2;
+    background: $surface-darken-2;
     color: $text;
     content-align: center middle;
     text-align: center;
+    border-bottom: solid $primary-darken-2 1;
 }
 
 /* Loading indicator */
 #loading-indicator {
     background: $surface-darken-1;
     color: $text;
-    padding: 1;
+    padding: 0 1;
     height: auto;
     width: 100%;
-    border-top: solid $primary-darken-2;
+    border-top: solid $primary-darken-2 1;
     display: none;
 }
 
@@ -250,10 +253,11 @@ Screen {
 }
 
 .button {
-    background: $primary;
+    background: $primary-darken-1;
     color: $text;
-    min-width: 8;
+    min-width: 6;
     margin-left: 1;
+    border: solid $primary 1;
 }
 
 .button.cancel {

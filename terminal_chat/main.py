@@ -32,15 +32,17 @@ class SettingsScreen(Screen):
         width: 60;
         height: auto;
         background: $surface;
-        border: round $primary;
+        border: solid $primary;
         padding: 1;
     }
     
     #title {
         width: 100%;
+        height: 2;
         content-align: center middle;
         text-align: center;
-        padding-bottom: 1;
+        background: $surface-darken-2;
+        border-bottom: solid $primary-darken-2;
     }
 
     #button-row {
@@ -52,8 +54,13 @@ class SettingsScreen(Screen):
 
     #button-row Button {
         width: auto;
-        min-width: 10;
+        min-width: 8;
+        height: 2;
         margin-left: 1;
+        border: solid $primary;
+        color: $text;
+        background: $primary-darken-1;
+        content-align: center middle;
     }
     """
 
@@ -183,8 +190,9 @@ class HistoryScreen(Screen):
 class SimpleChatApp(App):
     """Simplified Terminal Chat application."""
     
-    TITLE = "Simple Terminal Chat"
-    SUB_TITLE = "AI-powered chat"
+    TITLE = "Terminal Chat"
+    SUB_TITLE = "AI Chat"
+    DARK = True
     
     CSS = """
     #main-content {
@@ -195,11 +203,12 @@ class SimpleChatApp(App):
 
     #conversation-title {
         width: 100%;
-        height: 3;
-        background: $primary-darken-1;
+        height: 2;
+        background: $surface-darken-2;
         color: $text;
         content-align: center middle;
         text-align: center;
+        border-bottom: solid $primary-darken-2;
     }
 
     #messages-container {
@@ -234,20 +243,24 @@ class SimpleChatApp(App):
 
     #message-input {
         width: 1fr;
-        min-height: 3;
+        min-height: 2;
         height: auto;
         margin-right: 1;
         border: solid $primary-darken-2;
     }
 
     #message-input:focus {
-        border: tall $primary;
+        border: solid $primary;
     }
 
     #send-button {
         width: auto;
-        min-width: 10;
-        height: 3;
+        min-width: 8;
+        height: 2;
+        color: $text;
+        background: $primary;
+        border: solid $primary;
+        content-align: center middle;
     }
 
     #button-row {
@@ -258,17 +271,23 @@ class SimpleChatApp(App):
 
     #new-chat-button {
         width: auto;
-        min-width: 10;
-        height: 3;
+        min-width: 8;
+        height: 2;
+        color: $text;
         background: $success;
+        border: solid $success-lighten-1;
+        content-align: center middle;
     }
 
     #view-history-button, #settings-button {
         width: auto;
-        min-width: 10;
-        height: 3;
-        background: $primary;
+        min-width: 8;
+        height: 2;
+        color: $text;
+        background: $primary-darken-1;
+        border: solid $primary;
         margin-right: 1;
+        content-align: center middle;
     }
     """
     

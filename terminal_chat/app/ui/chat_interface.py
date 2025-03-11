@@ -84,8 +84,9 @@ class MessageDisplay(RichLog):
         self.refresh(layout=True)
         
     def _format_content(self, content: str) -> str:
-        """Format message content"""
-        return content
+        """Format message content with timestamp"""
+        timestamp = datetime.now().strftime("%H:%M")
+        return f"[dim]{timestamp}[/dim] {content}"
 
 class InputWithFocus(Input):
     """Enhanced Input that better handles focus and maintains cursor position"""
@@ -133,20 +134,20 @@ class ChatInterface(Container):
     
     #message-input {
         width: 1fr;
-        min-height: 3;
+        min-height: 2;
         height: auto;
         margin-right: 1;
         border: solid $primary-darken-2;
     }
     
     #message-input:focus {
-        border: tall $primary;
+        border: solid $primary;
     }
     
     #send-button {
         width: auto;
-        min-width: 10;
-        height: 3;
+        min-width: 8;
+        height: 2;
     }
     
     #loading-indicator {
