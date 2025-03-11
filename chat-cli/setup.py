@@ -14,7 +14,7 @@ with open(os.path.join("app", "__init__.py"), "r", encoding="utf-8") as f:
 
 setup(
     name="chat-cli",
-    version=version,
+    version="0.1.1",
     author="Your Name",
     author_email="your.email@example.com",
     description="A command-line interface for chatting with LLMs",
