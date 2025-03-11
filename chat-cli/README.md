@@ -1,6 +1,6 @@
-# Terminal Chat
+# Chat CLI
 
-A comprehensive terminal-based chat application that provides a ChatGPT/Claude experience right in your terminal. This application allows you to interact with various AI language models using a text-based user interface.
+A comprehensive command-line interface for chatting with various AI language models. This application allows you to interact with different LLM providers through an intuitive terminal-based interface.
 
 ## Features
 
@@ -17,8 +17,8 @@ A comprehensive terminal-based chat application that provides a ChatGPT/Claude e
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/terminal-chat.git
-   cd terminal-chat
+   git clone https://github.com/yourusername/chat-cli.git
+   cd chat-cli
    ```
 
 2. Install the required dependencies:
@@ -38,7 +38,7 @@ A comprehensive terminal-based chat application that provides a ChatGPT/Claude e
 
 Run the application:
 ```
-python main.py
+chat-cli
 ```
 
 ### Keyboard Shortcuts
@@ -52,7 +52,7 @@ python main.py
 
 ### Configuration
 
-The application creates a configuration file at `~/.terminalchat/config.json` on first run. You can edit this file to:
+The application creates a configuration file at `~/.chatcli/config.json` on first run. You can edit this file to:
 
 - Change the default model
 - Modify available models
@@ -62,7 +62,7 @@ The application creates a configuration file at `~/.terminalchat/config.json` on
 
 ## Data Storage
 
-Conversation history is stored in a SQLite database at `~/.terminalchat/chat_history.db`.
+Conversation history is stored in a SQLite database at `~/.chatcli/chat_history.db`.
 
 ## Development
 

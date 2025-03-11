@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Simplified version of Terminal Chat with AI functionality
+Simplified version of Chat CLI with AI functionality
 """
 import os
 import asyncio
+import typer
 from typing import List, Optional, Callable, Awaitable
 from datetime import datetime
 
@@ -186,10 +187,10 @@ class HistoryScreen(Screen):
             self.app.pop_screen()
 
 class SimpleChatApp(App):
-    """Simplified Terminal Chat application."""
+    """Simplified Chat CLI application."""
     
-    TITLE = "Terminal Chat"
-    SUB_TITLE = "AI Chat"
+    TITLE = "Chat CLI"
+    SUB_TITLE = "AI Chat Interface"
     DARK = True
     
     CSS = """
@@ -299,12 +300,13 @@ class SimpleChatApp(App):
     current_conversation = reactive(None)
     is_generating = reactive(False)
     
-    def __init__(self):
+    def __init__(self, initial_text: Optional[str] = None):
         super().__init__()
         self.db = ChatDatabase()
         self.messages = []
         self.selected_model = CONFIG["default_model"]
         self.selected_style = CONFIG["default_style"]
+        self.initial_text = initial_text
         
     def compose(self) -> ComposeResult:
         """Create the simplified application layout."""
@@ -363,8 +365,15 @@ class SimpleChatApp(App):
             
         # Create a new conversation
         await self.create_new_conversation()
-        # Focus the input
-        self.query_one("#message-input").focus()
+        
+        # If initial text was provided, send it
+        if self.initial_text:
+            input_widget = self.query_one("#message-input", Input)
+            input_widget.value = self.initial_text
+            await self.action_send_message()
+        else:
+            # Focus the input if no initial text
+            self.query_one("#message-input").focus()
         
     async def create_new_conversation(self) -> None:
         """Create a new chat conversation."""
@@ -481,8 +490,14 @@ class SimpleChatApp(App):
                 })
                 
             # Get appropriate client
-            client = BaseModelClient.get_client_for_model(model)
-            
+            try:
+                client = BaseModelClient.get_client_for_model(model)
+                if client is None:
+                    raise Exception(f"No client available for model: {model}")
+            except Exception as e:
+                self.notify(f"Failed to initialize model client: {str(e)}", severity="error")
+                return
+                
             # Start streaming response
             assistant_message = Message(role="assistant", content="")
             self.messages.append(assistant_message)
@@ -590,6 +605,17 @@ class SimpleChatApp(App):
             
         self.push_screen(HistoryScreen(conversations, handle_selection))
 
-if __name__ == "__main__":
-    app = SimpleChatApp()
+def main(initial_text: Optional[str] = typer.Argument(None, help="Initial text to start the chat with")):
+    """Entry point for the chat-cli application"""
+    # When no argument is provided, typer passes the ArgumentInfo object
+    # When an argument is provided, typer passes the actual value
+    if isinstance(initial_text, typer.models.ArgumentInfo):
+        initial_value = None  # No argument provided
+    else:
+        initial_value = str(initial_text) if initial_text is not None else None
+        
+    app = SimpleChatApp(initial_text=initial_value)
     app.run()
+
+if __name__ == "__main__":
+    typer.run(main)
