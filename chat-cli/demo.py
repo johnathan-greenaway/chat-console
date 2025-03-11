@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Demo script to run Terminal Chat with sample data.
+Demo script to run Chat CLI with sample data.
 This creates an example conversation for demonstration purposes.
 """
 
@@ -11,7 +11,7 @@ import sqlite3
 
 from app.config import DB_PATH, APP_DIR
 from app.database import init_db
-from terminal_chat.legacy import main
+from app.main import main
 
 def setup_demo():
     """Set up a demo environment with sample conversations"""
@@ -37,14 +37,14 @@ def setup_demo():
         # Insert a conversation
         cursor.execute(
             "INSERT INTO conversations (title, model, created_at, updated_at, style) VALUES (?, ?, ?, ?, ?)",
-            ("Introduction to Terminal Chat", "gpt-3.5-turbo", now, now, "default")
+            ("Introduction to Chat CLI", "gpt-3.5-turbo", now, now, "default")
         )
         conversation_id = cursor.lastrowid
         
         # Insert messages
         messages = [
-            ("user", "Hello! Can you explain what Terminal Chat is?", now),
-            ("assistant", "# Welcome to Terminal Chat!\n\nTerminal Chat is a command-line application that allows you to interact with AI language models like GPT-3.5, GPT-4, and Claude directly from your terminal.\n\nSome key features include:\n\n- Multiple AI model support\n- Chat history and search\n- Markdown and code highlighting\n- Customizable response styles\n\nYou can use keyboard shortcuts like:\n- `n` to start a new chat\n- `s` to toggle the sidebar\n- `f` to search conversations\n\nFeel free to ask me anything else about using Terminal Chat!", now)
+            ("user", "Hello! Can you explain what Chat CLI is?", now),
+            ("assistant", "# Welcome to Chat CLI!\n\nChat CLI is a command-line interface that allows you to interact with AI language models like GPT-3.5, GPT-4, and Claude directly from your terminal.\n\nSome key features include:\n\n- Multiple AI model support\n- Chat history and search\n- Markdown and code highlighting\n- Customizable response styles\n\nYou can use keyboard shortcuts like:\n- `n` to start a new chat\n- `s` to toggle the sidebar\n- `f` to search conversations\n\nFeel free to ask me anything else about using Chat CLI!", now)
         ]
         
         for role, content, timestamp in messages:

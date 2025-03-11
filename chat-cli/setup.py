@@ -13,14 +13,14 @@ with open(os.path.join("app", "__init__.py"), "r", encoding="utf-8") as f:
             break
 
 setup(
-    name="terminal-chat",
-    version=version,
-    author="Your Name",
-    author_email="your.email@example.com",
-    description="A terminal-based chat application for LLMs",
+    name="chat-console",
+    version="0.1.2",
+    author="Johnathan Greenaway",
+    author_email="john@fimbriata.dev",
+    description="A command-line interface for chatting with LLMs, storing chats and (future) rag interactions",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/terminal-chat",
+    url="https://github.com/wazacraftrfid/chat-console",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -36,9 +36,10 @@ setup(
         "openai>=0.27.0",
         "python-dotenv>=0.21.0",
     ],
-    entry_points={
-        "console_scripts": [
-            "terminal-chat=main:main",
-        ],
-    },
+entry_points={
+    "console_scripts": [
+        "chat-console=app.main:main",
+        "c-c=app.main:main",  
+    ],
+},
 )

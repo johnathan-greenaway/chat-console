@@ -1,11 +1,11 @@
-import openai
-from typing import List, Dict, Any, Optional, Generator
+from openai import AsyncOpenAI
+from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
 from .base import BaseModelClient
 from ..config import OPENAI_API_KEY
 
 class OpenAIClient(BaseModelClient):
     def __init__(self):
-        self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
     
     def _prepare_messages(self, messages: List[Dict[str, str]], style: Optional[str] = None) -> List[Dict[str, str]]:
         """Prepare messages for OpenAI API"""
@@ -32,7 +32,7 @@ class OpenAIClient(BaseModelClient):
         
         return styles.get(style, "")
     
-    def generate_completion(self, messages: List[Dict[str, str]], 
+    async def generate_completion(self, messages: List[Dict[str, str]], 
                            model: str, 
                            style: Optional[str] = None, 
                            temperature: float = 0.7, 
@@ -40,7 +40,7 @@ class OpenAIClient(BaseModelClient):
         """Generate a text completion using OpenAI"""
         processed_messages = self._prepare_messages(messages, style)
         
-        response = self.client.chat.completions.create(
+        response = await self.client.chat.completions.create(
             model=model,
             messages=processed_messages,
             temperature=temperature,
@@ -49,15 +49,15 @@ class OpenAIClient(BaseModelClient):
         
         return response.choices[0].message.content
     
-    def generate_stream(self, messages: List[Dict[str, str]], 
-                       model: str, 
-                       style: Optional[str] = None,
-                       temperature: float = 0.7, 
-                       max_tokens: Optional[int] = None) -> Generator[str, None, None]:
+    async def generate_stream(self, messages: List[Dict[str, str]], 
+                            model: str, 
+                            style: Optional[str] = None,
+                            temperature: float = 0.7, 
+                            max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming text completion using OpenAI"""
         processed_messages = self._prepare_messages(messages, style)
         
-        stream = self.client.chat.completions.create(
+        stream = await self.client.chat.completions.create(
             model=model,
             messages=processed_messages,
             temperature=temperature,
@@ -65,7 +65,7 @@ class OpenAIClient(BaseModelClient):
             stream=True,
         )
         
-        for chunk in stream:
+        async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
     
