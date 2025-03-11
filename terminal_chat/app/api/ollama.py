@@ -1,5 +1,6 @@
-import requests
-from typing import List, Dict, Any, Optional, Generator
+import aiohttp
+import json
+from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
 from .base import BaseModelClient
 from ..config import CONFIG
 
@@ -41,68 +42,70 @@ class OllamaClient(BaseModelClient):
         
         return styles.get(style, "")
     
-    def generate_completion(self, messages: List[Dict[str, str]], 
-                          model: str, 
-                          style: Optional[str] = None, 
-                          temperature: float = 0.7, 
-                          max_tokens: Optional[int] = None) -> str:
+    async def generate_completion(self, messages: List[Dict[str, str]], 
+                                model: str, 
+                                style: Optional[str] = None, 
+                                temperature: float = 0.7, 
+                                max_tokens: Optional[int] = None) -> str:
         """Generate a text completion using Ollama"""
         prompt = self._prepare_messages(messages, style)
         
-        response = requests.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "temperature": temperature,
-                "stream": False
-            }
-        )
-        response.raise_for_status()
-        
-        return response.json()["response"]
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "temperature": temperature,
+                    "stream": False
+                }
+            ) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return data["response"]
     
-    def generate_stream(self, messages: List[Dict[str, str]], 
-                       model: str, 
-                       style: Optional[str] = None,
-                       temperature: float = 0.7, 
-                       max_tokens: Optional[int] = None) -> Generator[str, None, None]:
+    async def generate_stream(self, messages: List[Dict[str, str]], 
+                            model: str, 
+                            style: Optional[str] = None,
+                            temperature: float = 0.7, 
+                            max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming text completion using Ollama"""
         prompt = self._prepare_messages(messages, style)
         
-        response = requests.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "temperature": temperature,
-                "stream": True
-            },
-            stream=True
-        )
-        response.raise_for_status()
-        
-        for line in response.iter_lines():
-            if line:
-                chunk = line.decode()
-                try:
-                    data = eval(chunk)  # Safe since we control the source (local Ollama)
-                    if "response" in data:
-                        yield data["response"]
-                except:
-                    continue
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "temperature": temperature,
+                    "stream": True
+                }
+            ) as response:
+                response.raise_for_status()
+                async for line in response.content:
+                    if line:
+                        chunk = line.decode().strip()
+                        try:
+                            data = json.loads(chunk)
+                            if "response" in data:
+                                yield data["response"]
+                        except json.JSONDecodeError:
+                            continue
     
-    def get_available_models(self) -> List[Dict[str, Any]]:
+    async def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available Ollama models"""
         try:
-            response = requests.get(f"{self.base_url}/api/tags")
-            response.raise_for_status()
-            models = response.json()["models"]
-            
-            return [
-                {"id": model["name"], "name": model["name"].title()}
-                for model in models
-            ]
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{self.base_url}/api/tags") as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    models = data["models"]
+                    
+                    return [
+                        {"id": model["name"], "name": model["name"].title()}
+                        for model in models
+                    ]
         except:
             # Return some default models if Ollama is not running
             return [

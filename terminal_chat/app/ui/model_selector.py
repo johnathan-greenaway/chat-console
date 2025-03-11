@@ -71,7 +71,7 @@ class ModelSelector(Container):
             # Default to OpenAI for custom models
             self.selected_provider = "openai"
         
-    def compose(self) -> ComposeResult:
+    async def compose(self) -> ComposeResult:
         """Set up the model selector"""
         with Container(id="selector-container"):
             # Provider options including Ollama
@@ -91,8 +91,9 @@ class ModelSelector(Container):
             
             # Model selector and custom input
             is_custom = self.selected_model not in CONFIG["available_models"]
+            model_options = await self._get_model_options(self.selected_provider)
             yield Select(
-                self._get_model_options(self.selected_provider) + [("Custom Model...", "custom")],
+                model_options + [("Custom Model...", "custom")],
                 id="model-select",
                 value="custom" if is_custom else self.selected_model,
                 classes="hide" if is_custom else "",
@@ -105,7 +106,7 @@ class ModelSelector(Container):
                 classes="" if is_custom else "hide"
             )
             
-    def _get_model_options(self, provider: str) -> List[tuple]:
+    async def _get_model_options(self, provider: str) -> List[tuple]:
         """Get model options for a specific provider"""
         options = [
             (model_info["display_name"], model_id)
@@ -118,7 +119,7 @@ class ModelSelector(Container):
             try:
                 from app.api.ollama import OllamaClient
                 ollama = OllamaClient()
-                ollama_models = ollama.get_available_models()
+                ollama_models = await ollama.get_available_models()
                 for model in ollama_models:
                     if model["id"] not in CONFIG["available_models"]:
                         options.append((model["name"], model["id"]))
@@ -128,13 +129,13 @@ class ModelSelector(Container):
         options.append(("Custom Model...", "custom"))
         return options
         
-    def on_select_changed(self, event: Select.Changed) -> None:
+    async def on_select_changed(self, event: Select.Changed) -> None:
         """Handle select changes"""
         if event.select.id == "provider-select":
             self.selected_provider = event.value
             # Update model options
             model_select = self.query_one("#model-select", Select)
-            model_options = self._get_model_options(self.selected_provider)
+            model_options = await self._get_model_options(self.selected_provider)
             model_select.set_options(model_options)
             # Select first model of new provider
             if model_options:

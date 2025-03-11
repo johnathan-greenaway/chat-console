@@ -1,26 +1,27 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
 
 class BaseModelClient(ABC):
     """Base class for AI model clients"""
     
     @abstractmethod
-    def generate_completion(self, messages: List[Dict[str, str]], 
-                           model: str, 
-                           style: Optional[str] = None, 
-                           temperature: float = 0.7, 
-                           max_tokens: Optional[int] = None) -> str:
+    async def generate_completion(self, messages: List[Dict[str, str]], 
+                                model: str, 
+                                style: Optional[str] = None, 
+                                temperature: float = 0.7, 
+                                max_tokens: Optional[int] = None) -> str:
         """Generate a text completion"""
         pass
     
     @abstractmethod
-    def generate_stream(self, messages: List[Dict[str, str]], 
-                       model: str, 
-                       style: Optional[str] = None,
-                       temperature: float = 0.7, 
-                       max_tokens: Optional[int] = None) -> Generator[str, None, None]:
+    @abstractmethod
+    async def generate_stream(self, messages: List[Dict[str, str]], 
+                            model: str, 
+                            style: Optional[str] = None,
+                            temperature: float = 0.7, 
+                            max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming text completion"""
-        pass
+        yield ""  # Placeholder implementation
     
     @abstractmethod
     def get_available_models(self) -> List[Dict[str, Any]]:

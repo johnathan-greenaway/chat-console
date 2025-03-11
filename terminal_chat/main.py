@@ -3,7 +3,8 @@
 Simplified version of Terminal Chat with AI functionality
 """
 import os
-from typing import List, Optional, Callable
+import asyncio
+from typing import List, Optional, Callable, Awaitable
 from datetime import datetime
 
 from textual.app import App, ComposeResult
@@ -56,11 +57,13 @@ class SettingsScreen(Screen):
     }
     """
 
-    def compose(self) -> ComposeResult:
+    async def compose(self) -> ComposeResult:
         with Center():
             with Container(id="settings-container"):
                 yield Static("Settings", id="title")
-                yield ModelSelector(self.app.selected_model)
+                model_selector = ModelSelector(self.app.selected_model)
+                yield model_selector
+                await model_selector.compose()  # Ensure model options are loaded
                 yield StyleSelector(self.app.selected_style)
                 with Horizontal(id="button-row"):
                     yield Button("Cancel", variant="default")
@@ -74,10 +77,14 @@ class SettingsScreen(Screen):
         """Handle cancel action"""
         self.app.pop_screen()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.label == "Done":
-            # Update current conversation with selected model and style
-            if self.app.current_conversation:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses in settings screen."""
+        # Pop screen for both Done and Cancel
+        self.app.pop_screen()
+        
+        # Only update settings if Done was pressed
+        if event.button.label == "Done" and self.app.current_conversation:
+            try:
                 self.app.db.update_conversation(
                     self.app.current_conversation.id,
                     model=self.app.selected_model,
@@ -85,9 +92,8 @@ class SettingsScreen(Screen):
                 )
                 self.app.current_conversation.model = self.app.selected_model
                 self.app.current_conversation.style = self.app.selected_style
-            self.app.pop_screen()
-        elif event.button.label == "Cancel":
-            self.app.pop_screen()
+            except Exception as e:
+                self.app.notify(f"Error updating settings: {str(e)}", severity="error")
 
 class HistoryScreen(Screen):
     """Screen for viewing chat history."""
@@ -135,36 +141,40 @@ class HistoryScreen(Screen):
     }
     """
 
-    def __init__(self, conversations: List[dict], callback: Callable[[int], None]):
+    def __init__(self, conversations: List[dict], callback: Callable[[int], Awaitable[None]]):
         super().__init__()
         self.conversations = conversations
         self.callback = callback
 
-    def compose(self) -> ComposeResult:
+    async def compose(self) -> ComposeResult:
         with Center():
             with Container(id="history-container"):
                 yield Static("Chat History", id="title")
                 
-                # Create list items for conversations
+                # Create and yield the ListView first
                 list_view = ListView()
+                yield list_view
+                
+                # Now mount the items
                 for conv in self.conversations:
                     title = conv["title"]
                     model = conv["model"]
                     if model in CONFIG["available_models"]:
                         model = CONFIG["available_models"][model]["display_name"]
                     item = ListItem(Label(f"{title} ({model})"))
-                    item.id = str(conv["id"])
-                    list_view.append(item)
-                yield list_view
+                    # Prefix numeric IDs with 'conv-' to make them valid identifiers
+                    item.id = f"conv-{conv['id']}"
+                    await list_view.mount(item)
                 
                 with Horizontal(id="button-row"):
                     yield Button("Cancel", variant="primary")
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle conversation selection."""
-        conv_id = int(event.item.id)
+        # Remove 'conv-' prefix to get the numeric ID
+        conv_id = int(event.item.id.replace('conv-', ''))
         self.app.pop_screen()
-        self.callback(conv_id)
+        await self.callback(conv_id)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.label == "Cancel":
@@ -264,7 +274,7 @@ class SimpleChatApp(App):
     
     BINDINGS = [
         Binding("q", "quit", "Quit"),
-        Binding("n", "new_conversation", "New Chat"),
+        Binding("n", "action_new_conversation", "New Chat"),
         Binding("escape", "escape", "Cancel"),
         Binding("ctrl+c", "quit", "Quit"),
     ]
@@ -306,7 +316,7 @@ class SimpleChatApp(App):
         
         yield Footer()
         
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Initialize the application on mount."""
         # Check API keys and services
         api_issues = []
@@ -319,7 +329,7 @@ class SimpleChatApp(App):
         from app.api.ollama import OllamaClient
         try:
             ollama = OllamaClient()
-            models = ollama.get_available_models()
+            models = await ollama.get_available_models()
             if not models:
                 api_issues.append("- No Ollama models found")
         except Exception:
@@ -335,11 +345,11 @@ class SimpleChatApp(App):
             )
             
         # Create a new conversation
-        self.create_new_conversation()
+        await self.create_new_conversation()
         # Focus the input
         self.query_one("#message-input").focus()
         
-    def create_new_conversation(self) -> None:
+    async def create_new_conversation(self) -> None:
         """Create a new chat conversation."""
         # Create new conversation in database using selected model and style
         model = self.selected_model
@@ -363,11 +373,11 @@ class SimpleChatApp(App):
         
         # Clear messages and update UI
         self.messages = []
-        self.update_messages_ui()
+        await self.update_messages_ui()
         
-    def action_new_conversation(self) -> None:
+    async def action_new_conversation(self) -> None:
         """Handle the new conversation action."""
-        self.create_new_conversation()
+        await self.create_new_conversation()
         
     def action_escape(self) -> None:
         """Handle escape key."""
@@ -380,26 +390,27 @@ class SimpleChatApp(App):
             # If we're in a sub-screen, pop it
             self.pop_screen()
     
-    def update_messages_ui(self) -> None:
+    async def update_messages_ui(self) -> None:
         """Update the messages UI."""
         # Clear existing messages
         messages_container = self.query_one("#messages-container")
         messages_container.remove_children()
         
-        # Add messages
+        # Add messages with a small delay between each
         for message in self.messages:
-            messages_container.mount(
-                MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
-            )
+            display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
+            messages_container.mount(display)
+            messages_container.scroll_end(animate=False)
+            await asyncio.sleep(0.01)  # Small delay to prevent UI freezing
             
-        # Scroll to bottom
+        # Final scroll to bottom
         messages_container.scroll_end(animate=False)
     
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle input submission."""
-        self.action_send_message()
+        await self.action_send_message()
     
-    def action_send_message(self) -> None:
+    async def action_send_message(self) -> None:
         """Initiate message sending."""
         input_widget = self.query_one("#message-input", Input)
         content = input_widget.value.strip()
@@ -422,15 +433,14 @@ class SimpleChatApp(App):
         )
         
         # Update UI
-        self.update_messages_ui()
+        await self.update_messages_ui()
         
         # Generate AI response
-        self.generate_response()
+        await self.generate_response()
         
         # Focus back on input
         input_widget.focus()
     
-    @work
     async def generate_response(self) -> None:
         """Generate an AI response."""
         if not self.current_conversation or not self.messages:
@@ -471,8 +481,11 @@ class SimpleChatApp(App):
                 
                 try:
                     assistant_message.content += chunk
+                    # Update UI directly
                     message_display.update_content(assistant_message.content)
                     messages_container.scroll_end(animate=False)
+                    # Let the event loop process the update
+                    await asyncio.sleep(0)
                 except Exception as e:
                     self.notify(f"Error updating UI: {str(e)}", severity="error")
                 
@@ -498,7 +511,7 @@ class SimpleChatApp(App):
             # Add error message
             error_msg = f"Error generating response: {str(e)}"
             self.messages.append(Message(role="assistant", content=error_msg))
-            self.update_messages_ui()
+            await self.update_messages_ui()
         finally:
             self.is_generating = False
             loading = self.query_one("#loading-indicator")
@@ -512,20 +525,20 @@ class SimpleChatApp(App):
         """Handle style selection"""
         self.selected_style = event.style_id
         
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         button_id = event.button.id
         
         if button_id == "send-button":
-            self.action_send_message()
+            await self.action_send_message()
         elif button_id == "new-chat-button":
-            self.create_new_conversation()
+            await self.create_new_conversation()
         elif button_id == "settings-button":
             self.push_screen(SettingsScreen())
         elif button_id == "view-history-button":
-            self.view_chat_history()
+            await self.view_chat_history()
             
-    def view_chat_history(self) -> None:
+    async def view_chat_history(self) -> None:
         """Show chat history in a popup."""
         # Get recent conversations
         conversations = self.db.get_all_conversations(limit=CONFIG["max_history_items"])
@@ -533,7 +546,7 @@ class SimpleChatApp(App):
             self.notify("No chat history found", severity="warning")
             return
             
-        def handle_selection(selected_id: int) -> None:
+        async def handle_selection(selected_id: int) -> None:
             if not selected_id:
                 return
                 
@@ -552,7 +565,7 @@ class SimpleChatApp(App):
             
             # Load messages
             self.messages = [Message(**msg) for msg in self.current_conversation.messages]
-            self.update_messages_ui()
+            await self.update_messages_ui()
             
             # Update model and style selectors
             self.selected_model = self.current_conversation.model

@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 import time
+import asyncio
 from datetime import datetime
 import re
     
@@ -8,13 +9,14 @@ from textual.containers import Container, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Input, Label, Static
 from textual.widget import Widget
+from textual.widgets import RichLog
 from textual.message import Message
  
 from ..models import Message, Conversation
 from ..api.base import BaseModelClient
 from ..config import CONFIG
 
-class MessageDisplay(Static):
+class MessageDisplay(RichLog):
     """Widget to display a single message"""
     
     DEFAULT_CSS = """
@@ -23,6 +25,7 @@ class MessageDisplay(Static):
         height: auto;
         margin: 1 0;
         overflow: auto;
+        padding: 1;
     }
     
     MessageDisplay.user-message {
@@ -42,16 +45,6 @@ class MessageDisplay(Static):
         border: dashed $primary-background;
         margin: 1 4;
     }
-    
-    .message {
-        width: 100%;
-        padding: 1;
-    }
-    
-    .message-content {
-        width: 100%;
-        text-align: left;
-    }
     """
     
     def __init__(
@@ -60,34 +53,35 @@ class MessageDisplay(Static):
         highlight_code: bool = True,
         name: Optional[str] = None
     ):
-        super().__init__(name=name)
+        super().__init__(
+            highlight=True,
+            markup=True,
+            wrap=True,
+            name=name
+        )
         self.message = message
         self.highlight_code = highlight_code
-        self.content_widget = None
         
-    def compose(self) -> ComposeResult:
-        """Set up the message display"""
-        # Add message type class to the MessageDisplay itself
+    def on_mount(self) -> None:
+        """Handle mount event"""
+        # Add message type class
         if self.message.role == "user":
             self.add_class("user-message")
         elif self.message.role == "assistant":
             self.add_class("assistant-message")
         elif self.message.role == "system":
             self.add_class("system-message")
-            
-        # Create message content
-        with Container(classes="message"):
-            self.content_widget = Static(
-                self._format_content(self.message.content), 
-                classes="message-content"
-            )
-            yield self.content_widget
-            
+        
+        # Initial content
+        self.write(self._format_content(self.message.content))
+        
     def update_content(self, content: str) -> None:
         """Update the message content"""
         self.message.content = content
-        if self.content_widget:
-            self.content_widget.update(self._format_content(content))
+        self.clear()
+        self.write(self._format_content(content))
+        # Force a refresh after writing
+        self.refresh(layout=True)
         
     def _format_content(self, content: str) -> str:
         """Format message content"""
@@ -225,23 +219,23 @@ class ChatInterface(Container):
         except Exception:
             pass
                 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         button_id = event.button.id
         
         if button_id == "send-button":
-            self.send_message()
+            await self.send_message()
             
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle input submission"""
         if event.input.id == "message-input":
-            self.send_message()
+            await self.send_message()
             
-    def add_message(self, role: str, content: str, update_last: bool = False) -> None:
+    async def add_message(self, role: str, content: str, update_last: bool = False) -> None:
         """Add or update a message in the chat"""
         if update_last and self.current_message_display and role == "assistant":
             # Update existing message
-            self.current_message_display.update_content(content)
+            await self.current_message_display.update_content(content)
         else:
             # Add new message
             message = Message(role=role, content=content)
@@ -255,7 +249,7 @@ class ChatInterface(Container):
             
         self.scroll_to_bottom()
         
-    def send_message(self) -> None:
+    async def send_message(self) -> None:
         """Send a message"""
         input_widget = self.query_one("#message-input")
         content = input_widget.value.strip()
@@ -267,7 +261,7 @@ class ChatInterface(Container):
         input_widget.value = ""
         
         # Add user message to chat
-        self.add_message("user", content)
+        await self.add_message("user", content)
         
         # Reset current message display for next assistant response
         self.current_message_display = None
@@ -298,7 +292,7 @@ class ChatInterface(Container):
         messages_container = self.query_one("#messages-container")
         messages_container.remove_children()
         
-    def set_conversation(self, conversation: Conversation) -> None:
+    async def set_conversation(self, conversation: Conversation) -> None:
         """Set the current conversation"""
         self.conversation = conversation
         self.messages = conversation.messages if conversation else []
@@ -309,11 +303,12 @@ class ChatInterface(Container):
         messages_container.remove_children()
         
         if self.messages:
-            # Mount messages directly without batch_update
+            # Mount messages with a small delay between each
             for message in self.messages:
-                messages_container.mount(
-                    MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
-                )
+                display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
+                messages_container.mount(display)
+                self.scroll_to_bottom()
+                await asyncio.sleep(0.01)  # Small delay to prevent UI freezing
                     
         self.scroll_to_bottom()
         

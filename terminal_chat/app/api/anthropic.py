@@ -1,5 +1,5 @@
 import anthropic
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
 from .base import BaseModelClient
 from ..config import ANTHROPIC_API_KEY
 
@@ -64,22 +64,23 @@ class AnthropicClient(BaseModelClient):
         
         return response.content[0].text
     
-    def generate_stream(self, messages: List[Dict[str, str]], 
-                       model: str, 
-                       style: Optional[str] = None,
-                       temperature: float = 0.7, 
-                       max_tokens: Optional[int] = None) -> Generator[str, None, None]:
+    async def generate_stream(self, messages: List[Dict[str, str]], 
+                            model: str, 
+                            style: Optional[str] = None,
+                            temperature: float = 0.7, 
+                            max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming text completion using Claude"""
         processed_messages = self._prepare_messages(messages, style)
         
-        with self.client.messages.stream(
+        stream = self.client.messages.stream(
             model=model,
             messages=processed_messages,
             temperature=temperature,
             max_tokens=max_tokens or 1024,
-        ) as stream:
-            for text in stream.text_stream:
-                yield text
+        )
+        async for chunk in stream:
+            if chunk.type == "content_block":
+                yield chunk.text
     
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available Claude models"""
