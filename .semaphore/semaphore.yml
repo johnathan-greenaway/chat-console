@@ -23,7 +23,7 @@ blocks:
             - export BASE_VERSION=$(grep -o "version=[\"'][0-9]*\.[0-9]*\.[0-9]*" setup.py | grep -o "[0-9]*\.[0-9]*\.[0-9]*")
             - echo "Base version is $BASE_VERSION"
             - |
-              if [[ "${SEMAPHORE_GIT_BRANCH}" == "release-branch" ]]; then
+              if [[ "${SEMAPHORE_GIT_BRANCH}" == "main" ]]; then
                 echo "On release branch - using version $BASE_VERSION for console-chat"
                 sed -i "s/version=[\"'][^\"']*[\"']/version=\"$BASE_VERSION\"/" setup.py
                 pip install twine build
