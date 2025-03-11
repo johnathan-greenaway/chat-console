@@ -64,13 +64,12 @@ class SettingsScreen(Screen):
     }
     """
 
-    async def compose(self) -> ComposeResult:
+    def compose(self) -> ComposeResult:
+        """Create the settings screen layout."""
         with Center():
             with Container(id="settings-container"):
                 yield Static("Settings", id="title")
-                model_selector = ModelSelector(self.app.selected_model)
-                yield model_selector
-                await model_selector.compose()  # Ensure model options are loaded
+                yield ModelSelector(self.app.selected_model)
                 yield StyleSelector(self.app.selected_style)
                 with Horizontal(id="button-row"):
                     yield Button("Cancel", variant="default")
@@ -153,28 +152,27 @@ class HistoryScreen(Screen):
         self.conversations = conversations
         self.callback = callback
 
-    async def compose(self) -> ComposeResult:
+    def compose(self) -> ComposeResult:
+        """Create the history screen layout."""
         with Center():
             with Container(id="history-container"):
                 yield Static("Chat History", id="title")
-                
-                # Create and yield the ListView first
-                list_view = ListView()
-                yield list_view
-                
-                # Now mount the items
-                for conv in self.conversations:
-                    title = conv["title"]
-                    model = conv["model"]
-                    if model in CONFIG["available_models"]:
-                        model = CONFIG["available_models"][model]["display_name"]
-                    item = ListItem(Label(f"{title} ({model})"))
-                    # Prefix numeric IDs with 'conv-' to make them valid identifiers
-                    item.id = f"conv-{conv['id']}"
-                    await list_view.mount(item)
-                
+                yield ListView(id="history-list")
                 with Horizontal(id="button-row"):
                     yield Button("Cancel", variant="primary")
+
+    async def on_mount(self) -> None:
+        """Initialize the history list after mount."""
+        list_view = self.query_one("#history-list", ListView)
+        for conv in self.conversations:
+            title = conv["title"]
+            model = conv["model"]
+            if model in CONFIG["available_models"]:
+                model = CONFIG["available_models"][model]["display_name"]
+            item = ListItem(Label(f"{title} ({model})"))
+            # Prefix numeric IDs with 'conv-' to make them valid identifiers
+            item.id = f"conv-{conv['id']}"
+            await list_view.mount(item)
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle conversation selection."""

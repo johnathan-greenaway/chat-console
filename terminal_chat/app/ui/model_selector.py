@@ -71,7 +71,7 @@ class ModelSelector(Container):
             # Default to OpenAI for custom models
             self.selected_provider = "openai"
         
-    async def compose(self) -> ComposeResult:
+    def compose(self) -> ComposeResult:
         """Set up the model selector"""
         with Container(id="selector-container"):
             # Provider options including Ollama
@@ -89,13 +89,26 @@ class ModelSelector(Container):
                 allow_blank=False
             )
             
+            # Get initial model options synchronously
+            initial_options = []
+            for model_id, model_info in CONFIG["available_models"].items():
+                if model_info["provider"] == self.selected_provider:
+                    initial_options.append((model_info["display_name"], model_id))
+            
+            # Ensure we have at least the custom option
+            if not initial_options or self.selected_model not in [opt[1] for opt in initial_options]:
+                initial_options.append(("Custom Model...", "custom"))
+                is_custom = True
+                initial_value = "custom"
+            else:
+                is_custom = False
+                initial_value = self.selected_model
+            
             # Model selector and custom input
-            is_custom = self.selected_model not in CONFIG["available_models"]
-            model_options = await self._get_model_options(self.selected_provider)
             yield Select(
-                model_options + [("Custom Model...", "custom")],
+                initial_options,
                 id="model-select",
-                value="custom" if is_custom else self.selected_model,
+                value=initial_value,
                 classes="hide" if is_custom else "",
                 allow_blank=False
             )
@@ -105,6 +118,18 @@ class ModelSelector(Container):
                 id="custom-model-input",
                 classes="" if is_custom else "hide"
             )
+
+    async def on_mount(self) -> None:
+        """Initialize model options after mount"""
+        # Only update options if using Ollama provider since it needs async API call
+        if self.selected_provider == "ollama":
+            model_select = self.query_one("#model-select", Select)
+            model_options = await self._get_model_options(self.selected_provider)
+            model_select.set_options(model_options)
+            if not self.selected_model or self.selected_model not in CONFIG["available_models"]:
+                model_select.value = "custom"
+            else:
+                model_select.value = self.selected_model
             
     async def _get_model_options(self, provider: str) -> List[tuple]:
         """Get model options for a specific provider"""
