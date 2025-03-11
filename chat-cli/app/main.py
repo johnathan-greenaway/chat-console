@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simplified version of Terminal Chat with AI functionality
+Simplified version of Chat CLI with AI functionality
 """
 import os
 import asyncio
@@ -186,10 +186,10 @@ class HistoryScreen(Screen):
             self.app.pop_screen()
 
 class SimpleChatApp(App):
-    """Simplified Terminal Chat application."""
+    """Simplified Chat CLI application."""
     
-    TITLE = "Terminal Chat"
-    SUB_TITLE = "AI Chat"
+    TITLE = "Chat CLI"
+    SUB_TITLE = "AI Chat Interface"
     DARK = True
     
     CSS = """
@@ -590,6 +590,10 @@ class SimpleChatApp(App):
             
         self.push_screen(HistoryScreen(conversations, handle_selection))
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the chat-cli application"""
     app = SimpleChatApp()
     app.run()
+
+if __name__ == "__main__":
+    main()

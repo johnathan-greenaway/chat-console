@@ -13,14 +13,14 @@ with open(os.path.join("app", "__init__.py"), "r", encoding="utf-8") as f:
             break
 
 setup(
-    name="terminal-chat",
+    name="chat-cli",
     version=version,
     author="Your Name",
     author_email="your.email@example.com",
-    description="A terminal-based chat application for LLMs",
+    description="A command-line interface for chatting with LLMs",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/terminal-chat",
+    url="https://github.com/yourusername/chat-cli",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -38,7 +38,8 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "terminal-chat=main:main",
+            "chat-cli=app.main:main",
+            "c-c=app.main:main",
         ],
     },
 )

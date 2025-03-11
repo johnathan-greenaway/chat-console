@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone Terminal Chat - A simplified version that works independently
+Standalone Chat CLI - A simplified version that works independently
 """
 import sqlite3
 from datetime import datetime
@@ -19,7 +19,7 @@ class SimpleDB:
     
     def __init__(self, db_path=None):
         """Initialize with optional db path"""
-        self.db_path = db_path or os.path.join(os.path.expanduser("~"), ".terminal_chat.db")
+        self.db_path = db_path or os.path.join(os.path.expanduser("~"), ".chatcli.db")
         self._init_db()
         
     def _init_db(self):
@@ -155,7 +155,7 @@ class MessageView(Static):
 class StandaloneChat(App):
     """A simplified terminal chat application"""
     
-    TITLE = "Terminal Chat"
+    TITLE = "Chat CLI"
     SUB_TITLE = "Standalone Version"
     
     BINDINGS = [

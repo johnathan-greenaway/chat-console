@@ -1,4 +1,4 @@
-# Terminal Chat Makefile
+# Chat CLI Makefile
 
 .PHONY: install dev clean demo test
 
@@ -47,7 +47,7 @@ test:
 
 # Help
 help:
-	@echo "Terminal Chat development commands:"
+	@echo "Chat CLI development commands:"
 	@echo "make install  - Install the package in development mode"
 	@echo "make dev      - Install development dependencies"
 	@echo "make run      - Run the application"
