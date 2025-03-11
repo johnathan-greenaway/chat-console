@@ -173,9 +173,16 @@ async def generate_streaming_response(
     full_response = ""
     
     try:
-        for chunk in client.generate_stream(messages, model, style):
-            full_response += chunk
-            await callback(chunk)
+        # Get the async generator from the client
+        stream = client.generate_stream(messages, model, style)
+        # Iterate over the generator properly
+        async for chunk in stream:
+            if chunk:  # Only process non-empty chunks
+                full_response += chunk
+                # Update UI and ensure event loop processes it
+                await callback(chunk)
+                # Small delay to prevent overwhelming the event loop
+                await asyncio.sleep(0.01)
     except Exception as e:
         error_msg = f"\n\nError generating response: {str(e)}"
         full_response += error_msg
