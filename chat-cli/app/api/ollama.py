@@ -161,6 +161,37 @@ class OllamaClient(BaseModelClient):
         
         while retries >= 0:
             try:
+                # First try a quick test request to check if model is loaded
+                async with aiohttp.ClientSession() as session:
+                    try:
+                        logger.info("Testing model availability...")
+                        async with session.post(
+                            f"{self.base_url}/api/generate",
+                            json={
+                                "model": model,
+                                "prompt": "test",
+                                "temperature": temperature,
+                                "stream": False
+                            },
+                            timeout=2
+                        ) as response:
+                            if response.status != 200:
+                                logger.warning(f"Model test request failed with status {response.status}")
+                                raise aiohttp.ClientError("Model not ready")
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                        logger.info(f"Model cold start detected: {str(e)}")
+                        # Model might need loading, try pulling it
+                        async with session.post(
+                            f"{self.base_url}/api/pull",
+                            json={"name": model},
+                            timeout=60
+                        ) as pull_response:
+                            if pull_response.status != 200:
+                                logger.error("Failed to pull model")
+                                raise Exception("Failed to pull model")
+                            logger.info("Model pulled successfully")
+                
+                # Now proceed with actual generation
                 async with aiohttp.ClientSession() as session:
                     logger.debug(f"Sending streaming request to {self.base_url}/api/generate")
                     async with session.post(
@@ -171,7 +202,7 @@ class OllamaClient(BaseModelClient):
                             "temperature": temperature,
                             "stream": True
                         },
-                        timeout=30
+                        timeout=60  # Longer timeout for actual generation
                     ) as response:
                         response.raise_for_status()
                         async for line in response.content:

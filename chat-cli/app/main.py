@@ -520,42 +520,84 @@ class SimpleChatApp(App):
             # Add small delay to show thinking state
             await asyncio.sleep(0.5)
             
-            # Stream chunks to the UI
+            # Stream chunks to the UI with synchronization
+            update_lock = asyncio.Lock()
+            
             async def update_ui(content: str):
                 if not self.is_generating:
                     return
                 
-                try:
-                    # Clear thinking indicator on first content
-                    if assistant_message.content == "Thinking...":
-                        assistant_message.content = ""
-                    
-                    # Update message with full content so far
-                    assistant_message.content = content
-                    # Update UI with full content
-                    message_display.update_content(content)
-                    messages_container.scroll_end(animate=False)
-                    # Let the event loop process the update
-                    await asyncio.sleep(0)
-                except Exception as e:
-                    self.notify(f"Error updating UI: {str(e)}", severity="error")
+                async with update_lock:
+                    try:
+                        # Clear thinking indicator on first content
+                        if assistant_message.content == "Thinking...":
+                            assistant_message.content = ""
+                        
+                        # Update message with full content so far
+                        assistant_message.content = content
+                        # Update UI with full content
+                        await message_display.update_content(content)
+                        # Force a refresh and scroll
+                        self.refresh(layout=True)
+                        await asyncio.sleep(0.05)  # Longer delay for UI stability
+                        messages_container.scroll_end(animate=False)
+                        # Force another refresh to ensure content is visible
+                        self.refresh(layout=True)
+                    except Exception as e:
+                        logger.error(f"Error updating UI: {str(e)}")
                 
-            # Generate the response
-            full_response = await generate_streaming_response(
-                api_messages,
-                model,
-                style,
-                client,
-                update_ui
-            )
-            
-            # Save to database
-            if self.is_generating:  # Only save if not cancelled
-                self.db.add_message(
-                    self.current_conversation.id,
-                    "assistant",
-                    full_response
+            # Generate the response with timeout and cleanup
+            generation_task = None
+            try:
+                # Create a task for the response generation
+                generation_task = asyncio.create_task(
+                    generate_streaming_response(
+                        api_messages,
+                        model,
+                        style,
+                        client,
+                        update_ui
+                    )
                 )
+                
+                # Wait for response with timeout
+                full_response = await asyncio.wait_for(generation_task, timeout=60)  # Longer timeout
+                
+                # Save to database only if we got a complete response
+                if self.is_generating and full_response:
+                    self.db.add_message(
+                        self.current_conversation.id,
+                        "assistant",
+                        full_response
+                    )
+                    # Force a final refresh
+                    self.refresh(layout=True)
+                    await asyncio.sleep(0.1)  # Wait for UI to update
+                    
+            except asyncio.TimeoutError:
+                logger.error("Response generation timed out")
+                error_msg = "Response generation timed out. The model may be busy or unresponsive. Please try again."
+                self.notify(error_msg, severity="error")
+                
+                # Remove the incomplete message
+                if self.messages and self.messages[-1].role == "assistant":
+                    self.messages.pop()
+                
+                # Update UI to remove the incomplete message
+                await self.update_messages_ui()
+                
+            finally:
+                # Ensure task is properly cancelled and cleaned up
+                if generation_task:
+                    if not generation_task.done():
+                        generation_task.cancel()
+                        try:
+                            await generation_task
+                        except (asyncio.CancelledError, Exception) as e:
+                            logger.error(f"Error cleaning up generation task: {str(e)}")
+                    
+                # Force a final UI refresh
+                self.refresh(layout=True)
                 
         except Exception as e:
             self.notify(f"Error generating response: {str(e)}", severity="error")

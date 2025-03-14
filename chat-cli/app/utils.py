@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import asyncio
 import subprocess
 import logging
 from typing import Optional, Dict, Any, List
@@ -13,11 +15,33 @@ async def generate_streaming_response(messages: List[Dict], model: str, style: s
     """Generate a streaming response from the model"""
     logger.info(f"Starting streaming response with model: {model}")
     full_response = ""
+    buffer = []
+    last_update = time.time()
+    update_interval = 0.1  # Update UI every 100ms
+    
     try:
         async for chunk in client.generate_stream(messages, model, style):
             if chunk:  # Only process non-empty chunks
-                full_response += chunk
-                await callback(full_response)  # Send full response so far
+                buffer.append(chunk)
+                current_time = time.time()
+                
+                # Update UI if enough time has passed or buffer is large
+                if current_time - last_update >= update_interval or len(''.join(buffer)) > 100:
+                    new_content = ''.join(buffer)
+                    full_response += new_content
+                    await callback(full_response)
+                    buffer = []
+                    last_update = current_time
+                    
+                    # Small delay to let UI catch up
+                    await asyncio.sleep(0.05)
+        
+        # Send any remaining content
+        if buffer:
+            new_content = ''.join(buffer)
+            full_response += new_content
+            await callback(full_response)
+        
         logger.info("Streaming response completed")
         return full_response
     except Exception as e:
