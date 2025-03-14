@@ -3,6 +3,7 @@ import time
 import asyncio
 from datetime import datetime
 import re
+import logging
     
 from textual.app import ComposeResult
 from textual.containers import Container, ScrollableContainer, Vertical
@@ -15,6 +16,9 @@ from textual.message import Message
 from ..models import Message, Conversation
 from ..api.base import BaseModelClient
 from ..config import CONFIG
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class MessageDisplay(RichLog):
     """Widget to display a single message"""
@@ -75,13 +79,15 @@ class MessageDisplay(RichLog):
         # Initial content
         self.write(self._format_content(self.message.content))
         
-    def update_content(self, content: str) -> None:
+    async def update_content(self, content: str) -> None:
         """Update the message content"""
         self.message.content = content
         self.clear()
         self.write(self._format_content(content))
         # Force a refresh after writing
         self.refresh(layout=True)
+        # Wait a moment for the layout to update
+        await asyncio.sleep(0.05)
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp"""
@@ -252,13 +258,17 @@ class ChatInterface(Container):
             )
             messages_container.mount(self.current_message_display)
             
+            # Force a layout refresh and wait for it to complete
+            self.refresh(layout=True)
+            await asyncio.sleep(0.1)
+            
         # Save to conversation if exists
         if self.conversation and self.conversation.id:
             from ..database import ChatDatabase
             db = ChatDatabase()
             db.add_message(self.conversation.id, role, content)
             
-        self.scroll_to_bottom()
+        await self.scroll_to_bottom()
         
     async def send_message(self) -> None:
         """Send a message"""
@@ -318,10 +328,10 @@ class ChatInterface(Container):
             for message in self.messages:
                 display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
                 messages_container.mount(display)
-                self.scroll_to_bottom()
-                await asyncio.sleep(0.01)  # Small delay to prevent UI freezing
+                await self.scroll_to_bottom()
+                await asyncio.sleep(0.05)  # Small delay to prevent UI freezing
                     
-        self.scroll_to_bottom()
+        await self.scroll_to_bottom()
         
         # Re-focus the input field after changing conversation
         self.query_one("#message-input").focus()
@@ -333,19 +343,24 @@ class ChatInterface(Container):
             self.query_one("#message-input").focus()
             
             # Scroll to bottom to ensure the latest messages are visible
-            self.scroll_to_bottom()
-        except Exception:
-            # Ignore errors during resize handling
-            pass
+            asyncio.create_task(self.scroll_to_bottom())
+        except Exception as e:
+            logger.error(f"Error handling resize: {str(e)}")
             
-    def scroll_to_bottom(self) -> None:
+    async def scroll_to_bottom(self) -> None:
         """Scroll to the bottom of the messages container"""
         try:
             messages_container = self.query_one("#messages-container")
+            # Force a layout refresh
+            self.refresh(layout=True)
+            # Wait a moment for layout to update
+            await asyncio.sleep(0.1)
+            # Scroll to bottom
             messages_container.scroll_end(animate=False)
-        except Exception:
-            # Container might not be available yet or scroll_end might not work
-            pass
+            # Force another refresh
+            self.refresh(layout=True)
+        except Exception as e:
+            logger.error(f"Error scrolling to bottom: {str(e)}")
         
     def watch_is_loading(self, is_loading: bool) -> None:
         """Watch the is_loading property"""
