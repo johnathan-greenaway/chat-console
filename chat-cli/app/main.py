@@ -510,12 +510,15 @@ class SimpleChatApp(App):
                 return
                 
             # Start streaming response
-            assistant_message = Message(role="assistant", content="")
+            assistant_message = Message(role="assistant", content="Thinking...")
             self.messages.append(assistant_message)
             messages_container = self.query_one("#messages-container")
             message_display = MessageDisplay(assistant_message, highlight_code=CONFIG["highlight_code"])
             messages_container.mount(message_display)
             messages_container.scroll_end(animate=False)
+            
+            # Add small delay to show thinking state
+            await asyncio.sleep(0.5)
             
             # Stream chunks to the UI
             async def update_ui(content: str):
@@ -523,6 +526,10 @@ class SimpleChatApp(App):
                     return
                 
                 try:
+                    # Clear thinking indicator on first content
+                    if assistant_message.content == "Thinking...":
+                        assistant_message.content = ""
+                    
                     # Update message with full content so far
                     assistant_message.content = content
                     # Update UI with full content
