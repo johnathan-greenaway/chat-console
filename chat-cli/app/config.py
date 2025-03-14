@@ -124,14 +124,14 @@ DEFAULT_CONFIG = {
 
 def validate_config(config):
     """Validate and fix configuration issues"""
-    # Ensure default model's provider is available
+    # Only validate non-Ollama providers since Ollama can be started on demand
     default_model = config.get("default_model")
     if default_model in config["available_models"]:
         provider = config["available_models"][default_model]["provider"]
-        if not AVAILABLE_PROVIDERS[provider]:
-            # Find first available model
+        if provider != "ollama" and not AVAILABLE_PROVIDERS[provider]:
+            # Find first available model, preferring Ollama
             for model, info in config["available_models"].items():
-                if AVAILABLE_PROVIDERS[info["provider"]]:
+                if info["provider"] == "ollama" or AVAILABLE_PROVIDERS[info["provider"]]:
                     config["default_model"] = model
                     break
     return config

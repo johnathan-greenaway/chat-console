@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, List, Any, Optional
 from textual.app import ComposeResult
 from textual.containers import Container
@@ -6,7 +7,11 @@ from textual.widget import Widget
 from textual.message import Message
 
 from ..config import CONFIG
+from ..api.ollama import OllamaClient
 from .chat_interface import ChatInterface
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class ModelSelector(Container):
     """Widget for selecting the AI model to use"""
@@ -68,8 +73,8 @@ class ModelSelector(Container):
         if self.selected_model in CONFIG["available_models"]:
             self.selected_provider = CONFIG["available_models"][self.selected_model]["provider"]
         else:
-            # Default to OpenAI for custom models
-            self.selected_provider = "openai"
+            # Default to Ollama for unknown models since it's more flexible
+            self.selected_provider = "ollama"
         
     def compose(self) -> ComposeResult:
         """Set up the model selector"""
@@ -121,35 +126,79 @@ class ModelSelector(Container):
 
     async def on_mount(self) -> None:
         """Initialize model options after mount"""
-        # Only update options if using Ollama provider since it needs async API call
-        if self.selected_provider == "ollama":
-            model_select = self.query_one("#model-select", Select)
-            model_options = await self._get_model_options(self.selected_provider)
-            model_select.set_options(model_options)
-            if not self.selected_model or self.selected_model not in CONFIG["available_models"]:
-                model_select.value = "custom"
-            else:
-                model_select.value = self.selected_model
+        # Always update model options to ensure we have the latest
+        model_select = self.query_one("#model-select", Select)
+        model_options = await self._get_model_options(self.selected_provider)
+        model_select.set_options(model_options)
+        
+        # Handle model selection
+        if self.selected_model in [opt[1] for opt in model_options]:
+            model_select.value = self.selected_model
+            model_select.remove_class("hide")
+            self.query_one("#custom-model-input").add_class("hide")
+        else:
+            model_select.value = "custom"
+            model_select.add_class("hide")
+            custom_input = self.query_one("#custom-model-input")
+            custom_input.value = self.selected_model
+            custom_input.remove_class("hide")
             
     async def _get_model_options(self, provider: str) -> List[tuple]:
         """Get model options for a specific provider"""
+        logger = logging.getLogger(__name__)
+        logger.info(f"Getting model options for provider: {provider}")
+        
         options = [
             (model_info["display_name"], model_id)
             for model_id, model_info in CONFIG["available_models"].items()
             if model_info["provider"] == provider
         ]
+        logger.info(f"Found {len(options)} models in config for {provider}")
         
         # Add available Ollama models
         if provider == "ollama":
             try:
-                from app.api.ollama import OllamaClient
+                logger.info("Initializing Ollama client...")
                 ollama = OllamaClient()
-                ollama_models = await ollama.get_available_models()
-                for model in ollama_models:
-                    if model["id"] not in CONFIG["available_models"]:
-                        options.append((model["name"], model["id"]))
-            except:
-                pass
+                logger.info("Getting available Ollama models...")
+                try:
+                    models = await ollama.get_available_models()
+                    logger.info(f"Found {len(models)} models from Ollama API")
+                    
+                    # Store models in config for later use
+                    CONFIG["ollama_models"] = models
+                    from ..config import save_config
+                    save_config(CONFIG)
+                    logger.info("Saved Ollama models to config")
+                    
+                    for model in models:
+                        if model["id"] not in CONFIG["available_models"]:
+                            logger.info(f"Adding new Ollama model: {model['name']}")
+                            options.append((model["name"], model["id"]))
+                except AttributeError:
+                    # Fallback for sync method
+                    models = ollama.get_available_models()
+                    logger.info(f"Found {len(models)} models from Ollama API (sync)")
+                    CONFIG["ollama_models"] = models
+                    from ..config import save_config
+                    save_config(CONFIG)
+                    logger.info("Saved Ollama models to config (sync)")
+                    
+                    for model in models:
+                        if model["id"] not in CONFIG["available_models"]:
+                            logger.info(f"Adding new Ollama model: {model['name']}")
+                            options.append((model["name"], model["id"]))
+            except Exception as e:
+                logger.error(f"Error getting Ollama models: {str(e)}")
+                # Add default Ollama models if API fails
+                default_models = [
+                    ("Llama 2", "llama2"),
+                    ("Mistral", "mistral"),
+                    ("Code Llama", "codellama"),
+                    ("Gemma", "gemma")
+                ]
+                logger.info("Adding default Ollama models as fallback")
+                options.extend(default_models)
                 
         options.append(("Custom Model...", "custom"))
         return options
@@ -166,6 +215,8 @@ class ModelSelector(Container):
             if model_options:
                 self.selected_model = model_options[0][1]
                 model_select.value = self.selected_model
+                model_select.remove_class("hide")
+                self.query_one("#custom-model-input").add_class("hide")
                 self.post_message(self.ModelSelected(self.selected_model))
                 
         elif event.select.id == "model-select":
@@ -192,7 +243,6 @@ class ModelSelector(Container):
             if value:  # Only update if there's actual content
                 self.selected_model = value
                 self.post_message(self.ModelSelected(value))
-            
             
     def get_selected_model(self) -> str:
         """Get the current selected model ID"""

@@ -34,18 +34,13 @@ class BaseModelClient(ABC):
         from .anthropic import AnthropicClient
         from .openai import OpenAIClient
         from .ollama import OllamaClient
+        import logging
+        
+        logger = logging.getLogger(__name__)
         
         # Get model info and provider
         model_info = CONFIG["available_models"].get(model_name)
         model_name_lower = model_name.lower()
-        
-        # Helper function to check if model exists in Ollama
-        def check_ollama_model(client, model):
-            try:
-                models = client.get_available_models()
-                return any(m["id"] == model for m in models)
-            except:
-                return False
         
         # If model is in config, use its provider
         if model_info:
@@ -54,11 +49,13 @@ class BaseModelClient(ABC):
                 raise Exception(f"Provider '{provider}' is not available. Please check your configuration.")
         # For custom models, try to infer provider
         else:
-            # First try Ollama for known model names
-            if any(name in model_name_lower for name in ["llama", "mistral", "codellama", "gemma"]):
+            # First try Ollama for known model names or if selected from Ollama UI
+            if (any(name in model_name_lower for name in ["llama", "mistral", "codellama", "gemma"]) or
+                model_name in [m["id"] for m in CONFIG.get("ollama_models", [])]):
                 if not AVAILABLE_PROVIDERS["ollama"]:
                     raise Exception("Ollama server is not running. Please start Ollama and try again.")
                 provider = "ollama"
+                logger.info(f"Using Ollama for model: {model_name}")
             # Then try other providers if they're available
             elif any(name in model_name_lower for name in ["gpt", "text-", "davinci"]):
                 if not AVAILABLE_PROVIDERS["openai"]:
@@ -69,19 +66,16 @@ class BaseModelClient(ABC):
                     raise Exception("Anthropic API key not found. Please set ANTHROPIC_API_KEY environment variable.")
                 provider = "anthropic"
             else:
-                # Try Ollama as a last resort if it's available
+                # Default to Ollama for unknown models
                 if AVAILABLE_PROVIDERS["ollama"]:
-                    client = OllamaClient()
-                    if check_ollama_model(client, model_name):
-                        return client
-                raise Exception(f"Unknown model: {model_name}")
+                    provider = "ollama"
+                    logger.info(f"Defaulting to Ollama for unknown model: {model_name}")
+                else:
+                    raise Exception(f"Unknown model: {model_name}")
         
         # Return appropriate client
         if provider == "ollama":
-            client = OllamaClient()
-            if not check_ollama_model(client, model_name):
-                raise Exception(f"Model '{model_name}' not found. Please pull it first with 'ollama pull {model_name}'")
-            return client
+            return OllamaClient()
         elif provider == "openai":
             return OpenAIClient()
         elif provider == "anthropic":
