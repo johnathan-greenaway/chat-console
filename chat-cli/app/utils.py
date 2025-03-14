@@ -11,11 +11,18 @@ logger = logging.getLogger(__name__)
 
 async def generate_streaming_response(messages: List[Dict], model: str, style: str, client: Any, callback: Any) -> str:
     """Generate a streaming response from the model"""
+    logger.info(f"Starting streaming response with model: {model}")
     full_response = ""
-    async for chunk in client.generate_stream(messages, model, style):
-        await callback(chunk)
-        full_response += chunk
-    return full_response
+    try:
+        async for chunk in client.generate_stream(messages, model, style):
+            if chunk:  # Only process non-empty chunks
+                full_response += chunk
+                await callback(full_response)  # Send full response so far
+        logger.info("Streaming response completed")
+        return full_response
+    except Exception as e:
+        logger.error(f"Error in streaming response: {str(e)}")
+        raise
 
 def ensure_ollama_running() -> bool:
     """

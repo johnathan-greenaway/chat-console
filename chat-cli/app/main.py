@@ -518,14 +518,15 @@ class SimpleChatApp(App):
             messages_container.scroll_end(animate=False)
             
             # Stream chunks to the UI
-            async def update_ui(chunk: str):
+            async def update_ui(content: str):
                 if not self.is_generating:
                     return
                 
                 try:
-                    assistant_message.content += chunk
-                    # Update UI directly
-                    message_display.update_content(assistant_message.content)
+                    # Update message with full content so far
+                    assistant_message.content = content
+                    # Update UI with full content
+                    message_display.update_content(content)
                     messages_container.scroll_end(animate=False)
                     # Let the event loop process the update
                     await asyncio.sleep(0)
