@@ -14,7 +14,6 @@ class BaseModelClient(ABC):
         pass
     
     @abstractmethod
-    @abstractmethod
     async def generate_stream(self, messages: List[Dict[str, str]], 
                             model: str, 
                             style: Optional[str] = None,
@@ -31,44 +30,55 @@ class BaseModelClient(ABC):
     @staticmethod
     def get_client_for_model(model_name: str) -> 'BaseModelClient':
         """Factory method to get appropriate client for model"""
-        from ..config import CONFIG
+        from ..config import CONFIG, AVAILABLE_PROVIDERS
         from .anthropic import AnthropicClient
         from .openai import OpenAIClient
+        from .ollama import OllamaClient
+        import logging
         
-        # For known models, use their configured provider
+        logger = logging.getLogger(__name__)
+        
+        # Get model info and provider
         model_info = CONFIG["available_models"].get(model_name)
+        model_name_lower = model_name.lower()
+        
+        # If model is in config, use its provider
         if model_info:
             provider = model_info["provider"]
+            if not AVAILABLE_PROVIDERS[provider]:
+                raise Exception(f"Provider '{provider}' is not available. Please check your configuration.")
+        # For custom models, try to infer provider
         else:
-            # For custom models, infer provider from name prefix
-            model_name_lower = model_name.lower()
-            if any(name in model_name_lower for name in ["gpt", "text-", "davinci"]):
+            # First try Ollama for known model names or if selected from Ollama UI
+            if (any(name in model_name_lower for name in ["llama", "mistral", "codellama", "gemma"]) or
+                model_name in [m["id"] for m in CONFIG.get("ollama_models", [])]):
+                if not AVAILABLE_PROVIDERS["ollama"]:
+                    raise Exception("Ollama server is not running. Please start Ollama and try again.")
+                provider = "ollama"
+                logger.info(f"Using Ollama for model: {model_name}")
+            # Then try other providers if they're available
+            elif any(name in model_name_lower for name in ["gpt", "text-", "davinci"]):
+                if not AVAILABLE_PROVIDERS["openai"]:
+                    raise Exception("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
                 provider = "openai"
             elif any(name in model_name_lower for name in ["claude", "anthropic"]):
+                if not AVAILABLE_PROVIDERS["anthropic"]:
+                    raise Exception("Anthropic API key not found. Please set ANTHROPIC_API_KEY environment variable.")
                 provider = "anthropic"
-            elif any(name in model_name_lower for name in ["llama", "mistral", "codellama", "gemma"]):
-                provider = "ollama"
             else:
-                # Try to get from Ollama API first
-                from .ollama import OllamaClient
-                try:
-                    client = OllamaClient()
-                    models = client.get_available_models()
-                    if any(model["id"] == model_name for model in models):
-                        provider = "ollama"
-                    else:
-                        # Default to OpenAI if not found
-                        provider = "openai"
-                except:
-                    # Default to OpenAI if Ollama not available
-                    provider = "openai"
+                # Default to Ollama for unknown models
+                if AVAILABLE_PROVIDERS["ollama"]:
+                    provider = "ollama"
+                    logger.info(f"Defaulting to Ollama for unknown model: {model_name}")
+                else:
+                    raise Exception(f"Unknown model: {model_name}")
         
-        if provider == "anthropic":
-            return AnthropicClient()
+        # Return appropriate client
+        if provider == "ollama":
+            return OllamaClient()
         elif provider == "openai":
             return OpenAIClient()
-        elif provider == "ollama":
-            from .ollama import OllamaClient
-            return OllamaClient()
+        elif provider == "anthropic":
+            return AnthropicClient()
         else:
             raise ValueError(f"Unknown provider: {provider}")

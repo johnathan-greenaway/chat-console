@@ -12,14 +12,35 @@ APP_DIR.mkdir(exist_ok=True)
 DB_PATH = APP_DIR / "chat_history.db"
 CONFIG_PATH = APP_DIR / "config.json"
 
-# API Keys
+# API Keys and Provider Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
+def check_provider_availability():
+    """Check which providers are available"""
+    providers = {
+        "openai": bool(OPENAI_API_KEY),
+        "anthropic": bool(ANTHROPIC_API_KEY),
+        "ollama": False
+    }
+    
+    # Check if Ollama is running
+    import requests
+    try:
+        response = requests.get(OLLAMA_BASE_URL + "/api/tags", timeout=2)
+        providers["ollama"] = response.status_code == 200
+    except:
+        pass
+        
+    return providers
+
+# Get available providers
+AVAILABLE_PROVIDERS = check_provider_availability()
+
 # Default configuration
 DEFAULT_CONFIG = {
-    "default_model": "gpt-3.5-turbo",
+    "default_model": "mistral" if AVAILABLE_PROVIDERS["ollama"] else "gpt-3.5-turbo",
     "available_models": {
         "gpt-3.5-turbo": {
             "provider": "openai",
@@ -101,11 +122,26 @@ DEFAULT_CONFIG = {
     "auto_save": True
 }
 
+def validate_config(config):
+    """Validate and fix configuration issues"""
+    # Only validate non-Ollama providers since Ollama can be started on demand
+    default_model = config.get("default_model")
+    if default_model in config["available_models"]:
+        provider = config["available_models"][default_model]["provider"]
+        if provider != "ollama" and not AVAILABLE_PROVIDERS[provider]:
+            # Find first available model, preferring Ollama
+            for model, info in config["available_models"].items():
+                if info["provider"] == "ollama" or AVAILABLE_PROVIDERS[info["provider"]]:
+                    config["default_model"] = model
+                    break
+    return config
+
 def load_config():
     """Load the user configuration or create default if not exists"""
     if not CONFIG_PATH.exists():
-        save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG
+        validated_config = validate_config(DEFAULT_CONFIG.copy())
+        save_config(validated_config)
+        return validated_config
     
     try:
         with open(CONFIG_PATH, 'r') as f:
@@ -113,10 +149,14 @@ def load_config():
         # Merge with defaults to ensure all keys exist
         merged_config = DEFAULT_CONFIG.copy()
         merged_config.update(config)
-        return merged_config
+        # Validate and fix any issues
+        validated_config = validate_config(merged_config)
+        if validated_config != merged_config:
+            save_config(validated_config)
+        return validated_config
     except Exception as e:
         print(f"Error loading config: {e}. Using defaults.")
-        return DEFAULT_CONFIG
+        return validate_config(DEFAULT_CONFIG.copy())
 
 def save_config(config):
     """Save the configuration to disk"""

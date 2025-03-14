@@ -57,17 +57,20 @@ class OpenAIClient(BaseModelClient):
         """Generate a streaming text completion using OpenAI"""
         processed_messages = self._prepare_messages(messages, style)
         
-        stream = await self.client.chat.completions.create(
-            model=model,
-            messages=processed_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-        )
-        
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+        try:
+            stream = await self.client.chat.completions.create(
+                model=model,
+                messages=[{"role": m["role"], "content": m["content"]} for m in processed_messages],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+            
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+        except Exception as e:
+            raise Exception(f"OpenAI streaming error: {str(e)}")
     
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available OpenAI models"""
