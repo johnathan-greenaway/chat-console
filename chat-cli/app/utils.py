@@ -1,3 +1,8 @@
+import os
+import json
+import subprocess
+from typing import Optional, Dict, Any, List
+from .config import CONFIG, save_config
 from datetime import datetime
 import re
 import asyncio
@@ -200,3 +205,41 @@ def get_elapsed_time(start_time: float) -> str:
         minutes = int(elapsed // 60)
         seconds = elapsed % 60
         return f"{minutes}m {seconds:.1f}s"
+async def generate_streaming_response(messages: List[Dict], model: str, style: str, client: Any, callback: Any) -> str:
+    """Generate a streaming response from the model"""
+    full_response = ""
+    async for chunk in client.generate_stream(messages, model, style):
+        await callback(chunk)
+        full_response += chunk
+    return full_response
+
+def ensure_ollama_running() -> bool:
+    """
+    Check if Ollama is running and try to start it if not.
+    Returns True if Ollama is running after check/start attempt.
+    """
+    import requests
+    try:
+        # Try to connect to Ollama
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        return response.status_code == 200
+    except:
+        try:
+            # Try to start Ollama
+            subprocess.Popen(["ollama", "serve"], 
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE)
+            # Wait a moment for it to start
+            import time
+            time.sleep(2)
+            # Check again
+            response = requests.get("http://localhost:11434/api/tags", timeout=2)
+            return response.status_code == 200
+        except:
+            return False
+
+def save_settings_to_config(model: str, style: str) -> None:
+    """Save settings to global config file"""
+    CONFIG["default_model"] = model
+    CONFIG["default_style"] = style
+    save_config(CONFIG)

@@ -5,7 +5,7 @@ from ..config import ANTHROPIC_API_KEY
 
 class AnthropicClient(BaseModelClient):
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        self.client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     
     def _prepare_messages(self, messages: List[Dict[str, str]], style: Optional[str] = None) -> List[Dict[str, str]]:
         """Prepare messages for Claude API"""
@@ -47,7 +47,7 @@ class AnthropicClient(BaseModelClient):
         
         return styles.get(style, "")
     
-    def generate_completion(self, messages: List[Dict[str, str]], 
+    async def generate_completion(self, messages: List[Dict[str, str]], 
                            model: str, 
                            style: Optional[str] = None, 
                            temperature: float = 0.7, 
@@ -55,7 +55,7 @@ class AnthropicClient(BaseModelClient):
         """Generate a text completion using Claude"""
         processed_messages = self._prepare_messages(messages, style)
         
-        response = self.client.messages.create(
+        response = await self.client.messages.create(
             model=model,
             messages=processed_messages,
             temperature=temperature,
@@ -72,7 +72,7 @@ class AnthropicClient(BaseModelClient):
         """Generate a streaming text completion using Claude"""
         processed_messages = self._prepare_messages(messages, style)
         
-        stream = self.client.messages.stream(
+        stream = await self.client.messages.stream(
             model=model,
             messages=processed_messages,
             temperature=temperature,
