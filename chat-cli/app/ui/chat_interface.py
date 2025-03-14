@@ -234,19 +234,29 @@ class ChatInterface(Container):
             
     async def add_message(self, role: str, content: str, update_last: bool = False) -> None:
         """Add or update a message in the chat"""
+        messages_container = self.query_one("#messages-container")
+        
         if update_last and self.current_message_display and role == "assistant":
             # Update existing message
             await self.current_message_display.update_content(content)
+            # Update message in history
+            if self.messages and self.messages[-1].role == "assistant":
+                self.messages[-1].content = content
         else:
             # Add new message
             message = Message(role=role, content=content)
             self.messages.append(message)
-            messages_container = self.query_one("#messages-container")
             self.current_message_display = MessageDisplay(
                 message, 
                 highlight_code=CONFIG["highlight_code"]
             )
             messages_container.mount(self.current_message_display)
+            
+        # Save to conversation if exists
+        if self.conversation and self.conversation.id:
+            from ..database import ChatDatabase
+            db = ChatDatabase()
+            db.add_message(self.conversation.id, role, content)
             
         self.scroll_to_bottom()
         

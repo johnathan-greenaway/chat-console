@@ -10,7 +10,7 @@ blocks:
       secrets:
         - name: TWINE_PASSWORD
       jobs:
-        - name: pytest
+        - name: Test and Deploy Console-Chat
           commands:
             - sem-version python 3.11
             - checkout

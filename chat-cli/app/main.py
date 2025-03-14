@@ -90,15 +90,21 @@ class SettingsScreen(Screen):
         self.app.pop_screen()
         
         # Only update settings if Done was pressed
-        if event.button.label == "Done" and self.app.current_conversation:
+        if event.button.label == "Done":
             try:
-                self.app.db.update_conversation(
-                    self.app.current_conversation.id,
-                    model=self.app.selected_model,
-                    style=self.app.selected_style
-                )
-                self.app.current_conversation.model = self.app.selected_model
-                self.app.current_conversation.style = self.app.selected_style
+                # Save settings globally
+                from app.utils import save_settings_to_config
+                save_settings_to_config(self.app.selected_model, self.app.selected_style)
+                
+                # Update current conversation if one exists
+                if self.app.current_conversation:
+                    self.app.db.update_conversation(
+                        self.app.current_conversation.id,
+                        model=self.app.selected_model,
+                        style=self.app.selected_style
+                    )
+                    self.app.current_conversation.model = self.app.selected_model
+                    self.app.current_conversation.style = self.app.selected_style
             except Exception as e:
                 self.app.notify(f"Error updating settings: {str(e)}", severity="error")
 
@@ -344,15 +350,20 @@ class SimpleChatApp(App):
         if not ANTHROPIC_API_KEY:
             api_issues.append("- ANTHROPIC_API_KEY is not set")
             
-        # Check Ollama availability
-        from app.api.ollama import OllamaClient
-        try:
-            ollama = OllamaClient()
-            models = await ollama.get_available_models()
-            if not models:
-                api_issues.append("- No Ollama models found")
-        except Exception:
-            api_issues.append("- Ollama server not running")
+        # Check Ollama availability and try to start if not running
+        from app.utils import ensure_ollama_running
+        if not ensure_ollama_running():
+            api_issues.append("- Ollama server not running and could not be started")
+        else:
+            # Check for available models
+            from app.api.ollama import OllamaClient
+            try:
+                ollama = OllamaClient()
+                models = await ollama.get_available_models()
+                if not models:
+                    api_issues.append("- No Ollama models found")
+            except Exception:
+                api_issues.append("- Error connecting to Ollama server")
         
         if api_issues:
             self.notify(
@@ -499,22 +510,30 @@ class SimpleChatApp(App):
                 return
                 
             # Start streaming response
-            assistant_message = Message(role="assistant", content="")
+            assistant_message = Message(role="assistant", content="Thinking...")
             self.messages.append(assistant_message)
             messages_container = self.query_one("#messages-container")
             message_display = MessageDisplay(assistant_message, highlight_code=CONFIG["highlight_code"])
             messages_container.mount(message_display)
             messages_container.scroll_end(animate=False)
             
+            # Add small delay to show thinking state
+            await asyncio.sleep(0.5)
+            
             # Stream chunks to the UI
-            async def update_ui(chunk: str):
+            async def update_ui(content: str):
                 if not self.is_generating:
                     return
                 
                 try:
-                    assistant_message.content += chunk
-                    # Update UI directly
-                    message_display.update_content(assistant_message.content)
+                    # Clear thinking indicator on first content
+                    if assistant_message.content == "Thinking...":
+                        assistant_message.content = ""
+                    
+                    # Update message with full content so far
+                    assistant_message.content = content
+                    # Update UI with full content
+                    message_display.update_content(content)
                     messages_container.scroll_end(animate=False)
                     # Let the event loop process the update
                     await asyncio.sleep(0)

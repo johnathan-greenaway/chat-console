@@ -108,14 +108,19 @@ Screen {
 /* Action buttons */
 .action-button {
     background: $primary;
-    color: $text;
+    color: #FFFFFF !important; /* Explicit white text */
     border: none;
     min-width: 10;
     margin-left: 1;
+    padding: 0 1; /* Add padding */
+    text-style: bold;
+    font-size: 1.1;
 }
 
 .action-button:hover {
     background: $primary-lighten-1;
+    color: #FFFFFF !important;
+    text-style: bold;
 }
 
 /* Sidebar */
