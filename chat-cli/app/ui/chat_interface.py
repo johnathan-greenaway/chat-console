@@ -151,9 +151,19 @@ class ChatInterface(Container):
     }
     
     #send-button {
-        width: auto;
+        background: $warning;
+        color: $text;
+        border: none;
         min-width: 8;
-        height: 2;
+        height: 3;
+        margin: 0 1;
+        content-align: center middle;
+        text-style: bold;
+        text-opacity: 100%;
+    }
+
+    #send-button:hover {
+        background: $warning-lighten-1;
     }
     
     #loading-indicator {
@@ -192,23 +202,19 @@ class ChatInterface(Container):
             self.messages = conversation.messages
             
     def compose(self) -> ComposeResult:
-        """Compose the chat interface"""
-        # Messages area
         with ScrollableContainer(id="messages-container"):
             for message in self.messages:
                 yield MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
-        
-        # Input area with loading indicator and controls
         with Container(id="input-area"):
             yield Container(
                 Label("Generating response...", id="loading-text"),
                 id="loading-indicator"
             )
-            yield Container(
-                InputWithFocus(placeholder="Type your message here...", id="message-input"),
-                Button("Send", id="send-button", variant="primary"),
-                id="controls"
-            )
+            with Container(id="controls"):
+                yield InputWithFocus(placeholder="Type your message here...", id="message-input")
+                yield Button("[on yellow black]SEND[/]", id="send-button", markup=True)
+
+
                 
     def on_mount(self) -> None:
         """Initialize on mount"""
@@ -229,7 +235,6 @@ class ChatInterface(Container):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         button_id = event.button.id
-        
         if button_id == "send-button":
             await self.send_message()
             
