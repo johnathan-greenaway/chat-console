@@ -262,11 +262,13 @@ class SimpleChatApp(App):
         width: auto;
         min-width: 8;
         height: 2;
-        color: $text;
+        color: #FFFFFF !important;
         background: $primary;
         border: solid $primary;
         content-align: center middle;
+        text-style: bold;  /* Add this line */
     }
+
 
     #button-row {
         width: 100%;
@@ -278,21 +280,23 @@ class SimpleChatApp(App):
         width: auto;
         min-width: 8;
         height: 2;
-        color: $text;
+        color: #FFFFFF !important;  /* Force white text */
         background: $success;
         border: solid $success-lighten-1;
         content-align: center middle;
+        text-style: bold;
     }
 
     #view-history-button, #settings-button {
         width: auto;
         min-width: 8;
         height: 2;
-        color: $text;
+        color: #FFFFFF !important;  /* Force white text */
         background: $primary-darken-1;
         border: solid $primary;
         margin-right: 1;
         content-align: center middle;
+        text-style: bold;
     }
     """
     
