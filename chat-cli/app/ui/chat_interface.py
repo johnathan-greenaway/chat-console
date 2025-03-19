@@ -12,13 +12,65 @@ from textual.widgets import Button, Input, Label, Static
 from textual.widget import Widget
 from textual.widgets import RichLog
 from textual.message import Message
+from textual.binding import Binding
  
+from .. import __version__
 from ..models import Message, Conversation
 from ..api.base import BaseModelClient
 from ..config import CONFIG
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+class SendButton(Button):
+    """Custom send button implementation"""
+    
+    DEFAULT_CSS = """
+    SendButton {
+        width: auto;
+        min-width: 20;
+        height: 4;
+        margin: 0 1;
+        content-align: center middle;
+        text-style: bold;
+        border: none;
+        background: $success;
+        color: white;
+        padding: 0 2;
+        text-opacity: 100%;
+    }
+
+    SendButton:hover {
+        background: $success-lighten-1;
+        text-style: bold reverse;
+    }
+
+    SendButton:focus {
+        background: $success-darken-1;
+        text-style: bold reverse;
+    }
+
+    SendButton > .label {
+        text-opacity: 100%;
+        color: white;
+        text-style: bold;
+        text-align: center;
+        width: 100%;
+        font-size: 200%;
+    }
+    """
+
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(
+            "⬆ SEND ⬆",
+            name=name,
+            variant="success"
+        )
+
+    def on_mount(self) -> None:
+        """Handle mount event"""
+        self.styles.text_opacity = 100
+        self.styles.text_style = "bold"
 
 class MessageDisplay(RichLog):
     """Widget to display a single message"""
@@ -150,20 +202,14 @@ class ChatInterface(Container):
         border: solid $primary;
     }
     
-    #send-button {
+    #version-label {
+        width: 100%;
+        height: 1;
         background: $warning;
-        color: $text;
-        border: none;
-        min-width: 8;
-        height: 3;
-        margin: 0 1;
-        content-align: center middle;
+        color: black;
+        text-align: right;
+        padding: 0 1;
         text-style: bold;
-        text-opacity: 100%;
-    }
-
-    #send-button:hover {
-        background: $warning-lighten-1;
     }
     
     #loading-indicator {
@@ -202,6 +248,7 @@ class ChatInterface(Container):
             self.messages = conversation.messages
             
     def compose(self) -> ComposeResult:
+        yield Label(f"Chat CLI v{__version__}", id="version-label")
         with ScrollableContainer(id="messages-container"):
             for message in self.messages:
                 yield MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
@@ -212,9 +259,7 @@ class ChatInterface(Container):
             )
             with Container(id="controls"):
                 yield InputWithFocus(placeholder="Type your message here...", id="message-input")
-                yield Button("[on yellow black]SEND[/]", id="send-button", markup=True)
-
-
+                yield SendButton(id="send-button")
                 
     def on_mount(self) -> None:
         """Initialize on mount"""
