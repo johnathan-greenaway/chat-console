@@ -261,42 +261,37 @@ class SimpleChatApp(App):
     #send-button {
         width: auto;
         min-width: 8;
-        height: 2;
-        color: #FFFFFF !important;
-        background: $primary;
-        border: solid $primary;
-        content-align: center middle;
-        text-style: bold;  /* Add this line */
+        height: auto; /* Allow height to adjust */
+        color: white; /* Basic text color */
+        background: $primary; /* Restore background */
+        border: solid $primary; /* Restore border */
+        margin: 0 1; /* Keep margin */
     }
-
-
     #button-row {
         width: 100%;
         height: auto;
         align-horizontal: right;
     }
 
+
     #new-chat-button {
         width: auto;
         min-width: 8;
-        height: 2;
-        color: #FFFFFF !important;  /* Force white text */
-        background: $success;
-        border: solid $success-lighten-1;
-        content-align: center middle;
-        text-style: bold;
+        height: auto; /* Allow height to adjust */
+        color: white; /* Basic text color */
+        background: $success; /* Restore background */
+        border: solid $success-lighten-1; /* Restore border */
+        margin: 0 1; /* Keep margin */
     }
 
     #view-history-button, #settings-button {
         width: auto;
         min-width: 8;
-        height: 2;
-        color: #FFFFFF !important;  /* Force white text */
-        background: $primary-darken-1;
-        border: solid $primary;
-        margin-right: 1;
-        content-align: center middle;
-        text-style: bold;
+        height: auto; /* Allow height to adjust */
+        color: white; /* Basic text color */
+        background: $primary-darken-1; /* Restore background */
+        border: solid $primary; /* Restore border */
+        margin-right: 1; /* Keep margin */
     }
     """
     
@@ -337,11 +332,11 @@ class SimpleChatApp(App):
             # Input area
             with Container(id="input-area"):
                 yield Input(placeholder="Type your message here...", id="message-input")
-                yield Button("Send", id="send-button", variant="primary")
-                with Horizontal(id="button-row"):
-                    yield Button("Settings", id="settings-button", variant="primary")
-                    yield Button("View History", id="view-history-button", variant="primary")
-                    yield Button("+ New Chat", id="new-chat-button")
+                # Replace Buttons with Static for diagnosis
+                yield Static("Send", id="send-button")
+                yield Static("Settings", id="settings-button")
+                yield Static("View History", id="view-history-button")
+                yield Static("+ New Chat", id="new-chat-button")
         
         yield Footer()
         
@@ -389,6 +384,18 @@ class SimpleChatApp(App):
         else:
             # Focus the input if no initial text
             self.query_one("#message-input").focus()
+
+        # --- Diagnostic: Explicitly set Static widget content after mount ---
+        try:
+            # Note: Static widgets use renderable for content, not label
+            self.query_one("#send-button", Static).update("Send")
+            self.query_one("#settings-button", Static).update("Settings")
+            self.query_one("#view-history-button", Static).update("View History")
+            self.query_one("#new-chat-button", Static).update("+ New Chat")
+            self.refresh() # Refresh UI to apply changes
+        except Exception as e:
+            self.notify(f"Error setting button labels: {e}", severity="error")
+        # --- End Diagnostic ---
         
     async def create_new_conversation(self) -> None:
         """Create a new chat conversation."""
@@ -621,7 +628,7 @@ class SimpleChatApp(App):
     def on_style_selector_style_selected(self, event: StyleSelector.StyleSelected) -> None:
         """Handle style selection"""
         self.selected_style = event.style_id
-        
+            
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         button_id = event.button.id
