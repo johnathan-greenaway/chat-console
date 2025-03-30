@@ -12,13 +12,46 @@ from textual.widgets import Button, Input, Label, Static
 from textual.widget import Widget
 from textual.widgets import RichLog
 from textual.message import Message
+from textual.binding import Binding
  
+from .. import __version__
 from ..models import Message, Conversation
 from ..api.base import BaseModelClient
 from ..config import CONFIG
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+class SendButton(Button):
+    """Custom send button implementation"""
+    
+    DEFAULT_CSS = """
+    /* Drastically simplified SendButton CSS */
+    SendButton {
+        color: white; /* Basic text color */
+        /* Removed most properties */
+        margin: 0 1; /* Keep margin for spacing */
+    }
+
+    SendButton > .button--label {
+         color: white; /* Basic label color */
+         width: auto; /* Ensure label width isn't constrained */
+         height: auto; /* Ensure label height isn't constrained */
+         /* Removed most properties */
+    }
+    """
+
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(
+            "⬆ SEND ⬆",
+            name=name,
+            variant="success"
+        )
+
+    def on_mount(self) -> None:
+        """Handle mount event"""
+        self.styles.text_opacity = 100
+        self.styles.text_style = "bold"
 
 class MessageDisplay(RichLog):
     """Widget to display a single message"""
@@ -150,10 +183,14 @@ class ChatInterface(Container):
         border: solid $primary;
     }
     
-    #send-button {
-        width: auto;
-        min-width: 8;
-        height: 2;
+    #version-label {
+        width: 100%;
+        height: 1;
+        background: $warning;
+        color: black;
+        text-align: right;
+        padding: 0 1;
+        text-style: bold;
     }
     
     #loading-indicator {
@@ -192,23 +229,18 @@ class ChatInterface(Container):
             self.messages = conversation.messages
             
     def compose(self) -> ComposeResult:
-        """Compose the chat interface"""
-        # Messages area
+        yield Label(f"Chat CLI v{__version__}", id="version-label")
         with ScrollableContainer(id="messages-container"):
             for message in self.messages:
                 yield MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
-        
-        # Input area with loading indicator and controls
         with Container(id="input-area"):
             yield Container(
                 Label("Generating response...", id="loading-text"),
                 id="loading-indicator"
             )
-            yield Container(
-                InputWithFocus(placeholder="Type your message here...", id="message-input"),
-                Button("Send", id="send-button", variant="primary"),
-                id="controls"
-            )
+            with Container(id="controls"):
+                yield InputWithFocus(placeholder="Type your message here...", id="message-input")
+                yield SendButton(id="send-button")
                 
     def on_mount(self) -> None:
         """Initialize on mount"""
@@ -229,7 +261,6 @@ class ChatInterface(Container):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         button_id = event.button.id
-        
         if button_id == "send-button":
             await self.send_message()
             

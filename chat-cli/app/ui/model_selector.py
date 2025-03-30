@@ -142,6 +142,14 @@ class ModelSelector(Container):
             custom_input = self.query_one("#custom-model-input")
             custom_input.value = self.selected_model
             custom_input.remove_class("hide")
+
+        # Set initial focus on the provider selector after mount completes
+        def _focus_provider():
+            try:
+                self.query_one("#provider-select", Select).focus()
+            except Exception as e:
+                logger.error(f"Error setting focus in ModelSelector: {e}")
+        self.call_later(_focus_provider)
             
     async def _get_model_options(self, provider: str) -> List[tuple]:
         """Get model options for a specific provider"""
