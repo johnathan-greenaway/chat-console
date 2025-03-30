@@ -1,5 +1,3 @@
-  Chat CLI Documentation
-
 Chat CLI
 ========
 
