@@ -26,37 +26,18 @@ class SendButton(Button):
     """Custom send button implementation"""
     
     DEFAULT_CSS = """
+    /* Drastically simplified SendButton CSS */
     SendButton {
-        width: auto;
-        min-width: 20;
-        height: 4;
-        margin: 0 1;
-        content-align: center middle;
-        text-style: bold;
-        border: none;
-        background: $success;
-        color: white;
-        padding: 0 2;
-        text-opacity: 100%;
+        color: white; /* Basic text color */
+        /* Removed most properties */
+        margin: 0 1; /* Keep margin for spacing */
     }
 
-    SendButton:hover {
-        background: $success-lighten-1;
-        text-style: bold reverse;
-    }
-
-    SendButton:focus {
-        background: $success-darken-1;
-        text-style: bold reverse;
-    }
-
-    SendButton > .label {
-        text-opacity: 100%;
-        color: white;
-        text-style: bold;
-        text-align: center;
-        width: 100%;
-        font-size: 200%;
+    SendButton > .button--label {
+         color: white; /* Basic label color */
+         width: auto; /* Ensure label width isn't constrained */
+         height: auto; /* Ensure label height isn't constrained */
+         /* Removed most properties */
     }
     """
 

@@ -258,46 +258,9 @@ class SimpleChatApp(App):
         border: solid $primary;
     }
 
-    #send-button {
-        width: auto;
-        min-width: 8;
-        height: 2;
-        color: #FFFFFF !important;
-        background: $primary;
-        border: solid $primary;
-        content-align: center middle;
-        text-style: bold;  /* Add this line */
-    }
+    /* Removed CSS for #send-button, #new-chat-button, #view-history-button, #settings-button */
+    /* Removed CSS for #button-row */
 
-
-    #button-row {
-        width: 100%;
-        height: auto;
-        align-horizontal: right;
-    }
-
-    #new-chat-button {
-        width: auto;
-        min-width: 8;
-        height: 2;
-        color: #FFFFFF !important;  /* Force white text */
-        background: $success;
-        border: solid $success-lighten-1;
-        content-align: center middle;
-        text-style: bold;
-    }
-
-    #view-history-button, #settings-button {
-        width: auto;
-        min-width: 8;
-        height: 2;
-        color: #FFFFFF !important;  /* Force white text */
-        background: $primary-darken-1;
-        border: solid $primary;
-        margin-right: 1;
-        content-align: center middle;
-        text-style: bold;
-    }
     """
     
     BINDINGS = [
@@ -305,6 +268,8 @@ class SimpleChatApp(App):
         Binding("n", "action_new_conversation", "New Chat"),
         Binding("escape", "escape", "Cancel"),
         Binding("ctrl+c", "quit", "Quit"),
+        Binding("h", "view_history", "History", show=True, key_display="h"),
+        Binding("s", "settings", "Settings", show=True, key_display="s"),
     ]
     
     current_conversation = reactive(None)
@@ -337,11 +302,7 @@ class SimpleChatApp(App):
             # Input area
             with Container(id="input-area"):
                 yield Input(placeholder="Type your message here...", id="message-input")
-                yield Button("Send", id="send-button", variant="primary")
-                with Horizontal(id="button-row"):
-                    yield Button("Settings", id="settings-button", variant="primary")
-                    yield Button("View History", id="view-history-button", variant="primary")
-                    yield Button("+ New Chat", id="new-chat-button")
+                # Removed Static widgets previously used for diagnosis
         
         yield Footer()
         
@@ -621,7 +582,7 @@ class SimpleChatApp(App):
     def on_style_selector_style_selected(self, event: StyleSelector.StyleSelected) -> None:
         """Handle style selection"""
         self.selected_style = event.style_id
-        
+            
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         button_id = event.button.id
@@ -669,6 +630,20 @@ class SimpleChatApp(App):
             self.selected_style = self.current_conversation.style
             
         self.push_screen(HistoryScreen(conversations, handle_selection))
+
+    async def action_view_history(self) -> None:
+        """Action to view chat history via key binding."""
+        # Only trigger if message input is not focused
+        input_widget = self.query_one("#message-input", Input)
+        if not input_widget.has_focus:
+            await self.view_chat_history()
+
+    def action_settings(self) -> None:
+        """Action to open settings via key binding."""
+        # Only trigger if message input is not focused
+        input_widget = self.query_one("#message-input", Input)
+        if not input_widget.has_focus:
+            self.push_screen(SettingsScreen())
 
 def main(initial_text: Optional[str] = typer.Argument(None, help="Initial text to start the chat with")):
     """Entry point for the chat-cli application"""
