@@ -14,7 +14,7 @@ with open(os.path.join("app", "__init__.py"), "r", encoding="utf-8") as f:
 
 setup(
     name="chat-console",
-    version="0.1.85",
+    version="0.1.9",
     author="Johnathan Greenaway",
     author_email="john@fimbriata.dev",
     description="A command-line interface for chatting with LLMs, storing chats and (future) rag interactions",

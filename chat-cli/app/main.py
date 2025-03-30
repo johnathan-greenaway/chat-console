@@ -258,41 +258,9 @@ class SimpleChatApp(App):
         border: solid $primary;
     }
 
-    #send-button {
-        width: auto;
-        min-width: 8;
-        height: auto; /* Allow height to adjust */
-        color: white; /* Basic text color */
-        background: $primary; /* Restore background */
-        border: solid $primary; /* Restore border */
-        margin: 0 1; /* Keep margin */
-    }
-    #button-row {
-        width: 100%;
-        height: auto;
-        align-horizontal: right;
-    }
+    /* Removed CSS for #send-button, #new-chat-button, #view-history-button, #settings-button */
+    /* Removed CSS for #button-row */
 
-
-    #new-chat-button {
-        width: auto;
-        min-width: 8;
-        height: auto; /* Allow height to adjust */
-        color: white; /* Basic text color */
-        background: $success; /* Restore background */
-        border: solid $success-lighten-1; /* Restore border */
-        margin: 0 1; /* Keep margin */
-    }
-
-    #view-history-button, #settings-button {
-        width: auto;
-        min-width: 8;
-        height: auto; /* Allow height to adjust */
-        color: white; /* Basic text color */
-        background: $primary-darken-1; /* Restore background */
-        border: solid $primary; /* Restore border */
-        margin-right: 1; /* Keep margin */
-    }
     """
     
     BINDINGS = [
@@ -300,6 +268,8 @@ class SimpleChatApp(App):
         Binding("n", "action_new_conversation", "New Chat"),
         Binding("escape", "escape", "Cancel"),
         Binding("ctrl+c", "quit", "Quit"),
+        Binding("h", "view_history", "History", show=True, key_display="h"),
+        Binding("s", "settings", "Settings", show=True, key_display="s"),
     ]
     
     current_conversation = reactive(None)
@@ -332,11 +302,7 @@ class SimpleChatApp(App):
             # Input area
             with Container(id="input-area"):
                 yield Input(placeholder="Type your message here...", id="message-input")
-                # Replace Buttons with Static for diagnosis
-                yield Static("Send", id="send-button")
-                yield Static("Settings", id="settings-button")
-                yield Static("View History", id="view-history-button")
-                yield Static("+ New Chat", id="new-chat-button")
+                # Removed Static widgets previously used for diagnosis
         
         yield Footer()
         
@@ -384,18 +350,6 @@ class SimpleChatApp(App):
         else:
             # Focus the input if no initial text
             self.query_one("#message-input").focus()
-
-        # --- Diagnostic: Explicitly set Static widget content after mount ---
-        try:
-            # Note: Static widgets use renderable for content, not label
-            self.query_one("#send-button", Static).update("Send")
-            self.query_one("#settings-button", Static).update("Settings")
-            self.query_one("#view-history-button", Static).update("View History")
-            self.query_one("#new-chat-button", Static).update("+ New Chat")
-            self.refresh() # Refresh UI to apply changes
-        except Exception as e:
-            self.notify(f"Error setting button labels: {e}", severity="error")
-        # --- End Diagnostic ---
         
     async def create_new_conversation(self) -> None:
         """Create a new chat conversation."""
@@ -676,6 +630,20 @@ class SimpleChatApp(App):
             self.selected_style = self.current_conversation.style
             
         self.push_screen(HistoryScreen(conversations, handle_selection))
+
+    async def action_view_history(self) -> None:
+        """Action to view chat history via key binding."""
+        # Only trigger if message input is not focused
+        input_widget = self.query_one("#message-input", Input)
+        if not input_widget.has_focus:
+            await self.view_chat_history()
+
+    def action_settings(self) -> None:
+        """Action to open settings via key binding."""
+        # Only trigger if message input is not focused
+        input_widget = self.query_one("#message-input", Input)
+        if not input_widget.has_focus:
+            self.push_screen(SettingsScreen())
 
 def main(initial_text: Optional[str] = typer.Argument(None, help="Initial text to start the chat with")):
     """Entry point for the chat-cli application"""
