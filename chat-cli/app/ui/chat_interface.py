@@ -129,20 +129,15 @@ class MessageDisplay(RichLog):
 
 class InputWithFocus(Input):
     """Enhanced Input that better handles focus and maintains cursor position"""
-    
-    def on_key(self, event) -> None:
-        """Custom key handling for input"""
-        # Let control keys pass through
-        if event.is_control:
-            return super().on_key(event)
-            
-        # Handle Enter key
-        if event.key == "enter":
-            self.post_message(self.Submitted(self))
-            return
-            
-        # Normal input handling for other keys
-        super().on_key(event)
+    # Reverted on_key to default Input behavior for 'n' and 't'
+    # Let the standard Input handle key presses when focused.
+    # We will rely on focus checks within the App's action methods.
+
+    # Keep custom handling only for Enter submission if needed,
+    # but standard Input might already do this. Let's simplify
+    # and remove the custom on_key entirely for now unless
+    # specific focus/cursor issues reappear.
+    pass # Inherit default Input behavior
 
 class ChatInterface(Container):
     """Main chat interface container"""

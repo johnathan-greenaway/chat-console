@@ -19,7 +19,8 @@ from openai import OpenAI
 from app.models import Message, Conversation
 from app.database import ChatDatabase
 from app.config import CONFIG, OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_BASE_URL
-from app.ui.chat_interface import MessageDisplay
+# Import InputWithFocus as well
+from app.ui.chat_interface import MessageDisplay, InputWithFocus
 from app.ui.model_selector import ModelSelector, StyleSelector
 from app.ui.chat_list import ChatList
 from app.api.base import BaseModelClient
@@ -114,10 +115,11 @@ class HistoryScreen(Screen):
 class SimpleChatApp(App): # Keep SimpleChatApp class definition
     """Simplified Chat CLI application.""" # Keep SimpleChatApp docstring
     
-    TITLE = "Chat CLI" # Keep SimpleChatApp TITLE
+    TITLE = "Chat Console"
     SUB_TITLE = "AI Chat Interface" # Keep SimpleChatApp SUB_TITLE
     DARK = True # Keep SimpleChatApp DARK
-    
+    LOG_FILE = "textual.log" # Explicitly set log file location
+
     CSS = """ # Keep SimpleChatApp CSS start
     #main-content { # Keep SimpleChatApp CSS
         width: 100%;
@@ -240,15 +242,17 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     
     BINDINGS = [ # Keep SimpleChatApp BINDINGS, ensure Enter is not globally bound for settings
         Binding("q", "quit", "Quit", show=True, key_display="q"),
+        # Removed priority=True - actions should only trigger when input is NOT focused
         Binding("n", "action_new_conversation", "New Chat", show=True, key_display="n"),
-        Binding("c", "action_new_conversation", "New Chat", show=False, key_display="c"),
+        Binding("c", "action_new_conversation", "New Chat", show=False, key_display="c"), # Removed priority from alias
         Binding("escape", "escape", "Cancel / Stop", show=True, key_display="esc"), # Escape might close settings panel too
         Binding("ctrl+c", "quit", "Quit", show=False),
-        Binding("h", "view_history", "History", show=True, key_display="h"),
-        Binding("s", "settings", "Settings", show=True, key_display="s"),
+        Binding("h", "view_history", "History", show=True, key_display="h"), # Action method checks focus
+        Binding("s", "settings", "Settings", show=True, key_display="s"),     # Action method checks focus
+        # Removed priority=True - action should only trigger when input is NOT focused
         Binding("t", "action_update_title", "Update Title", show=True, key_display="t"),
     ] # Keep SimpleChatApp BINDINGS end
-    
+
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
     is_generating = reactive(False) # Keep SimpleChatApp reactive var
     
@@ -259,7 +263,8 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         self.selected_model = CONFIG["default_model"] # Keep SimpleChatApp __init__
         self.selected_style = CONFIG["default_style"] # Keep SimpleChatApp __init__
         self.initial_text = initial_text # Keep SimpleChatApp __init__
-        
+        # Removed self.input_widget instance variable
+
     def compose(self) -> ComposeResult: # Modify SimpleChatApp compose
         """Create the simplified application layout."""
         yield Header()
@@ -278,7 +283,8 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             
             # Input area
             with Container(id="input-area"):
-                yield Input(placeholder="Type your message here...", id="message-input")
+                # Use the custom InputWithFocus widget
+                yield InputWithFocus(placeholder="Type your message here...", id="message-input")
                 # Removed Static widgets previously used for diagnosis
 
             # --- Add Settings Panel (hidden initially) ---
@@ -335,10 +341,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             await self.action_send_message() # Keep SimpleChatApp on_mount
         else: # Keep SimpleChatApp on_mount
             # Focus the input if no initial text # Keep SimpleChatApp on_mount
+            # Removed assignment to self.input_widget
             self.query_one("#message-input").focus() # Keep SimpleChatApp on_mount
-        
+
     async def create_new_conversation(self) -> None: # Keep SimpleChatApp create_new_conversation
         """Create a new chat conversation.""" # Keep SimpleChatApp create_new_conversation docstring
+        log("Entering create_new_conversation") # Added log
         # Create new conversation in database using selected model and style # Keep SimpleChatApp create_new_conversation
         model = self.selected_model # Keep SimpleChatApp create_new_conversation
         style = self.selected_style # Keep SimpleChatApp create_new_conversation
@@ -347,7 +355,9 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         title = f"New conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})" # Keep SimpleChatApp create_new_conversation
         
         # Create conversation in database using the correct method # Keep SimpleChatApp create_new_conversation
+        log(f"Creating conversation with title: {title}, model: {model}, style: {style}") # Added log
         conversation_id = self.db.create_conversation(title, model, style) # Keep SimpleChatApp create_new_conversation
+        log(f"Database returned conversation_id: {conversation_id}") # Added log
         
         # Get the full conversation data # Keep SimpleChatApp create_new_conversation
         conversation_data = self.db.get_conversation(conversation_id) # Keep SimpleChatApp create_new_conversation
@@ -361,26 +371,41 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         
         # Clear messages and update UI # Keep SimpleChatApp create_new_conversation
         self.messages = [] # Keep SimpleChatApp create_new_conversation
+        log("Finished updating messages UI in create_new_conversation") # Added log
         await self.update_messages_ui() # Keep SimpleChatApp create_new_conversation
-        
+
     async def action_new_conversation(self) -> None: # Keep SimpleChatApp action_new_conversation
         """Handle the new conversation action.""" # Keep SimpleChatApp action_new_conversation docstring
+        log("--- ENTERING action_new_conversation ---") # Add entry log
+        # Revert focus check to query and use has_focus
+        input_widget = self.query_one("#message-input", Input)
+        if input_widget.has_focus:
+            log("action_new_conversation skipped: input has focus") # Optional log
+            return
+
+        log("action_new_conversation EXECUTING") # Add execution log
         await self.create_new_conversation() # Keep SimpleChatApp action_new_conversation
-        
+        log("action_new_conversation finished") # Added log
+
     def action_escape(self) -> None: # Modify SimpleChatApp action_escape
         """Handle escape key globally."""
+        log("action_escape triggered") # Added log
         settings_panel = self.query_one("#settings-panel")
+        log(f"Settings panel visible: {settings_panel.has_class('visible')}") # Added log
         if settings_panel.has_class("visible"):
+            log("Hiding settings panel") # Added log
             # If settings panel is visible, hide it
             settings_panel.remove_class("visible")
             self.query_one("#message-input").focus() # Focus input after closing settings
         elif self.is_generating:
+            log("Stopping generation") # Added log
             # Otherwise, stop generation if running
             self.is_generating = False # Keep SimpleChatApp action_escape
             self.notify("Generation stopped", severity="warning") # Keep SimpleChatApp action_escape
             loading = self.query_one("#loading-indicator") # Keep SimpleChatApp action_escape
             loading.add_class("hidden") # Keep SimpleChatApp action_escape
-        # else: # Optional: Add other escape behavior for the main screen if desired # Keep SimpleChatApp action_escape comment
+        else: # Optional: Add other escape behavior for the main screen if desired # Keep SimpleChatApp action_escape comment
+            log("Escape pressed, but settings not visible and not generating.") # Added log
             # pass # Keep SimpleChatApp action_escape comment
 
     # Removed action_confirm_or_send - Enter is handled by Input submission # Keep SimpleChatApp comment
@@ -490,6 +515,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             return # Keep SimpleChatApp generate_response
             
         self.is_generating = True # Keep SimpleChatApp generate_response
+        log(f"Setting is_generating to True") # Added log
         loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
         loading.remove_class("hidden") # Keep SimpleChatApp generate_response
         
@@ -531,6 +557,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             
             async def update_ui(content: str): # Keep SimpleChatApp generate_response
                 if not self.is_generating: # Keep SimpleChatApp generate_response
+                    log("update_ui called but is_generating is False, returning.") # Added log
                     return # Keep SimpleChatApp generate_response
                 
                 async with update_lock: # Keep SimpleChatApp generate_response
@@ -550,7 +577,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         # Force another refresh to ensure content is visible # Keep SimpleChatApp generate_response
                         self.refresh(layout=True) # Keep SimpleChatApp generate_response
                     except Exception as e: # Keep SimpleChatApp generate_response
-                        logger.error(f"Error updating UI: {str(e)}") # Keep SimpleChatApp generate_response
+                        log.error(f"Error updating UI: {str(e)}") # Use log instead of logger
                 
             # Generate the response with timeout and cleanup # Keep SimpleChatApp generate_response
             generation_task = None # Keep SimpleChatApp generate_response
@@ -558,6 +585,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # Create a task for the response generation # Keep SimpleChatApp generate_response
                 generation_task = asyncio.create_task( # Keep SimpleChatApp generate_response
                     generate_streaming_response( # Keep SimpleChatApp generate_response
+                        self, # Pass the app instance
                         api_messages, # Keep SimpleChatApp generate_response
                         model, # Keep SimpleChatApp generate_response
                         style, # Keep SimpleChatApp generate_response
@@ -571,6 +599,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 
                 # Save to database only if we got a complete response # Keep SimpleChatApp generate_response
                 if self.is_generating and full_response: # Keep SimpleChatApp generate_response
+                    log("Generation finished, saving full response to DB") # Added log
                     self.db.add_message( # Keep SimpleChatApp generate_response
                         self.current_conversation.id, # Keep SimpleChatApp generate_response
                         "assistant", # Keep SimpleChatApp generate_response
@@ -579,9 +608,11 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     # Force a final refresh # Keep SimpleChatApp generate_response
                     self.refresh(layout=True) # Keep SimpleChatApp generate_response
                     await asyncio.sleep(0.1)  # Wait for UI to update # Keep SimpleChatApp generate_response
+                elif not full_response:
+                    log("Generation finished but full_response is empty/None") # Added log
                     
             except asyncio.TimeoutError: # Keep SimpleChatApp generate_response
-                logger.error("Response generation timed out") # Keep SimpleChatApp generate_response
+                log.error("Response generation timed out") # Use log instead of logger
                 error_msg = "Response generation timed out. The model may be busy or unresponsive. Please try again." # Keep SimpleChatApp generate_response
                 self.notify(error_msg, severity="error") # Keep SimpleChatApp generate_response
                 
@@ -596,22 +627,25 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # Ensure task is properly cancelled and cleaned up # Keep SimpleChatApp generate_response
                 if generation_task: # Keep SimpleChatApp generate_response
                     if not generation_task.done(): # Keep SimpleChatApp generate_response
+                        log("Cancelling generation task") # Added log
                         generation_task.cancel() # Keep SimpleChatApp generate_response
                         try: # Keep SimpleChatApp generate_response
                             await generation_task # Keep SimpleChatApp generate_response
                         except (asyncio.CancelledError, Exception) as e: # Keep SimpleChatApp generate_response
-                            logger.error(f"Error cleaning up generation task: {str(e)}") # Keep SimpleChatApp generate_response
+                            log.error(f"Error cleaning up generation task: {str(e)}") # Use log instead of logger
                     
                 # Force a final UI refresh # Keep SimpleChatApp generate_response
                 self.refresh(layout=True) # Keep SimpleChatApp generate_response
                 
         except Exception as e: # Keep SimpleChatApp generate_response
+            log.error(f"Exception during generate_response: {str(e)}") # Added log
             self.notify(f"Error generating response: {str(e)}", severity="error") # Keep SimpleChatApp generate_response
             # Add error message # Keep SimpleChatApp generate_response
             error_msg = f"Error generating response: {str(e)}" # Keep SimpleChatApp generate_response
             self.messages.append(Message(role="assistant", content=error_msg)) # Keep SimpleChatApp generate_response
             await self.update_messages_ui() # Keep SimpleChatApp generate_response
         finally: # Keep SimpleChatApp generate_response
+            log(f"Setting is_generating to False in finally block") # Added log
             self.is_generating = False # Keep SimpleChatApp generate_response
             loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
             loading.add_class("hidden") # Keep SimpleChatApp generate_response
@@ -726,6 +760,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
     async def action_update_title(self) -> None:
         """Allow users to manually change the conversation title"""
+        log("--- ENTERING action_update_title ---") # Add entry log
+        # Revert focus check to query and use has_focus
+        input_widget = self.query_one("#message-input", Input)
+        if input_widget.has_focus:
+            log("action_update_title skipped: input has focus") # Optional log
+            return
+
+        log("action_update_title EXECUTING") # Add execution log
+
         if not self.current_conversation:
             self.notify("No active conversation", severity="warning")
             return
