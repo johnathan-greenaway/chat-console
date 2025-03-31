@@ -13,7 +13,7 @@ from textual.containers import Container, Horizontal, Vertical, ScrollableContai
 from textual.reactive import reactive
 from textual.widgets import Button, Input, Label, Static, Header, Footer, ListView, ListItem
 from textual.binding import Binding
-from textual import work
+from textual import work, log, on
 from textual.screen import Screen
 from openai import OpenAI
 from app.models import Message, Conversation
@@ -23,7 +23,7 @@ from app.ui.chat_interface import MessageDisplay
 from app.ui.model_selector import ModelSelector, StyleSelector
 from app.ui.chat_list import ChatList
 from app.api.base import BaseModelClient
-from app.utils import generate_streaming_response, save_settings_to_config # Import save function
+from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title # Import title function
 
 # --- Remove SettingsScreen class entirely ---
 
@@ -209,6 +209,33 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         padding-top: 1;
     }
 
+    /* --- Title Input Modal CSS --- */
+    TitleInputModal {
+        align: center middle;
+        width: 60;
+        height: auto;
+        background: $surface;
+        border: thick $primary;
+        padding: 1 2;
+        layer: modal; /* Ensure it's above other elements */
+    }
+
+    #modal-label {
+        width: 100%;
+        content-align: center middle;
+        padding-bottom: 1;
+    }
+
+    #title-input {
+        width: 100%;
+        margin-bottom: 1;
+    }
+
+    TitleInputModal Horizontal {
+        width: 100%;
+        height: auto;
+        align: center middle;
+    }
     """
     
     BINDINGS = [ # Keep SimpleChatApp BINDINGS, ensure Enter is not globally bound for settings
@@ -219,6 +246,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("h", "view_history", "History", show=True, key_display="h"),
         Binding("s", "settings", "Settings", show=True, key_display="s"),
+        Binding("t", "action_update_title", "Update Title", show=True, key_display="t"),
     ] # Keep SimpleChatApp BINDINGS end
     
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
@@ -399,14 +427,62 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             content # Keep SimpleChatApp action_send_message
         ) # Keep SimpleChatApp action_send_message
         
-        # Update UI # Keep SimpleChatApp action_send_message
-        await self.update_messages_ui() # Keep SimpleChatApp action_send_message
+        # Check if this is the first message in the conversation
+        # Note: We check length *before* adding the potential assistant message
+        is_first_message = len(self.messages) == 1 
         
-        # Generate AI response # Keep SimpleChatApp action_send_message
-        await self.generate_response() # Keep SimpleChatApp action_send_message
+        # Update UI with user message first
+        await self.update_messages_ui()
         
-        # Focus back on input # Keep SimpleChatApp action_send_message
-        input_widget.focus() # Keep SimpleChatApp action_send_message
+        # If this is the first message and dynamic titles are enabled, generate one
+        if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True):
+            log("First message detected, generating title...")
+            title_generation_in_progress = True # Use a local flag
+            loading = self.query_one("#loading-indicator")
+            loading.remove_class("hidden") # Show loading for title gen
+            
+            try:
+                # Get appropriate client
+                model = self.selected_model
+                client = BaseModelClient.get_client_for_model(model)
+                if client is None:
+                    raise Exception(f"No client available for model: {model}")
+
+                # Generate title
+                log(f"Calling generate_conversation_title with model: {model}")
+                title = await generate_conversation_title(content, model, client)
+                log(f"Generated title: {title}")
+
+                # Update conversation title in database
+                self.db.update_conversation(
+                    self.current_conversation.id,
+                    title=title
+                )
+                
+                # Update UI title
+                title_widget = self.query_one("#conversation-title", Static)
+                title_widget.update(title)
+                
+                # Update conversation object
+                self.current_conversation.title = title
+                
+                self.notify(f"Conversation title set to: {title}", severity="information", timeout=3)
+                
+            except Exception as e:
+                log.error(f"Failed to generate title: {str(e)}")
+                self.notify(f"Failed to generate title: {str(e)}", severity="warning")
+            finally:
+                title_generation_in_progress = False
+                # Hide loading indicator *only if* AI response generation isn't about to start
+                # This check might be redundant if generate_response always shows it anyway
+                if not self.is_generating:
+                     loading.add_class("hidden")
+
+        # Generate AI response (will set self.is_generating and handle loading indicator)
+        await self.generate_response()
+        
+        # Focus back on input
+        input_widget.focus()
     
     async def generate_response(self) -> None: # Keep SimpleChatApp generate_response
         """Generate an AI response.""" # Keep SimpleChatApp generate_response docstring
@@ -647,6 +723,79 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                      pass # Ignore if focus fails
             else:
                  input_widget.focus() # Focus input when closing
+
+    async def action_update_title(self) -> None:
+        """Allow users to manually change the conversation title"""
+        if not self.current_conversation:
+            self.notify("No active conversation", severity="warning")
+            return
+
+        # --- Define the Modal Class ---
+        class TitleInputModal(Static):
+            def __init__(self, current_title: str):
+                super().__init__()
+                self.current_title = current_title
+
+            def compose(self) -> ComposeResult:
+                with Vertical(id="title-modal"):
+                    yield Static("Enter new conversation title:", id="modal-label")
+                    yield Input(value=self.current_title, id="title-input")
+                    with Horizontal():
+                        yield Button("Cancel", id="cancel-button", variant="error")
+                        yield Button("Update", id="update-button", variant="success")
+
+            @on(Button.Pressed, "#update-button")
+            def update_title(self, event: Button.Pressed) -> None:
+                input_widget = self.query_one("#title-input", Input)
+                new_title = input_widget.value.strip()
+                if new_title:
+                    # Call the app's update method asynchronously
+                    asyncio.create_task(self.app.update_conversation_title(new_title))
+                self.remove() # Close the modal
+
+            @on(Button.Pressed, "#cancel-button")
+            def cancel(self, event: Button.Pressed) -> None:
+                self.remove() # Close the modal
+
+            def on_mount(self) -> None:
+                """Focus the input when the modal appears."""
+                self.query_one("#title-input", Input).focus()
+
+        # --- Show the modal ---
+        modal = TitleInputModal(self.current_conversation.title)
+        await self.mount(modal) # Use await for mounting
+
+    async def update_conversation_title(self, new_title: str) -> None:
+        """Update the current conversation title"""
+        if not self.current_conversation:
+            return
+
+        try:
+            # Update in database
+            self.db.update_conversation(
+                self.current_conversation.id,
+                title=new_title
+            )
+
+            # Update local object
+            self.current_conversation.title = new_title
+
+            # Update UI
+            title_widget = self.query_one("#conversation-title", Static)
+            title_widget.update(new_title)
+
+            # Update any chat list if visible
+            # Attempt to refresh ChatList if it exists
+            try:
+                chat_list = self.query_one(ChatList)
+                chat_list.refresh() # Call the refresh method
+            except Exception:
+                pass # Ignore if ChatList isn't found or refresh fails
+
+            self.notify("Title updated successfully", severity="information")
+        except Exception as e:
+            self.notify(f"Failed to update title: {str(e)}", severity="error")
+
 
 def main(initial_text: Optional[str] = typer.Argument(None, help="Initial text to start the chat with")): # Keep main function
     """Entry point for the chat-cli application""" # Keep main function docstring

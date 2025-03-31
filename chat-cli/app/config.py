@@ -119,7 +119,8 @@ DEFAULT_CONFIG = {
     "default_style": "default",
     "max_history_items": 100,
     "highlight_code": True,
-    "auto_save": True
+    "auto_save": True,
+    "generate_dynamic_titles": True
 }
 
 def validate_config(config):
