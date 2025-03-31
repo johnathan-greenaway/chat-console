@@ -5,11 +5,74 @@ import asyncio
 import subprocess
 import logging
 from typing import Optional, Dict, Any, List
+from datetime import datetime
 from .config import CONFIG, save_config
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+async def generate_conversation_title(message: str, model: str, client: Any) -> str:
+    """Generate a descriptive title for a conversation based on the first message"""
+    logger.info(f"Generating title for conversation using model: {model}")
+    
+    # Create a special prompt for title generation
+    title_prompt = [
+        {
+            "role": "system", 
+            "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. The title should be concise and reflect the main topic or query. Return only the title text with no additional explanation or formatting."
+        },
+        {
+            "role": "user",
+            "content": message
+        }
+    ]
+    
+    tries = 2  # Number of retries
+    last_error = None
+    
+    while tries > 0:
+        try:
+            # Generate a title using the same model but with a separate request
+            # Assuming client has a method like generate_completion or similar
+            # Adjust the method call based on the actual client implementation
+            if hasattr(client, 'generate_completion'):
+                title = await client.generate_completion(
+                    messages=title_prompt,
+                    model=model,
+                    temperature=0.7,
+                    max_tokens=60  # Titles should be short
+                )
+            elif hasattr(client, 'generate_stream'): # Fallback or alternative method?
+                 # If generate_completion isn't available, maybe adapt generate_stream?
+                 # This part needs clarification based on the client's capabilities.
+                 # For now, let's assume a hypothetical non-streaming call or adapt stream
+                 # Simplified adaptation: collect stream chunks
+                 title_chunks = []
+                 async for chunk in client.generate_stream(title_prompt, model, style=""): # Assuming style might not apply or needs default
+                     title_chunks.append(chunk)
+                 title = "".join(title_chunks)
+            else:
+                 raise NotImplementedError("Client does not support a suitable method for title generation.")
+
+            # Sanitize and limit the title
+            title = title.strip().strip('"\'').strip()
+            if len(title) > 40:  # Set a maximum title length
+                title = title[:37] + "..."
+                
+            logger.info(f"Generated title: {title}")
+            return title # Return successful title
+            
+        except Exception as e:
+            last_error = str(e)
+            logger.error(f"Error generating title (tries left: {tries - 1}): {last_error}")
+            tries -= 1
+            if tries > 0: # Only sleep if there are more retries
+                await asyncio.sleep(1)  # Small delay before retry
+    
+    # If all retries fail, log the last error and return a default title
+    logger.error(f"Failed to generate title after multiple retries. Last error: {last_error}")
+    return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
 
 async def generate_streaming_response(messages: List[Dict], model: str, style: str, client: Any, callback: Any) -> str:
     """Generate a streaming response from the model"""
