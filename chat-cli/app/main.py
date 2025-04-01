@@ -25,16 +25,18 @@ from app.ui.model_selector import ModelSelector, StyleSelector
 from app.ui.chat_list import ChatList
 from app.api.base import BaseModelClient
 from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title # Import title function
+# Import version here to avoid potential circular import issues at top level
+from app import __version__
 
 # --- Remove SettingsScreen class entirely ---
 
 class HistoryScreen(Screen):
     """Screen for viewing chat history."""
-    
+
     BINDINGS = [
         Binding("escape", "pop_screen", "Close"),
     ]
-    
+
     CSS = """
     #history-container {
         width: 80; # Keep HistoryScreen CSS
@@ -43,29 +45,29 @@ class HistoryScreen(Screen):
         border: round $primary;
         padding: 1; # Keep HistoryScreen CSS
     }
-    
+
     #title { # Keep HistoryScreen CSS
         width: 100%; # Keep HistoryScreen CSS
         content-align: center middle;
         text-align: center;
         padding-bottom: 1;
     }
-    
+
     ListView { # Keep HistoryScreen CSS
         width: 100%; # Keep HistoryScreen CSS
         height: 1fr;
         border: solid $primary;
     }
-    
+
     ListItem { # Keep HistoryScreen CSS
         padding: 1; # Keep HistoryScreen CSS
         border-bottom: solid $primary-darken-2;
     }
-    
+
     ListItem:hover { # Keep HistoryScreen CSS
         background: $primary-darken-1; # Keep HistoryScreen CSS
     }
-    
+
     #button-row { # Keep HistoryScreen CSS
         width: 100%; # Keep HistoryScreen CSS
         height: 3;
@@ -114,11 +116,11 @@ class HistoryScreen(Screen):
 
 class SimpleChatApp(App): # Keep SimpleChatApp class definition
     """Simplified Chat CLI application.""" # Keep SimpleChatApp docstring
-    
+
     TITLE = "Chat Console"
     SUB_TITLE = "AI Chat Interface" # Keep SimpleChatApp SUB_TITLE
     DARK = True # Keep SimpleChatApp DARK
-    
+
     # Ensure the log directory exists in a standard cache location
     log_dir = os.path.expanduser("~/.cache/chat-cli")
     os.makedirs(log_dir, exist_ok=True)
@@ -131,6 +133,24 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         padding: 0 1;
     }
 
+    #app-info-bar {
+        width: 100%;
+        height: 1;
+        background: $surface-darken-3;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
+    #version-info {
+        width: auto;
+        text-align: left;
+    }
+
+    #model-info {
+        width: 1fr;
+        text-align: right;
+    }
+
     #conversation-title { # Keep SimpleChatApp CSS
         width: 100%; # Keep SimpleChatApp CSS
         height: 2;
@@ -139,6 +159,19 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         content-align: center middle;
         text-align: center;
         border-bottom: solid $primary-darken-2;
+    }
+
+    #action-buttons {
+        width: 100%;
+        height: auto;
+        padding: 0 1; /* Corrected padding: 0 vertical, 1 horizontal */
+        align-horizontal: center;
+        background: $surface-darken-1;
+    }
+
+    #new-chat-button, #change-title-button {
+        margin: 0 1;
+        min-width: 15;
     }
 
     #messages-container { # Keep SimpleChatApp CSS
@@ -243,23 +276,22 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         align: center middle;
     }
     """
-    
+
     BINDINGS = [ # Keep SimpleChatApp BINDINGS, ensure Enter is not globally bound for settings
         Binding("q", "quit", "Quit", show=True, key_display="q"),
-        # Removed priority=True - actions should only trigger when input is NOT focused
-        Binding("n", "action_new_conversation", "New Chat", show=True, key_display="n"),
-        Binding("c", "action_new_conversation", "New Chat", show=False, key_display="c"), # Removed priority from alias
+        # Add priority=True to ensure these capture before input
+        Binding("n", "action_new_conversation", "New Chat", show=True, key_display="n", priority=True),
+        Binding("c", "action_new_conversation", "New Chat", show=False, key_display="c", priority=True), # Add priority to alias too
         Binding("escape", "escape", "Cancel / Stop", show=True, key_display="esc"), # Escape might close settings panel too
         Binding("ctrl+c", "quit", "Quit", show=False),
-        Binding("h", "view_history", "History", show=True, key_display="h"), # Action method checks focus
-        Binding("s", "settings", "Settings", show=True, key_display="s"),     # Action method checks focus
-        # Removed priority=True - action should only trigger when input is NOT focused
-        Binding("t", "action_update_title", "Update Title", show=True, key_display="t"),
+        Binding("h", "view_history", "History", show=True, key_display="h", priority=True), # Add priority
+        Binding("s", "settings", "Settings", show=True, key_display="s", priority=True),     # Add priority
+        Binding("t", "action_update_title", "Update Title", show=True, key_display="t", priority=True), # Add priority
     ] # Keep SimpleChatApp BINDINGS end
 
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
     is_generating = reactive(False) # Keep SimpleChatApp reactive var
-    
+
     def __init__(self, initial_text: Optional[str] = None): # Keep SimpleChatApp __init__
         super().__init__() # Keep SimpleChatApp __init__
         self.db = ChatDatabase() # Keep SimpleChatApp __init__
@@ -272,24 +304,33 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     def compose(self) -> ComposeResult: # Modify SimpleChatApp compose
         """Create the simplified application layout."""
         yield Header()
-        
+
         with Vertical(id="main-content"):
+            # Add app info bar with version and model info
+            with Horizontal(id="app-info-bar"):
+                yield Static(f"Chat Console v{__version__}", id="version-info") # Use imported version
+                yield Static(f"Model: {self.selected_model}", id="model-info")
+
             # Conversation title
             yield Static("New Conversation", id="conversation-title")
-            
+
+            # Add action buttons at the top for visibility
+            with Horizontal(id="action-buttons"):
+                yield Button("+ New Chat", id="new-chat-button", variant="success")
+                yield Button("✎ Change Title", id="change-title-button", variant="primary")
+
             # Messages area
             with ScrollableContainer(id="messages-container"):
                 # Will be populated with messages
                 pass
-            
+
             # Loading indicator
             yield Static("Generating response...", id="loading-indicator", classes="hidden")
-            
+
             # Input area
             with Container(id="input-area"):
                 # Use the custom InputWithFocus widget
                 yield InputWithFocus(placeholder="Type your message here...", id="message-input")
-                # Removed Static widgets previously used for diagnosis
 
             # --- Add Settings Panel (hidden initially) ---
             with Container(id="settings-panel"):
@@ -299,18 +340,30 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                  with Horizontal(id="settings-buttons"):
                      yield Button("Save", id="settings-save-button", variant="success")
                      yield Button("Cancel", id="settings-cancel-button", variant="error")
-        
+
         yield Footer()
-        
+
     async def on_mount(self) -> None: # Keep SimpleChatApp on_mount
         """Initialize the application on mount.""" # Keep SimpleChatApp on_mount docstring
+        # Add diagnostic logging for bindings
+        print(f"Registered bindings: {self.__class__.BINDINGS}") # Corrected access to class attribute
+
+        # Update the version display (already imported at top)
+        try:
+            version_info = self.query_one("#version-info", Static)
+            version_info.update(f"Chat Console v{__version__}")
+        except Exception:
+            pass # Silently ignore if widget not found yet
+
+        self.update_app_info()  # Update the model info
+
         # Check API keys and services # Keep SimpleChatApp on_mount
         api_issues = [] # Keep SimpleChatApp on_mount
         if not OPENAI_API_KEY: # Keep SimpleChatApp on_mount
             api_issues.append("- OPENAI_API_KEY is not set") # Keep SimpleChatApp on_mount
         if not ANTHROPIC_API_KEY: # Keep SimpleChatApp on_mount
             api_issues.append("- ANTHROPIC_API_KEY is not set") # Keep SimpleChatApp on_mount
-            
+
         # Check Ollama availability and try to start if not running # Keep SimpleChatApp on_mount
         from app.utils import ensure_ollama_running # Keep SimpleChatApp on_mount
         if not ensure_ollama_running(): # Keep SimpleChatApp on_mount
@@ -325,7 +378,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     api_issues.append("- No Ollama models found") # Keep SimpleChatApp on_mount
             except Exception: # Keep SimpleChatApp on_mount
                 api_issues.append("- Error connecting to Ollama server") # Keep SimpleChatApp on_mount
-        
+
         if api_issues: # Keep SimpleChatApp on_mount
             self.notify( # Keep SimpleChatApp on_mount
                 "Service issues detected:\n" + "\n".join(api_issues) +  # Keep SimpleChatApp on_mount
@@ -334,10 +387,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 severity="warning", # Keep SimpleChatApp on_mount
                 timeout=10 # Keep SimpleChatApp on_mount
             ) # Keep SimpleChatApp on_mount
-            
+
         # Create a new conversation # Keep SimpleChatApp on_mount
         await self.create_new_conversation() # Keep SimpleChatApp on_mount
-        
+
         # If initial text was provided, send it # Keep SimpleChatApp on_mount
         if self.initial_text: # Keep SimpleChatApp on_mount
             input_widget = self.query_one("#message-input", Input) # Keep SimpleChatApp on_mount
@@ -354,39 +407,35 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         # Create new conversation in database using selected model and style # Keep SimpleChatApp create_new_conversation
         model = self.selected_model # Keep SimpleChatApp create_new_conversation
         style = self.selected_style # Keep SimpleChatApp create_new_conversation
-        
+
         # Create a title for the new conversation # Keep SimpleChatApp create_new_conversation
         title = f"New conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})" # Keep SimpleChatApp create_new_conversation
-        
+
         # Create conversation in database using the correct method # Keep SimpleChatApp create_new_conversation
         log(f"Creating conversation with title: {title}, model: {model}, style: {style}") # Added log
         conversation_id = self.db.create_conversation(title, model, style) # Keep SimpleChatApp create_new_conversation
         log(f"Database returned conversation_id: {conversation_id}") # Added log
-        
+
         # Get the full conversation data # Keep SimpleChatApp create_new_conversation
         conversation_data = self.db.get_conversation(conversation_id) # Keep SimpleChatApp create_new_conversation
-        
+
         # Set as current conversation # Keep SimpleChatApp create_new_conversation
         self.current_conversation = Conversation.from_dict(conversation_data) # Keep SimpleChatApp create_new_conversation
-        
+
         # Update UI # Keep SimpleChatApp create_new_conversation
-        title = self.query_one("#conversation-title", Static) # Keep SimpleChatApp create_new_conversation
-        title.update(self.current_conversation.title) # Keep SimpleChatApp create_new_conversation
-        
+        title_widget = self.query_one("#conversation-title", Static) # Keep SimpleChatApp create_new_conversation
+        title_widget.update(self.current_conversation.title) # Keep SimpleChatApp create_new_conversation
+
         # Clear messages and update UI # Keep SimpleChatApp create_new_conversation
         self.messages = [] # Keep SimpleChatApp create_new_conversation
         log("Finished updating messages UI in create_new_conversation") # Added log
         await self.update_messages_ui() # Keep SimpleChatApp create_new_conversation
+        self.update_app_info() # Update model info after potentially loading conversation
 
     async def action_new_conversation(self) -> None: # Keep SimpleChatApp action_new_conversation
         """Handle the new conversation action.""" # Keep SimpleChatApp action_new_conversation docstring
         log("--- ENTERING action_new_conversation ---") # Add entry log
-        
-        # Check if the currently focused widget is the input widget
-        currently_focused = self.focused
-        if currently_focused and currently_focused.id == "message-input":
-            log("action_new_conversation skipped: input has focus")
-            return
+        # Focus check removed - relying on priority=True in binding
 
         log("action_new_conversation EXECUTING") # Add execution log
         await self.create_new_conversation() # Keep SimpleChatApp action_new_conversation
@@ -413,24 +462,41 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             log("Escape pressed, but settings not visible and not generating.") # Added log
             # pass # Keep SimpleChatApp action_escape comment
 
-    # Removed action_confirm_or_send - Enter is handled by Input submission # Keep SimpleChatApp comment
+    def update_app_info(self) -> None:
+        """Update the displayed app information."""
+        try:
+            # Update model info
+            model_info = self.query_one("#model-info", Static)
+            model_display = self.selected_model
+
+            # Try to get a more readable name from config if available
+            if self.selected_model in CONFIG["available_models"]:
+                provider = CONFIG["available_models"][self.selected_model]["provider"]
+                display_name = CONFIG["available_models"][self.selected_model]["display_name"]
+                model_display = f"{display_name} ({provider.capitalize()})"
+
+            model_info.update(f"Model: {model_display}")
+        except Exception as e:
+            # Silently handle errors to prevent crashes
+            log.error(f"Error updating app info: {e}") # Log error instead of passing silently
+            pass
 
     async def update_messages_ui(self) -> None: # Keep SimpleChatApp update_messages_ui
         """Update the messages UI.""" # Keep SimpleChatApp update_messages_ui docstring
         # Clear existing messages # Keep SimpleChatApp update_messages_ui
         messages_container = self.query_one("#messages-container") # Keep SimpleChatApp update_messages_ui
         messages_container.remove_children() # Keep SimpleChatApp update_messages_ui
-        
+
         # Add messages with a small delay between each # Keep SimpleChatApp update_messages_ui
         for message in self.messages: # Keep SimpleChatApp update_messages_ui
             display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp update_messages_ui
             messages_container.mount(display) # Keep SimpleChatApp update_messages_ui
             messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
             await asyncio.sleep(0.01)  # Small delay to prevent UI freezing # Keep SimpleChatApp update_messages_ui
-            
+
         # Final scroll to bottom # Keep SimpleChatApp update_messages_ui
         messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
-    
+
     async def on_input_submitted(self, event: Input.Submitted) -> None: # Keep SimpleChatApp on_input_submitted
         """Handle input submission (Enter key in the main input).""" # Keep SimpleChatApp on_input_submitted docstring
         await self.action_send_message() # Restore direct call # Keep SimpleChatApp on_input_submitted
@@ -439,38 +505,38 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         """Initiate message sending.""" # Keep SimpleChatApp action_send_message docstring
         input_widget = self.query_one("#message-input", Input) # Keep SimpleChatApp action_send_message
         content = input_widget.value.strip() # Keep SimpleChatApp action_send_message
-        
+
         if not content or not self.current_conversation: # Keep SimpleChatApp action_send_message
             return # Keep SimpleChatApp action_send_message
-        
+
         # Clear input # Keep SimpleChatApp action_send_message
         input_widget.value = "" # Keep SimpleChatApp action_send_message
-        
+
         # Create user message # Keep SimpleChatApp action_send_message
         user_message = Message(role="user", content=content) # Keep SimpleChatApp action_send_message
         self.messages.append(user_message) # Keep SimpleChatApp action_send_message
-        
+
         # Save to database # Keep SimpleChatApp action_send_message
         self.db.add_message( # Keep SimpleChatApp action_send_message
             self.current_conversation.id, # Keep SimpleChatApp action_send_message
             "user", # Keep SimpleChatApp action_send_message
             content # Keep SimpleChatApp action_send_message
         ) # Keep SimpleChatApp action_send_message
-        
+
         # Check if this is the first message in the conversation
         # Note: We check length *before* adding the potential assistant message
-        is_first_message = len(self.messages) == 1 
-        
+        is_first_message = len(self.messages) == 1
+
         # Update UI with user message first
         await self.update_messages_ui()
-        
+
         # If this is the first message and dynamic titles are enabled, generate one
         if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True):
             log("First message detected, generating title...")
             title_generation_in_progress = True # Use a local flag
             loading = self.query_one("#loading-indicator")
             loading.remove_class("hidden") # Show loading for title gen
-            
+
             try:
                 # Get appropriate client
                 model = self.selected_model
@@ -488,16 +554,16 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     self.current_conversation.id,
                     title=title
                 )
-                
+
                 # Update UI title
                 title_widget = self.query_one("#conversation-title", Static)
                 title_widget.update(title)
-                
+
                 # Update conversation object
                 self.current_conversation.title = title
-                
+
                 self.notify(f"Conversation title set to: {title}", severity="information", timeout=3)
-                
+
             except Exception as e:
                 log.error(f"Failed to generate title: {str(e)}")
                 self.notify(f"Failed to generate title: {str(e)}", severity="warning")
@@ -510,25 +576,25 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
         # Generate AI response (will set self.is_generating and handle loading indicator)
         await self.generate_response()
-        
+
         # Focus back on input
         input_widget.focus()
-    
+
     async def generate_response(self) -> None: # Keep SimpleChatApp generate_response
         """Generate an AI response.""" # Keep SimpleChatApp generate_response docstring
         if not self.current_conversation or not self.messages: # Keep SimpleChatApp generate_response
             return # Keep SimpleChatApp generate_response
-            
+
         self.is_generating = True # Keep SimpleChatApp generate_response
         log(f"Setting is_generating to True") # Added log
         loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
         loading.remove_class("hidden") # Keep SimpleChatApp generate_response
-        
+
         try: # Keep SimpleChatApp generate_response
             # Get conversation parameters # Keep SimpleChatApp generate_response
             model = self.selected_model # Keep SimpleChatApp generate_response
             style = self.selected_style # Keep SimpleChatApp generate_response
-            
+
             # Convert messages to API format # Keep SimpleChatApp generate_response
             api_messages = [] # Keep SimpleChatApp generate_response
             for msg in self.messages: # Keep SimpleChatApp generate_response
@@ -536,7 +602,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     "role": msg.role, # Keep SimpleChatApp generate_response
                     "content": msg.content # Keep SimpleChatApp generate_response
                 }) # Keep SimpleChatApp generate_response
-                
+
             # Get appropriate client # Keep SimpleChatApp generate_response
             try: # Keep SimpleChatApp generate_response
                 client = BaseModelClient.get_client_for_model(model) # Keep SimpleChatApp generate_response
@@ -545,7 +611,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             except Exception as e: # Keep SimpleChatApp generate_response
                 self.notify(f"Failed to initialize model client: {str(e)}", severity="error") # Keep SimpleChatApp generate_response
                 return # Keep SimpleChatApp generate_response
-                
+
             # Start streaming response # Keep SimpleChatApp generate_response
             assistant_message = Message(role="assistant", content="Thinking...") # Keep SimpleChatApp generate_response
             self.messages.append(assistant_message) # Keep SimpleChatApp generate_response
@@ -553,24 +619,24 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             message_display = MessageDisplay(assistant_message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp generate_response
             messages_container.mount(message_display) # Keep SimpleChatApp generate_response
             messages_container.scroll_end(animate=False) # Keep SimpleChatApp generate_response
-            
+
             # Add small delay to show thinking state # Keep SimpleChatApp generate_response
             await asyncio.sleep(0.5) # Keep SimpleChatApp generate_response
-            
+
             # Stream chunks to the UI with synchronization # Keep SimpleChatApp generate_response
             update_lock = asyncio.Lock() # Keep SimpleChatApp generate_response
-            
+
             async def update_ui(content: str): # Keep SimpleChatApp generate_response
                 if not self.is_generating: # Keep SimpleChatApp generate_response
                     log("update_ui called but is_generating is False, returning.") # Added log
                     return # Keep SimpleChatApp generate_response
-                
+
                 async with update_lock: # Keep SimpleChatApp generate_response
                     try: # Keep SimpleChatApp generate_response
                         # Clear thinking indicator on first content # Keep SimpleChatApp generate_response
                         if assistant_message.content == "Thinking...": # Keep SimpleChatApp generate_response
                             assistant_message.content = "" # Keep SimpleChatApp generate_response
-                        
+
                         # Update message with full content so far # Keep SimpleChatApp generate_response
                         assistant_message.content = content # Keep SimpleChatApp generate_response
                         # Update UI with full content # Keep SimpleChatApp generate_response
@@ -583,7 +649,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         self.refresh(layout=True) # Keep SimpleChatApp generate_response
                     except Exception as e: # Keep SimpleChatApp generate_response
                         log.error(f"Error updating UI: {str(e)}") # Use log instead of logger
-                
+
             # Generate the response with timeout and cleanup # Keep SimpleChatApp generate_response
             generation_task = None # Keep SimpleChatApp generate_response
             try: # Keep SimpleChatApp generate_response
@@ -598,10 +664,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         update_ui # Keep SimpleChatApp generate_response
                     ) # Keep SimpleChatApp generate_response
                 ) # Keep SimpleChatApp generate_response
-                
+
                 # Wait for response with timeout # Keep SimpleChatApp generate_response
                 full_response = await asyncio.wait_for(generation_task, timeout=60)  # Longer timeout # Keep SimpleChatApp generate_response
-                
+
                 # Save to database only if we got a complete response # Keep SimpleChatApp generate_response
                 if self.is_generating and full_response: # Keep SimpleChatApp generate_response
                     log("Generation finished, saving full response to DB") # Added log
@@ -615,19 +681,19 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     await asyncio.sleep(0.1)  # Wait for UI to update # Keep SimpleChatApp generate_response
                 elif not full_response:
                     log("Generation finished but full_response is empty/None") # Added log
-                    
+
             except asyncio.TimeoutError: # Keep SimpleChatApp generate_response
                 log.error("Response generation timed out") # Use log instead of logger
                 error_msg = "Response generation timed out. The model may be busy or unresponsive. Please try again." # Keep SimpleChatApp generate_response
                 self.notify(error_msg, severity="error") # Keep SimpleChatApp generate_response
-                
+
                 # Remove the incomplete message # Keep SimpleChatApp generate_response
                 if self.messages and self.messages[-1].role == "assistant": # Keep SimpleChatApp generate_response
                     self.messages.pop() # Keep SimpleChatApp generate_response
-                
+
                 # Update UI to remove the incomplete message # Keep SimpleChatApp generate_response
                 await self.update_messages_ui() # Keep SimpleChatApp generate_response
-                
+
             finally: # Keep SimpleChatApp generate_response
                 # Ensure task is properly cancelled and cleaned up # Keep SimpleChatApp generate_response
                 if generation_task: # Keep SimpleChatApp generate_response
@@ -638,10 +704,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                             await generation_task # Keep SimpleChatApp generate_response
                         except (asyncio.CancelledError, Exception) as e: # Keep SimpleChatApp generate_response
                             log.error(f"Error cleaning up generation task: {str(e)}") # Use log instead of logger
-                    
+
                 # Force a final UI refresh # Keep SimpleChatApp generate_response
                 self.refresh(layout=True) # Keep SimpleChatApp generate_response
-                
+
         except Exception as e: # Keep SimpleChatApp generate_response
             log.error(f"Exception during generate_response: {str(e)}") # Added log
             self.notify(f"Error generating response: {str(e)}", severity="error") # Keep SimpleChatApp generate_response
@@ -654,21 +720,31 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             self.is_generating = False # Keep SimpleChatApp generate_response
             loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
             loading.add_class("hidden") # Keep SimpleChatApp generate_response
-            
+
     def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None: # Keep SimpleChatApp on_model_selector_model_selected
         """Handle model selection""" # Keep SimpleChatApp on_model_selector_model_selected docstring
         self.selected_model = event.model_id # Keep SimpleChatApp on_model_selector_model_selected
-        
+        self.update_app_info()  # Update the displayed model info
+
     def on_style_selector_style_selected(self, event: StyleSelector.StyleSelected) -> None: # Keep SimpleChatApp on_style_selector_style_selected
         """Handle style selection""" # Keep SimpleChatApp on_style_selector_style_selected docstring
         self.selected_style = event.style_id # Keep SimpleChatApp on_style_selector_style_selected
-            
+
     async def on_button_pressed(self, event: Button.Pressed) -> None: # Modify SimpleChatApp on_button_pressed
         """Handle button presses."""
         button_id = event.button.id
-        
+
+        if button_id == "new-chat-button":
+            # Create a new chat
+            await self.create_new_conversation()
+            # Focus back on input after creating new chat
+            self.query_one("#message-input").focus()
+        elif button_id == "change-title-button":
+            # Change title
+            # Note: action_update_title already checks self.current_conversation
+            await self.action_update_title()
         # --- Handle Settings Panel Buttons ---
-        if button_id == "settings-cancel-button":
+        elif button_id == "settings-cancel-button":
             settings_panel = self.query_one("#settings-panel")
             settings_panel.remove_class("visible")
             self.query_one("#message-input").focus() # Focus input after closing
@@ -678,10 +754,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # Get selected values (assuming selectors update self.selected_model/style directly via events)
                 model_to_save = self.selected_model
                 style_to_save = self.selected_style
-                
+
                 # Save globally
                 save_settings_to_config(model_to_save, style_to_save)
-                
+
                 # Update current conversation if one exists
                 if self.current_conversation:
                     self.db.update_conversation(
@@ -699,11 +775,11 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 settings_panel = self.query_one("#settings-panel")
                 settings_panel.remove_class("visible")
                 self.query_one("#message-input").focus() # Focus input after closing
-                
+
         # --- Keep other button logic if needed (currently none) ---
         # elif button_id == "send-button": # Example if send button existed
         #     await self.action_send_message()
-            
+
     async def view_chat_history(self) -> None: # Keep SimpleChatApp view_chat_history
         """Show chat history in a popup.""" # Keep SimpleChatApp view_chat_history docstring
         # Get recent conversations # Keep SimpleChatApp view_chat_history
@@ -711,32 +787,33 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         if not conversations: # Keep SimpleChatApp view_chat_history
             self.notify("No chat history found", severity="warning") # Keep SimpleChatApp view_chat_history
             return # Keep SimpleChatApp view_chat_history
-            
+
         async def handle_selection(selected_id: int) -> None: # Keep SimpleChatApp view_chat_history
             if not selected_id: # Keep SimpleChatApp view_chat_history
                 return # Keep SimpleChatApp view_chat_history
-                
+
             # Get full conversation # Keep SimpleChatApp view_chat_history
             conversation_data = self.db.get_conversation(selected_id) # Keep SimpleChatApp view_chat_history
             if not conversation_data: # Keep SimpleChatApp view_chat_history
                 self.notify("Could not load conversation", severity="error") # Keep SimpleChatApp view_chat_history
                 return # Keep SimpleChatApp view_chat_history
-                
+
             # Update current conversation # Keep SimpleChatApp view_chat_history
             self.current_conversation = Conversation.from_dict(conversation_data) # Keep SimpleChatApp view_chat_history
-            
+
             # Update title # Keep SimpleChatApp view_chat_history
             title = self.query_one("#conversation-title", Static) # Keep SimpleChatApp view_chat_history
             title.update(self.current_conversation.title) # Keep SimpleChatApp view_chat_history
-            
+
             # Load messages # Keep SimpleChatApp view_chat_history
             self.messages = [Message(**msg) for msg in self.current_conversation.messages] # Keep SimpleChatApp view_chat_history
             await self.update_messages_ui() # Keep SimpleChatApp view_chat_history
-            
+
             # Update model and style selectors # Keep SimpleChatApp view_chat_history
             self.selected_model = self.current_conversation.model # Keep SimpleChatApp view_chat_history
             self.selected_style = self.current_conversation.style # Keep SimpleChatApp view_chat_history
-            
+            self.update_app_info() # Update info bar after loading history
+
         self.push_screen(HistoryScreen(conversations, handle_selection)) # Keep SimpleChatApp view_chat_history
 
     async def action_view_history(self) -> None: # Keep SimpleChatApp action_view_history
@@ -766,12 +843,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     async def action_update_title(self) -> None:
         """Allow users to manually change the conversation title"""
         log("--- ENTERING action_update_title ---") # Add entry log
-        
-        # Check focus using self.focused instead of has_focus
-        currently_focused = self.focused
-        if currently_focused and currently_focused.id == "message-input":
-            log("action_update_title skipped: input has focus")
-            return
+        # Focus check removed - relying on priority=True in binding
 
         log("action_update_title EXECUTING") # Add execution log
 
