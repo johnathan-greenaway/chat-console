@@ -4,9 +4,13 @@ import time
 import asyncio
 import subprocess
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from datetime import datetime
 from .config import CONFIG, save_config
+
+# Import SimpleChatApp for type hinting only if TYPE_CHECKING is True
+if TYPE_CHECKING:
+    from .main import SimpleChatApp
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -74,7 +78,8 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     logger.error(f"Failed to generate title after multiple retries. Last error: {last_error}")
     return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
 
-async def generate_streaming_response(messages: List[Dict], model: str, style: str, client: Any, callback: Any) -> str:
+# Modified signature to accept app instance
+async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict], model: str, style: str, client: Any, callback: Any) -> str:
     """Generate a streaming response from the model"""
     logger.info(f"Starting streaming response with model: {model}")
     full_response = ""
@@ -84,6 +89,11 @@ async def generate_streaming_response(messages: List[Dict], model: str, style: s
     
     try:
         async for chunk in client.generate_stream(messages, model, style):
+            # Check if generation was cancelled by the app (e.g., via escape key)
+            if not app.is_generating:
+                logger.info("Generation cancelled by app flag.")
+                break # Exit the loop immediately
+
             if chunk:  # Only process non-empty chunks
                 buffer.append(chunk)
                 current_time = time.time()
@@ -92,6 +102,10 @@ async def generate_streaming_response(messages: List[Dict], model: str, style: s
                 if current_time - last_update >= update_interval or len(''.join(buffer)) > 100:
                     new_content = ''.join(buffer)
                     full_response += new_content
+                    # Check again before calling callback, in case it was cancelled during chunk processing
+                    if not app.is_generating:
+                        logger.info("Generation cancelled before UI update.")
+                        break
                     await callback(full_response)
                     buffer = []
                     last_update = current_time
@@ -99,16 +113,22 @@ async def generate_streaming_response(messages: List[Dict], model: str, style: s
                     # Small delay to let UI catch up
                     await asyncio.sleep(0.05)
         
-        # Send any remaining content
-        if buffer:
+        # Send any remaining content if generation wasn't cancelled
+        if buffer and app.is_generating:
             new_content = ''.join(buffer)
             full_response += new_content
             await callback(full_response)
         
-        logger.info("Streaming response completed")
+        if app.is_generating:
+            logger.info("Streaming response completed normally.")
+        else:
+             logger.info("Streaming response loop exited due to cancellation.")
+             
         return full_response
     except Exception as e:
         logger.error(f"Error in streaming response: {str(e)}")
+        # Ensure the app knows generation stopped on error
+        app.is_generating = False
         raise
 
 def ensure_ollama_running() -> bool:
