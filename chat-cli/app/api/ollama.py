@@ -15,6 +15,9 @@ class OllamaClient(BaseModelClient):
         self.base_url = OLLAMA_BASE_URL.rstrip('/')
         logger.info(f"Initializing Ollama client with base URL: {self.base_url}")
         
+        # Track active stream session
+        self._active_stream_session = None
+        
         # Try to start Ollama if not running
         if not ensure_ollama_running():
             raise Exception(f"Failed to start Ollama server. Please ensure Ollama is installed and try again.")
@@ -158,6 +161,7 @@ class OllamaClient(BaseModelClient):
         prompt = self._prepare_messages(messages, style)
         retries = 2
         last_error = None
+        self._active_stream_session = None  # Track the active session
         
         while retries >= 0:
             try:
@@ -192,7 +196,10 @@ class OllamaClient(BaseModelClient):
                             logger.info("Model pulled successfully")
                 
                 # Now proceed with actual generation
-                async with aiohttp.ClientSession() as session:
+                session = aiohttp.ClientSession()
+                self._active_stream_session = session  # Store reference to active session
+                
+                try:
                     logger.debug(f"Sending streaming request to {self.base_url}/api/generate")
                     async with session.post(
                         f"{self.base_url}/api/generate",
@@ -216,6 +223,9 @@ class OllamaClient(BaseModelClient):
                                     continue
                         logger.info("Streaming completed successfully")
                         return
+                finally:
+                    self._active_stream_session = None  # Clear reference when done
+                    await session.close()  # Ensure session is closed
                         
             except aiohttp.ClientConnectorError:
                 last_error = "Could not connect to Ollama server. Make sure Ollama is running and accessible at " + self.base_url
@@ -223,6 +233,9 @@ class OllamaClient(BaseModelClient):
                 last_error = f"Ollama API error: {e.status} - {e.message}"
             except aiohttp.ClientTimeout:
                 last_error = "Request to Ollama server timed out"
+            except asyncio.CancelledError:
+                logger.info("Streaming cancelled by client")
+                raise  # Propagate cancellation
             except Exception as e:
                 last_error = f"Error streaming completion: {str(e)}"
             
@@ -233,3 +246,10 @@ class OllamaClient(BaseModelClient):
                 await asyncio.sleep(1)
                 
         raise Exception(last_error)
+        
+    async def cancel_stream(self) -> None:
+        """Cancel any active streaming request"""
+        if self._active_stream_session:
+            logger.info("Cancelling active stream session")
+            await self._active_stream_session.close()
+            self._active_stream_session = None

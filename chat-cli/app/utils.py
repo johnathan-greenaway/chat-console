@@ -86,45 +86,83 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
     buffer = []
     last_update = time.time()
     update_interval = 0.1  # Update UI every 100ms
+    generation_task = None
     
     try:
-        async for chunk in client.generate_stream(messages, model, style):
-            # Check if generation was cancelled by the app (e.g., via escape key)
-            if not app.is_generating:
-                logger.info("Generation cancelled by app flag.")
-                break # Exit the loop immediately
+        # Store reference to the active stream generation task
+        stream_gen = client.generate_stream(messages, model, style)
+        
+        # Check for cancellation
+        async def check_cancellation():
+            while app.is_generating:
+                await asyncio.sleep(0.1)  # Check every 100ms
+            # If we exit the loop, generation was cancelled
+            logger.info("Cancellation check detected is_generating = False")
+            
+            # Cancel the actual network request in the client
+            if hasattr(client, 'cancel_stream'):
+                logger.info("Calling client.cancel_stream()")
+                await client.cancel_stream()
+            
+            # Cancel our generation task if it exists
+            if generation_task and not generation_task.done():
+                logger.info("Cancelling generation task")
+                generation_task.cancel()
+        
+        # Start the cancellation checker in the background
+        cancellation_task = asyncio.create_task(check_cancellation())
+        
+        try:
+            async for chunk in stream_gen:
+                # Check if generation was cancelled by the app (e.g., via escape key)
+                if not app.is_generating:
+                    logger.info("Generation cancelled by app flag.")
+                    break  # Exit the loop immediately
 
-            if chunk:  # Only process non-empty chunks
-                buffer.append(chunk)
-                current_time = time.time()
-                
-                # Update UI if enough time has passed or buffer is large
-                if current_time - last_update >= update_interval or len(''.join(buffer)) > 100:
-                    new_content = ''.join(buffer)
-                    full_response += new_content
-                    # Check again before calling callback, in case it was cancelled during chunk processing
-                    if not app.is_generating:
-                        logger.info("Generation cancelled before UI update.")
-                        break
-                    await callback(full_response)
-                    buffer = []
-                    last_update = current_time
+                if chunk:  # Only process non-empty chunks
+                    buffer.append(chunk)
+                    current_time = time.time()
                     
-                    # Small delay to let UI catch up
-                    await asyncio.sleep(0.05)
-        
-        # Send any remaining content if generation wasn't cancelled
-        if buffer and app.is_generating:
-            new_content = ''.join(buffer)
-            full_response += new_content
-            await callback(full_response)
-        
-        if app.is_generating:
-            logger.info("Streaming response completed normally.")
-        else:
-             logger.info("Streaming response loop exited due to cancellation.")
-             
-        return full_response
+                    # Update UI if enough time has passed or buffer is large
+                    if current_time - last_update >= update_interval or len(''.join(buffer)) > 100:
+                        new_content = ''.join(buffer)
+                        full_response += new_content
+                        # Check again before calling callback, in case it was cancelled during chunk processing
+                        if not app.is_generating:
+                            logger.info("Generation cancelled before UI update.")
+                            break
+                        await callback(full_response)
+                        buffer = []
+                        last_update = current_time
+                        
+                        # Small delay to let UI catch up
+                        await asyncio.sleep(0.05)
+            
+            # Send any remaining content if generation wasn't cancelled
+            if buffer and app.is_generating:
+                new_content = ''.join(buffer)
+                full_response += new_content
+                await callback(full_response)
+            
+            if app.is_generating:
+                logger.info("Streaming response completed normally.")
+            else:
+                logger.info("Streaming response loop exited due to cancellation.")
+                
+            return full_response
+            
+        except asyncio.CancelledError:
+            logger.info("Stream generation was cancelled")
+            raise
+        finally:
+            # Clean up cancellation task
+            if not cancellation_task.done():
+                cancellation_task.cancel()
+                try:
+                    await cancellation_task
+                except asyncio.CancelledError:
+                    pass
+                
     except Exception as e:
         logger.error(f"Error in streaming response: {str(e)}")
         # Ensure the app knows generation stopped on error
