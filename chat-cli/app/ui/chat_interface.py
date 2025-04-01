@@ -136,8 +136,16 @@ class InputWithFocus(Input):
     # Keep custom handling only for Enter submission if needed,
     # but standard Input might already do this. Let's simplify
     # and remove the custom on_key entirely for now unless
-    # specific focus/cursor issues reappear.
-    pass # Inherit default Input behavior
+    def on_key(self, event) -> None:
+        # Let global hotkeys 'n' and 't' pass through even when input has focus
+        # by simply *not* stopping the event here.
+        if event.key == "n" or event.key == "t":
+            # Do nothing, allow the event to bubble up to the app level bindings.
+            return # Explicitly return to prevent further processing in this method
+
+        # For all other keys, the event continues to be processed by the Input
+        # widget's internal handlers (like _on_key shown in the traceback)
+        # because we didn't stop it in this method.
 
 class ChatInterface(Container):
     """Main chat interface container"""

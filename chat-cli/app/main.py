@@ -118,7 +118,11 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     TITLE = "Chat Console"
     SUB_TITLE = "AI Chat Interface" # Keep SimpleChatApp SUB_TITLE
     DARK = True # Keep SimpleChatApp DARK
-    LOG_FILE = "textual.log" # Explicitly set log file location
+    
+    # Ensure the log directory exists in a standard cache location
+    log_dir = os.path.expanduser("~/.cache/chat-cli")
+    os.makedirs(log_dir, exist_ok=True)
+    LOG_FILE = os.path.join(log_dir, "textual.log") # Use absolute path
 
     CSS = """ # Keep SimpleChatApp CSS start
     #main-content { # Keep SimpleChatApp CSS
@@ -377,10 +381,11 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     async def action_new_conversation(self) -> None: # Keep SimpleChatApp action_new_conversation
         """Handle the new conversation action.""" # Keep SimpleChatApp action_new_conversation docstring
         log("--- ENTERING action_new_conversation ---") # Add entry log
-        # Revert focus check to query and use has_focus
-        input_widget = self.query_one("#message-input", Input)
-        if input_widget.has_focus:
-            log("action_new_conversation skipped: input has focus") # Optional log
+        
+        # Check if the currently focused widget is the input widget
+        currently_focused = self.focused
+        if currently_focused and currently_focused.id == "message-input":
+            log("action_new_conversation skipped: input has focus")
             return
 
         log("action_new_conversation EXECUTING") # Add execution log
@@ -761,10 +766,11 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     async def action_update_title(self) -> None:
         """Allow users to manually change the conversation title"""
         log("--- ENTERING action_update_title ---") # Add entry log
-        # Revert focus check to query and use has_focus
-        input_widget = self.query_one("#message-input", Input)
-        if input_widget.has_focus:
-            log("action_update_title skipped: input has focus") # Optional log
+        
+        # Check focus using self.focused instead of has_focus
+        currently_focused = self.focused
+        if currently_focused and currently_focused.id == "message-input":
+            log("action_update_title skipped: input has focus")
             return
 
         log("action_update_title EXECUTING") # Add execution log
