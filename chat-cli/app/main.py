@@ -453,11 +453,18 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             self.query_one("#message-input").focus() # Focus input after closing settings
         elif self.is_generating:
             log("Stopping generation") # Added log
-            # Otherwise, stop generation if running
+            # First update the flag so all components know generation is stopping
             self.is_generating = False # Keep SimpleChatApp action_escape
+            
+            # Show notification to user
             self.notify("Generation stopped", severity="warning") # Keep SimpleChatApp action_escape
+            
+            # Hide loading indicator
             loading = self.query_one("#loading-indicator") # Keep SimpleChatApp action_escape
             loading.add_class("hidden") # Keep SimpleChatApp action_escape
+            
+            # The cancellation checker in generate_streaming_response will detect
+            # is_generating = False and call cancel_stream() on the client
         else: # Optional: Add other escape behavior for the main screen if desired # Keep SimpleChatApp action_escape comment
             log("Escape pressed, but settings not visible and not generating.") # Added log
             # pass # Keep SimpleChatApp action_escape comment
@@ -654,7 +661,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             generation_task = None # Keep SimpleChatApp generate_response
             try: # Keep SimpleChatApp generate_response
                 # Create a task for the response generation # Keep SimpleChatApp generate_response
-                generation_task = asyncio.create_task( # Keep SimpleChatApp generate_response
+                self.generation_task = asyncio.create_task( # Make this an instance variable
                     generate_streaming_response( # Keep SimpleChatApp generate_response
                         self, # Pass the app instance
                         api_messages, # Keep SimpleChatApp generate_response
@@ -664,6 +671,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         update_ui # Keep SimpleChatApp generate_response
                     ) # Keep SimpleChatApp generate_response
                 ) # Keep SimpleChatApp generate_response
+                generation_task = self.generation_task  # Keep local reference for later checks
 
                 # Wait for response with timeout # Keep SimpleChatApp generate_response
                 full_response = await asyncio.wait_for(generation_task, timeout=60)  # Longer timeout # Keep SimpleChatApp generate_response
