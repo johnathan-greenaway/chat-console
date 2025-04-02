@@ -874,10 +874,8 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             
     def action_model_browser(self) -> None:
         """Open the Ollama model browser screen."""
-        # Only trigger if message input is not focused
-        input_widget = self.query_one("#message-input", Input)
-        if not input_widget.has_focus:
-            self.push_screen(ModelBrowserScreen())
+        # Always trigger regardless of focus
+        self.push_screen(ModelBrowserScreen())
 
     def action_settings(self) -> None: # Modify SimpleChatApp action_settings
         """Action to open/close settings panel via key binding."""

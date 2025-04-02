@@ -387,6 +387,18 @@ class OllamaClient(BaseModelClient):
                 "size": 2000000000
             },
             {
+                "name": "orca-mini:3b",
+                "description": "Small 3B parameter model optimized for chat",
+                "model_family": "Orca",
+                "size": 2000000000
+            },
+            {
+                "name": "orca-mini:7b",
+                "description": "Medium 7B parameter model optimized for chat",
+                "model_family": "Orca",
+                "size": 4000000000
+            },
+            {
                 "name": "llava",
                 "description": "Multimodal model with vision capabilities",
                 "model_family": "LLaVA",
@@ -399,9 +411,27 @@ class OllamaClient(BaseModelClient):
                 "size": 4200000000
             },
             {
+                "name": "codellama:7b",
+                "description": "7B parameter Llama model for code generation",
+                "model_family": "CodeLlama",
+                "size": 4200000000
+            },
+            {
+                "name": "codellama:13b",
+                "description": "13B parameter Llama model for code generation",
+                "model_family": "CodeLlama",
+                "size": 8000000000
+            },
+            {
                 "name": "neural-chat",
                 "description": "Intel's Neural Chat model",
                 "model_family": "Neural Chat",
+                "size": 4200000000
+            },
+            {
+                "name": "wizard-math",
+                "description": "Specialized for math problem solving",
+                "model_family": "Wizard",
                 "size": 4200000000
             },
             {
@@ -409,6 +439,78 @@ class OllamaClient(BaseModelClient):
                 "description": "01AI's Yi model, high performance",
                 "model_family": "Yi",
                 "size": 4500000000
+            },
+            {
+                "name": "yi:6b",
+                "description": "01AI's Yi 6B parameter model",
+                "model_family": "Yi",
+                "size": 3500000000
+            },
+            {
+                "name": "yi:9b",
+                "description": "01AI's Yi 9B parameter model",
+                "model_family": "Yi",
+                "size": 5000000000
+            },
+            {
+                "name": "yi:34b",
+                "description": "01AI's Yi 34B parameter model, excellent performance",
+                "model_family": "Yi",
+                "size": 20000000000
+            },
+            {
+                "name": "stable-code",
+                "description": "Stability AI's code generation model",
+                "model_family": "StableCode",
+                "size": 4200000000
+            },
+            {
+                "name": "llama2",
+                "description": "Meta's Llama 2 model",
+                "model_family": "Llama",
+                "size": 4200000000
+            },
+            {
+                "name": "llama2:7b",
+                "description": "Meta's Llama 2 7B parameter model",
+                "model_family": "Llama",
+                "size": 4200000000
+            },
+            {
+                "name": "llama2:13b",
+                "description": "Meta's Llama 2 13B parameter model",
+                "model_family": "Llama",
+                "size": 8000000000
+            },
+            {
+                "name": "llama2:70b",
+                "description": "Meta's Llama 2 70B parameter model",
+                "model_family": "Llama", 
+                "size": 40000000000
+            },
+            {
+                "name": "deepseek-coder",
+                "description": "DeepSeek's code generation model",
+                "model_family": "DeepSeek",
+                "size": 4200000000
+            },
+            {
+                "name": "phi2",
+                "description": "Microsoft's Phi-2 model, small but capable",
+                "model_family": "Phi",
+                "size": 2800000000
+            },
+            {
+                "name": "llava:13b",
+                "description": "Multimodal model with vision capabilities (13B)",
+                "model_family": "LLaVA",
+                "size": 8000000000
+            },
+            {
+                "name": "llava:34b",
+                "description": "Multimodal model with vision capabilities (34B)",
+                "model_family": "LLaVA",
+                "size": 20000000000
             }
         ]
         

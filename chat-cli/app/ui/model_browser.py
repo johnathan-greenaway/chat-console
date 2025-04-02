@@ -24,13 +24,26 @@ class ModelBrowser(Container):
         padding: 1;
     }
     
-    #browser-title {
+    #browser-header {
         width: 100%;
-        height: 1;
+        height: 3;
+        layout: horizontal;
+        margin-bottom: 1;
+    }
+    
+    #browser-title {
+        width: 1fr;
+        height: 3;
         content-align: center middle;
         text-align: center;
         color: $text;
         background: $primary-darken-2;
+    }
+    
+    #close-button {
+        width: 10;
+        height: 3;
+        margin-left: 1;
     }
     
     #search-container {
@@ -183,8 +196,10 @@ class ModelBrowser(Container):
     
     def compose(self) -> ComposeResult:
         """Set up the model browser"""
-        # Title
-        yield Static("Ollama Model Browser", id="browser-title")
+        # Title and close button
+        with Container(id="browser-header"):
+            yield Static("Ollama Model Browser", id="browser-title")
+            yield Button("Close", id="close-button", variant="error")
         
         # Search bar
         with Container(id="search-container"):
@@ -333,7 +348,12 @@ class ModelBrowser(Container):
         """Handle button presses"""
         button_id = event.button.id
         
-        if button_id == "local-tab":
+        if button_id == "close-button":
+            # Close the model browser by popping the screen
+            if hasattr(self.app, "pop_screen"):
+                self.app.pop_screen()
+            return
+        elif button_id == "local-tab":
             self._switch_tab("local")
         elif button_id == "available-tab":
             self._switch_tab("available")
@@ -354,13 +374,13 @@ class ModelBrowser(Container):
                 self.app.call_later(self.load_available_models)
         elif button_id in ["pull-button", "pull-available-button"]:
             # Start model pull
-            self._pull_selected_model()
+            self.app.call_later(self._pull_selected_model)
         elif button_id == "delete-button":
             # Delete selected model
-            self._delete_selected_model()
+            self.app.call_later(self._delete_selected_model)
         elif button_id in ["details-button", "details-available-button"]:
             # Show model details
-            self._show_model_details()
+            self.app.call_later(self._show_model_details)
     
     def _switch_tab(self, tab: str) -> None:
         """Switch between local and available tabs"""
@@ -397,6 +417,12 @@ class ModelBrowser(Container):
             self.notify("No model selected", severity="warning")
             return
         
+        # Show confirmation dialog
+        msg = f"Download model '{model_id}'? This may take several minutes depending on model size."
+        confirmed = await self.app.run_modal("confirm_dialog", msg)
+        if not confirmed:
+            return
+            
         if self.is_pulling:
             self.notify("Already pulling a model", severity="warning")
             return
