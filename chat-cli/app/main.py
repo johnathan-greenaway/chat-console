@@ -23,12 +23,33 @@ from app.config import CONFIG, OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_BASE_UR
 from app.ui.chat_interface import MessageDisplay, InputWithFocus
 from app.ui.model_selector import ModelSelector, StyleSelector
 from app.ui.chat_list import ChatList
+from app.ui.model_browser import ModelBrowser
 from app.api.base import BaseModelClient
 from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title # Import title function
 # Import version here to avoid potential circular import issues at top level
 from app import __version__
 
 # --- Remove SettingsScreen class entirely ---
+
+class ModelBrowserScreen(Screen):
+    """Screen for browsing Ollama models."""
+
+    BINDINGS = [
+        Binding("escape", "pop_screen", "Close"),
+    ]
+    
+    CSS = """
+    #browser-wrapper {
+        width: 100%;
+        height: 100%;
+        background: $surface;
+    }
+    """
+    
+    def compose(self) -> ComposeResult:
+        """Create the model browser screen layout."""
+        with Container(id="browser-wrapper"):
+            yield ModelBrowser()
 
 class HistoryScreen(Screen):
     """Screen for viewing chat history."""
@@ -287,6 +308,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         Binding("h", "view_history", "History", show=True, key_display="h", priority=True), # Add priority
         Binding("s", "settings", "Settings", show=True, key_display="s", priority=True),     # Add priority
         Binding("t", "action_update_title", "Update Title", show=True, key_display="t", priority=True), # Add priority
+        Binding("m", "model_browser", "Model Browser", show=True, key_display="m", priority=True), # Add model browser binding
     ] # Keep SimpleChatApp BINDINGS end
 
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
@@ -850,6 +872,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         input_widget = self.query_one("#message-input", Input) # Keep SimpleChatApp action_view_history
         if not input_widget.has_focus: # Keep SimpleChatApp action_view_history
             await self.view_chat_history() # Keep SimpleChatApp action_view_history
+            
+    def action_model_browser(self) -> None:
+        """Open the Ollama model browser screen."""
+        # Only trigger if message input is not focused
+        input_widget = self.query_one("#message-input", Input)
+        if not input_widget.has_focus:
+            self.push_screen(ModelBrowserScreen())
 
     def action_settings(self) -> None: # Modify SimpleChatApp action_settings
         """Action to open/close settings panel via key binding."""
@@ -880,7 +909,51 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             return
 
         # --- Define the Modal Class ---
-        class TitleInputModal(Static):
+        class ConfirmDialog(Static):
+            """A simple confirmation dialog."""
+            
+            class Confirmed(Message):
+                """Message sent when the dialog is confirmed."""
+                def __init__(self, confirmed: bool):
+                    self.confirmed = confirmed
+                    super().__init__()
+            
+            def __init__(self, message: str):
+                super().__init__()
+                self.message = message
+            
+            def compose(self) -> ComposeResult:
+                with Vertical(id="confirm-dialog"):
+                    yield Static(self.message, id="confirm-message")
+                    with Horizontal():
+                        yield Button("No", id="no-button", variant="error")
+                        yield Button("Yes", id="yes-button", variant="success")
+            
+            @on(Button.Pressed, "#yes-button")
+            def confirm(self, event: Button.Pressed) -> None:
+                self.post_message(self.Confirmed(True))
+                self.remove() # Close the dialog
+            
+            @on(Button.Pressed, "#no-button")
+            def cancel(self, event: Button.Pressed) -> None:
+                self.post_message(self.Confirmed(False))
+                self.remove() # Close the dialog
+                
+            def on_confirmed(self, event: Confirmed) -> None:
+                """Event handler for confirmation - used by the app to get the result."""
+                pass
+                
+            def on_mount(self) -> None:
+                """Set the CSS style when mounted."""
+                self.styles.width = "40"
+                self.styles.height = "auto"
+                self.styles.background = "var(--surface)"
+                self.styles.border = "thick var(--primary)"
+                self.styles.align = "center middle"
+                self.styles.padding = "1 2"
+                self.styles.layer = "modal"
+
+class TitleInputModal(Static):
             def __init__(self, current_title: str):
                 super().__init__()
                 self.current_title = current_title
@@ -914,6 +987,32 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         modal = TitleInputModal(self.current_conversation.title)
         await self.mount(modal) # Use await for mounting
 
+    async def run_modal(self, modal_type: str, *args, **kwargs) -> bool:
+        """Run a modal dialog and return the result."""
+        if modal_type == "confirm_dialog":
+            # Create a confirmation dialog with the message from args
+            message = args[0] if args else "Are you sure?"
+            dialog = ConfirmDialog(message)
+            await self.mount(dialog)
+            
+            # Setup event handler to receive the result
+            result = False
+            
+            def on_confirm(event: ConfirmDialog.Confirmed) -> None:
+                nonlocal result
+                result = event.confirmed
+            
+            # Add listener for the confirmation event
+            dialog.on_confirmed = on_confirm
+            
+            # Wait for the dialog to close
+            while dialog.is_mounted:
+                await self.sleep(0.1)
+            
+            return result
+        
+        return False
+    
     async def update_conversation_title(self, new_title: str) -> None:
         """Update the current conversation title"""
         if not self.current_conversation:

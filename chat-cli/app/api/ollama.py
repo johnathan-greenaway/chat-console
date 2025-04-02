@@ -253,3 +253,80 @@ class OllamaClient(BaseModelClient):
             logger.info("Cancelling active stream session")
             await self._active_stream_session.close()
             self._active_stream_session = None
+            
+    async def get_model_details(self, model_id: str) -> Dict[str, Any]:
+        """Get detailed information about a specific Ollama model"""
+        logger.info(f"Getting details for model: {model_id}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/api/show",
+                    json={"name": model_id},
+                    timeout=5
+                ) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    logger.debug(f"Ollama model details response: {data}")
+                    return data
+        except Exception as e:
+            logger.error(f"Error getting model details: {str(e)}")
+            raise Exception(f"Failed to get model details: {str(e)}")
+    
+    async def list_available_models_from_registry(self, query: str = "") -> List[Dict[str, Any]]:
+        """List available models from Ollama registry"""
+        logger.info("Fetching available models from Ollama registry")
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.base_url}/api/tags"
+                if query:
+                    url += f"?query={query}"
+                async with session.get(
+                    url,
+                    timeout=10
+                ) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    logger.debug(f"Ollama registry response: {data}")
+                    return data.get("models", [])
+        except Exception as e:
+            logger.error(f"Error listing registry models: {str(e)}")
+            raise Exception(f"Failed to list models from registry: {str(e)}")
+            
+    async def pull_model(self, model_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Pull a model from Ollama registry with progress updates"""
+        logger.info(f"Pulling model: {model_id}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/api/pull",
+                    json={"name": model_id},
+                    timeout=3600  # 1 hour timeout for large models
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.content:
+                        if line:
+                            chunk = line.decode().strip()
+                            try:
+                                data = json.loads(chunk)
+                                yield data
+                            except json.JSONDecodeError:
+                                continue
+        except Exception as e:
+            logger.error(f"Error pulling model: {str(e)}")
+            raise Exception(f"Failed to pull model: {str(e)}")
+            
+    async def delete_model(self, model_id: str) -> None:
+        """Delete a model from Ollama"""
+        logger.info(f"Deleting model: {model_id}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(
+                    f"{self.base_url}/api/delete",
+                    json={"name": model_id},
+                    timeout=30
+                ) as response:
+                    response.raise_for_status()
+                    logger.info(f"Model {model_id} deleted successfully")
+        except Exception as e:
+            logger.error(f"Error deleting model: {str(e)}")
+            raise Exception(f"Failed to delete model: {str(e)}")
