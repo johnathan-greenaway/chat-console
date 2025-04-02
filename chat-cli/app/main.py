@@ -672,7 +672,6 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         update_ui # Keep SimpleChatApp generate_response
                     ) # Keep SimpleChatApp generate_response
                 ) # Keep SimpleChatApp generate_response
-                generation_task = self.generation_task  # Keep local reference for later checks
 
                 # Wait for response with timeout # Keep SimpleChatApp generate_response
                 log.info(f"Waiting for generation task {self.current_generation_task} with timeout...") # Add log
