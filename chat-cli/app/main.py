@@ -482,8 +482,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # The finally block in generate_response will handle is_generating = False and UI updates
                 self.notify("Stopping generation...", severity="warning", timeout=2) # Notify user immediately
             else:
-                # This case might happen if is_generating is True but the task is already done or None
-                log("is_generating is True, but no active task found to cancel. Resetting flag.")
+                # This case might happen if is_generating is True, but no active task found to cancel. Resetting flag.")
                 self.is_generating = False # Reset flag manually if task is missing
                 loading = self.query_one("#loading-indicator")
                 loading.add_class("hidden")
@@ -979,7 +978,7 @@ class TitleInputModal(Static):
     def cancel(self, event: Button.Pressed) -> None:
         self.remove() # Close the modal
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Focus the input when the modal appears."""
         self.query_one("#title-input", Input).focus()
 

@@ -276,6 +276,25 @@ class OllamaClient(BaseModelClient):
         """List available models from Ollama registry"""
         logger.info("Fetching available models from Ollama registry")
         try:
+            # First try the library endpoint (newer Ollama versions)
+            try:
+                async with aiohttp.ClientSession() as session:
+                    url = f"{self.base_url}/api/library"
+                    if query:
+                        url += f"?query={query}"
+                    async with session.get(
+                        url,
+                        timeout=10
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            logger.debug(f"Ollama library response: {data}")
+                            if "models" in data:
+                                return data.get("models", [])
+            except Exception as lib_e:
+                logger.warning(f"Error using /api/library endpoint: {str(lib_e)}, falling back to /api/tags")
+                
+            # Fallback to tags endpoint (older Ollama versions)
             async with aiohttp.ClientSession() as session:
                 url = f"{self.base_url}/api/tags"
                 if query:
@@ -287,10 +306,124 @@ class OllamaClient(BaseModelClient):
                     response.raise_for_status()
                     data = await response.json()
                     logger.debug(f"Ollama registry response: {data}")
-                    return data.get("models", [])
+                    
+                    if "models" in data:
+                        # This is local models, not registry models
+                        # Return empty list since we can't get registry models
+                        logger.warning("Tags endpoint returned local models, not registry models")
+                        return []
+                    
+                    # Try to determine if we're dealing with an older version
+                    # Just return an empty list in this case
+                    return []
         except Exception as e:
             logger.error(f"Error listing registry models: {str(e)}")
             raise Exception(f"Failed to list models from registry: {str(e)}")
+            
+    async def get_registry_models(self, query: str = "") -> List[Dict[str, Any]]:
+        """Get a curated list of popular Ollama models"""
+        logger.info("Returning a curated list of popular Ollama models")
+        
+        # Provide a curated list of popular models as fallback
+        models = [
+            {
+                "name": "llama3",
+                "description": "Meta's Llama 3 8B model",
+                "model_family": "Llama",
+                "size": 4500000000
+            },
+            {
+                "name": "llama3:8b",
+                "description": "Meta's Llama 3 8B parameter model",
+                "model_family": "Llama",
+                "size": 4500000000
+            },
+            {
+                "name": "llama3:70b",
+                "description": "Meta's Llama 3 70B parameter model",
+                "model_family": "Llama",
+                "size": 40000000000
+            },
+            {
+                "name": "gemma:2b",
+                "description": "Google's Gemma 2B parameter model",
+                "model_family": "Gemma",
+                "size": 1500000000
+            },
+            {
+                "name": "gemma:7b",
+                "description": "Google's Gemma 7B parameter model",
+                "model_family": "Gemma",
+                "size": 4000000000
+            },
+            {
+                "name": "mistral",
+                "description": "Mistral 7B model - balanced performance",
+                "model_family": "Mistral",
+                "size": 4200000000
+            },
+            {
+                "name": "mistral:7b",
+                "description": "Mistral 7B model - balanced performance",
+                "model_family": "Mistral",
+                "size": 4200000000
+            },
+            {
+                "name": "phi3:mini",
+                "description": "Microsoft's Phi-3 Mini model",
+                "model_family": "Phi",
+                "size": 3500000000
+            },
+            {
+                "name": "phi3:small",
+                "description": "Microsoft's Phi-3 Small model",
+                "model_family": "Phi",
+                "size": 7000000000
+            },
+            {
+                "name": "orca-mini",
+                "description": "Small, fast model optimized for chat",
+                "model_family": "Orca",
+                "size": 2000000000
+            },
+            {
+                "name": "llava",
+                "description": "Multimodal model with vision capabilities",
+                "model_family": "LLaVA",
+                "size": 4700000000
+            },
+            {
+                "name": "codellama",
+                "description": "Llama model fine-tuned for code generation",
+                "model_family": "CodeLlama",
+                "size": 4200000000
+            },
+            {
+                "name": "neural-chat",
+                "description": "Intel's Neural Chat model",
+                "model_family": "Neural Chat",
+                "size": 4200000000
+            },
+            {
+                "name": "yi",
+                "description": "01AI's Yi model, high performance",
+                "model_family": "Yi",
+                "size": 4500000000
+            }
+        ]
+        
+        # Filter by query if provided
+        query = query.lower() if query else ""
+        if query:
+            filtered_models = []
+            for model in models:
+                if (query in model["name"].lower() or 
+                    query in model["description"].lower() or
+                    query in model["model_family"].lower()):
+                    filtered_models.append(model)
+            return filtered_models
+        
+        return models
             
     async def pull_model(self, model_id: str) -> AsyncGenerator[Dict[str, Any], None]:
         """Pull a model from Ollama registry with progress updates"""

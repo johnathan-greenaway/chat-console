@@ -223,7 +223,7 @@ class ModelBrowser(Container):
         # Progress area for model downloads (hidden by default)
         with Container(id="progress-area"):
             yield Static("Downloading model...", id="status-label")
-            yield ProgressBar(id="progress-bar", total=100, value=0)
+            yield ProgressBar(id="progress-bar", total=100)
             yield Static("0%", id="progress-label")
     
     async def on_mount(self) -> None:
@@ -286,7 +286,16 @@ class ModelBrowser(Container):
             query = search_input.value.strip()
             
             # Load models from registry
-            self.available_models = await self.ollama_client.list_available_models_from_registry(query)
+            try:
+                # First try the API-based registry
+                self.available_models = await self.ollama_client.list_available_models_from_registry(query)
+                if not self.available_models:
+                    # If no models found, use the curated list
+                    self.available_models = await self.ollama_client.get_registry_models()
+            except Exception as e:
+                self.notify(f"Error from registry API: {str(e)}", severity="warning")
+                # Fallback to curated list
+                self.available_models = await self.ollama_client.get_registry_models()
             
             # Clear and populate table
             available_table = self.query_one("#available-models-table", DataTable)
@@ -402,7 +411,7 @@ class ModelBrowser(Container):
         
         # Update progress UI
         progress_bar = self.query_one("#progress-bar", ProgressBar)
-        progress_bar.value = 0
+        progress_bar.update(progress=0)
         status_label = self.query_one("#status-label", Static)
         status_label.update(f"Downloading {model_id}...")
         progress_label = self.query_one("#progress-label", Static)
@@ -422,13 +431,13 @@ class ModelBrowser(Container):
                     if total > 0:
                         percentage = (completed / total) * 100
                         self.pull_progress = percentage
-                        progress_bar.value = int(percentage)
+                        progress_bar.update(progress=int(percentage))
                         progress_label.update(f"{percentage:.1f}%")
             
             # Download complete
             self.pull_status = f"Download of {model_id} complete!"
             status_label.update(self.pull_status)
-            progress_bar.value = 100
+            progress_bar.update(progress=100)
             progress_label.update("100%")
             
             self.notify(f"Model {model_id} downloaded successfully", severity="success")
