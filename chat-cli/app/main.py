@@ -954,34 +954,34 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 self.styles.layer = "modal"
 
 class TitleInputModal(Static):
-            def __init__(self, current_title: str):
-                super().__init__()
-                self.current_title = current_title
+    def __init__(self, current_title: str):
+        super().__init__()
+        self.current_title = current_title
 
-            def compose(self) -> ComposeResult:
-                with Vertical(id="title-modal"):
-                    yield Static("Enter new conversation title:", id="modal-label")
-                    yield Input(value=self.current_title, id="title-input")
-                    with Horizontal():
-                        yield Button("Cancel", id="cancel-button", variant="error")
-                        yield Button("Update", id="update-button", variant="success")
+    def compose(self) -> ComposeResult:
+        with Vertical(id="title-modal"):
+            yield Static("Enter new conversation title:", id="modal-label")
+            yield Input(value=self.current_title, id="title-input")
+            with Horizontal():
+                yield Button("Cancel", id="cancel-button", variant="error")
+                yield Button("Update", id="update-button", variant="success")
 
-            @on(Button.Pressed, "#update-button")
-            def update_title(self, event: Button.Pressed) -> None:
-                input_widget = self.query_one("#title-input", Input)
-                new_title = input_widget.value.strip()
-                if new_title:
-                    # Call the app's update method asynchronously
-                    asyncio.create_task(self.app.update_conversation_title(new_title))
-                self.remove() # Close the modal
+    @on(Button.Pressed, "#update-button")
+    def update_title(self, event: Button.Pressed) -> None:
+        input_widget = self.query_one("#title-input", Input)
+        new_title = input_widget.value.strip()
+        if new_title:
+            # Call the app's update method asynchronously
+            asyncio.create_task(self.app.update_conversation_title(new_title))
+        self.remove() # Close the modal
 
-            @on(Button.Pressed, "#cancel-button")
-            def cancel(self, event: Button.Pressed) -> None:
-                self.remove() # Close the modal
+    @on(Button.Pressed, "#cancel-button")
+    def cancel(self, event: Button.Pressed) -> None:
+        self.remove() # Close the modal
 
-            def on_mount(self) -> None:
-                """Focus the input when the modal appears."""
-                self.query_one("#title-input", Input).focus()
+    def on_mount(self) -> None:
+        """Focus the input when the modal appears."""
+        self.query_one("#title-input", Input).focus()
 
         # --- Show the modal ---
         modal = TitleInputModal(self.current_conversation.title)
