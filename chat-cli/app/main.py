@@ -291,6 +291,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
     is_generating = reactive(False) # Keep SimpleChatApp reactive var
+    current_generation_task: Optional[asyncio.Task] = None # Add task reference
 
     def __init__(self, initial_text: Optional[str] = None): # Keep SimpleChatApp __init__
         super().__init__() # Keep SimpleChatApp __init__
@@ -441,26 +442,33 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         await self.create_new_conversation() # Keep SimpleChatApp action_new_conversation
         log("action_new_conversation finished") # Added log
 
-    def action_escape(self) -> None: # Modify SimpleChatApp action_escape
+    def action_escape(self) -> None:
         """Handle escape key globally."""
-        log("action_escape triggered") # Added log
+        log("action_escape triggered")
         settings_panel = self.query_one("#settings-panel")
-        log(f"Settings panel visible: {settings_panel.has_class('visible')}") # Added log
+        log(f"Settings panel visible: {settings_panel.has_class('visible')}")
+
         if settings_panel.has_class("visible"):
-            log("Hiding settings panel") # Added log
-            # If settings panel is visible, hide it
+            log("Hiding settings panel")
             settings_panel.remove_class("visible")
-            self.query_one("#message-input").focus() # Focus input after closing settings
+            self.query_one("#message-input").focus()
         elif self.is_generating:
-            log("Stopping generation") # Added log
-            # Otherwise, stop generation if running
-            self.is_generating = False # Keep SimpleChatApp action_escape
-            self.notify("Generation stopped", severity="warning") # Keep SimpleChatApp action_escape
-            loading = self.query_one("#loading-indicator") # Keep SimpleChatApp action_escape
-            loading.add_class("hidden") # Keep SimpleChatApp action_escape
-        else: # Optional: Add other escape behavior for the main screen if desired # Keep SimpleChatApp action_escape comment
-            log("Escape pressed, but settings not visible and not generating.") # Added log
-            # pass # Keep SimpleChatApp action_escape comment
+            log("Attempting to cancel generation task")
+            if self.current_generation_task and not self.current_generation_task.done():
+                log("Cancelling active generation task.")
+                self.current_generation_task.cancel()
+                # The finally block in generate_response will handle is_generating = False and UI updates
+                self.notify("Stopping generation...", severity="warning", timeout=2) # Notify user immediately
+            else:
+                # This case might happen if is_generating is True but the task is already done or None
+                log("is_generating is True, but no active task found to cancel. Resetting flag.")
+                self.is_generating = False # Reset flag manually if task is missing
+                loading = self.query_one("#loading-indicator")
+                loading.add_class("hidden")
+        else:
+            log("Escape pressed, but settings not visible and not actively generating.")
+            # Optionally add other escape behaviors here if needed for the main screen
+            # e.g., clear input, deselect item, etc.
 
     def update_app_info(self) -> None:
         """Update the displayed app information."""
@@ -651,10 +659,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         log.error(f"Error updating UI: {str(e)}") # Use log instead of logger
 
             # Generate the response with timeout and cleanup # Keep SimpleChatApp generate_response
-            generation_task = None # Keep SimpleChatApp generate_response
+            self.current_generation_task = None # Clear previous task reference
             try: # Keep SimpleChatApp generate_response
                 # Create a task for the response generation # Keep SimpleChatApp generate_response
-                generation_task = asyncio.create_task( # Keep SimpleChatApp generate_response
+                self.current_generation_task = asyncio.create_task( # Keep SimpleChatApp generate_response
                     generate_streaming_response( # Keep SimpleChatApp generate_response
                         self, # Pass the app instance
                         api_messages, # Keep SimpleChatApp generate_response
@@ -666,11 +674,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 ) # Keep SimpleChatApp generate_response
 
                 # Wait for response with timeout # Keep SimpleChatApp generate_response
-                full_response = await asyncio.wait_for(generation_task, timeout=60)  # Longer timeout # Keep SimpleChatApp generate_response
+                log.info(f"Waiting for generation task {self.current_generation_task} with timeout...") # Add log
+                full_response = await asyncio.wait_for(self.current_generation_task, timeout=60)  # Longer timeout # Keep SimpleChatApp generate_response
+                log.info(f"Generation task {self.current_generation_task} completed. Full response length: {len(full_response) if full_response else 0}") # Add log
 
-                # Save to database only if we got a complete response # Keep SimpleChatApp generate_response
-                if self.is_generating and full_response: # Keep SimpleChatApp generate_response
-                    log("Generation finished, saving full response to DB") # Added log
+                # Save to database only if we got a complete response and weren't cancelled
+                if self.is_generating and full_response: # Check is_generating flag here
+                    log("Generation finished normally, saving full response to DB") # Added log
                     self.db.add_message( # Keep SimpleChatApp generate_response
                         self.current_conversation.id, # Keep SimpleChatApp generate_response
                         "assistant", # Keep SimpleChatApp generate_response
@@ -679,11 +689,24 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     # Force a final refresh # Keep SimpleChatApp generate_response
                     self.refresh(layout=True) # Keep SimpleChatApp generate_response
                     await asyncio.sleep(0.1)  # Wait for UI to update # Keep SimpleChatApp generate_response
-                elif not full_response:
+                elif not full_response and self.is_generating: # Only log if not cancelled
                     log("Generation finished but full_response is empty/None") # Added log
+                else:
+                    # This case handles cancellation where full_response might be partial or None
+                    log("Generation was cancelled or finished without a full response.")
+
+            except asyncio.CancelledError: # Handle cancellation explicitly
+                log.warning("Generation task was cancelled.")
+                self.notify("Generation stopped by user.", severity="warning")
+                # Remove the potentially incomplete message from UI state
+                if self.messages and self.messages[-1].role == "assistant":
+                    self.messages.pop()
+                await self.update_messages_ui() # Update UI to remove partial message
 
             except asyncio.TimeoutError: # Keep SimpleChatApp generate_response
-                log.error("Response generation timed out") # Use log instead of logger
+                log.error(f"Response generation timed out waiting for task {self.current_generation_task}") # Use log instead of logger
+                # Log state at timeout
+                log.error(f"Timeout state: is_generating={self.is_generating}, task_done={self.current_generation_task.done() if self.current_generation_task else 'N/A'}")
                 error_msg = "Response generation timed out. The model may be busy or unresponsive. Please try again." # Keep SimpleChatApp generate_response
                 self.notify(error_msg, severity="error") # Keep SimpleChatApp generate_response
 
@@ -695,31 +718,36 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 await self.update_messages_ui() # Keep SimpleChatApp generate_response
 
             finally: # Keep SimpleChatApp generate_response
-                # Ensure task is properly cancelled and cleaned up # Keep SimpleChatApp generate_response
-                if generation_task: # Keep SimpleChatApp generate_response
-                    if not generation_task.done(): # Keep SimpleChatApp generate_response
-                        log("Cancelling generation task") # Added log
-                        generation_task.cancel() # Keep SimpleChatApp generate_response
-                        try: # Keep SimpleChatApp generate_response
-                            await generation_task # Keep SimpleChatApp generate_response
-                        except (asyncio.CancelledError, Exception) as e: # Keep SimpleChatApp generate_response
-                            log.error(f"Error cleaning up generation task: {str(e)}") # Use log instead of logger
-
+                # Ensure flag is reset and task reference is cleared
+                log(f"Setting is_generating to False in finally block") # Added log
+                self.is_generating = False # Keep SimpleChatApp generate_response
+                self.current_generation_task = None # Clear task reference
+                loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
+                loading.add_class("hidden") # Keep SimpleChatApp generate_response
                 # Force a final UI refresh # Keep SimpleChatApp generate_response
                 self.refresh(layout=True) # Keep SimpleChatApp generate_response
 
         except Exception as e: # Keep SimpleChatApp generate_response
-            log.error(f"Exception during generate_response: {str(e)}") # Added log
+            # Catch any other unexpected errors during generation setup/handling
+            log.error(f"Unexpected exception during generate_response: {str(e)}") # Added log
             self.notify(f"Error generating response: {str(e)}", severity="error") # Keep SimpleChatApp generate_response
-            # Add error message # Keep SimpleChatApp generate_response
-            error_msg = f"Error generating response: {str(e)}" # Keep SimpleChatApp generate_response
+            # Add error message to UI # Keep SimpleChatApp generate_response
+            error_msg = f"Error: {str(e)}" # Keep SimpleChatApp generate_response
             self.messages.append(Message(role="assistant", content=error_msg)) # Keep SimpleChatApp generate_response
             await self.update_messages_ui() # Keep SimpleChatApp generate_response
-        finally: # Keep SimpleChatApp generate_response
-            log(f"Setting is_generating to False in finally block") # Added log
-            self.is_generating = False # Keep SimpleChatApp generate_response
+            # The finally block below will handle resetting is_generating and hiding loading
+
+        finally: # Keep SimpleChatApp generate_response - This finally block now primarily handles cleanup
+            log(f"Ensuring is_generating is False and task is cleared in outer finally block") # Added log
+            self.is_generating = False # Ensure flag is always reset
+            self.current_generation_task = None # Ensure task ref is cleared
             loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
-            loading.add_class("hidden") # Keep SimpleChatApp generate_response
+            loading.add_class("hidden") # Ensure loading indicator is hidden
+            # Re-focus input after generation attempt (success, failure, or cancel)
+            try:
+                self.query_one("#message-input").focus()
+            except Exception:
+                pass # Ignore if input not found
 
     def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None: # Keep SimpleChatApp on_model_selector_model_selected
         """Handle model selection""" # Keep SimpleChatApp on_model_selector_model_selected docstring
