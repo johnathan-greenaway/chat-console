@@ -219,7 +219,7 @@ class ModelBrowser(Container):
                 yield DataTable(id="local-models-table")
                 with Container(id="model-actions"):
                     with Horizontal(id="action-buttons"):
-                        yield Button("Pull Model", id="pull-button", variant="primary")
+                        yield Button("Run Model", id="run-button", variant="success")
                         yield Button("Delete Model", id="delete-button", variant="error")
                         yield Button("View Details", id="details-button", variant="default")
             
@@ -406,7 +406,10 @@ class ModelBrowser(Container):
                 self.app.call_later(self.load_local_models)
             else:
                 self.app.call_later(self.load_available_models)
-        elif button_id in ["pull-button", "pull-available-button"]:
+        elif button_id == "run-button":
+            # Set model in the main app
+            self.app.call_later(self._run_selected_model)
+        elif button_id == "pull-available-button":
             # Start model pull
             self.app.call_later(self._pull_selected_model)
         elif button_id == "delete-button":
@@ -442,6 +445,27 @@ class ModelBrowser(Container):
             local_container.remove_class("active")
             available_container.add_class("active")
     
+    async def _run_selected_model(self) -> None:
+        """Set the selected model as the active model in the main app"""
+        # Get selected model based on current tab
+        model_id = self._get_selected_model_id()
+        
+        if not model_id:
+            self.notify("No model selected", severity="warning")
+            return
+            
+        try:
+            # Set the model in the app
+            if hasattr(self.app, "selected_model"):
+                self.app.selected_model = model_id
+                self.app.update_app_info()  # Update app info to show new model
+                self.notify(f"Model set to: {model_id}", severity="success")
+                self.app.pop_screen()  # Close the model browser screen
+            else:
+                self.notify("Cannot set model: app interface not available", severity="error")
+        except Exception as e:
+            self.notify(f"Error setting model: {str(e)}", severity="error")
+            
     async def _pull_selected_model(self) -> None:
         """Pull the selected model from Ollama registry"""
         # Get selected model based on current tab
@@ -451,12 +475,12 @@ class ModelBrowser(Container):
             self.notify("No model selected", severity="warning")
             return
         
-        # Show confirmation dialog
-        msg = f"Download model '{model_id}'? This may take several minutes depending on model size."
-        confirmed = await self.app.run_modal("confirm_dialog", msg)
-        if not confirmed:
-            return
-            
+        # Show confirmation dialog - use a simple notification instead of modal
+        msg = f"Downloading model '{model_id}'. This may take several minutes depending on model size."
+        self.notify(msg, severity="information", timeout=5)
+        
+        # No confirmation needed now, since we're just proceeding with notification
+        
         if self.is_pulling:
             self.notify("Already pulling a model", severity="warning")
             return
@@ -579,15 +603,21 @@ class ModelBrowser(Container):
                     family = modelfile.get("family")
                 else:
                     # Try to infer from model name
-                    name = model_id.lower()
-                    if "llama" in name:
-                        family = "Llama"
-                    elif "mistral" in name:
-                        family = "Mistral"
-                    elif "phi" in name:
-                        family = "Phi"
-                    elif "gemma" in name:
-                        family = "Gemma"
+                    try:
+                        name = str(model_id).lower() if model_id is not None else ""
+                        if "llama" in name:
+                            family = "Llama"
+                        elif "mistral" in name:
+                            family = "Mistral"
+                        elif "phi" in name:
+                            family = "Phi"
+                        elif "gemma" in name:
+                            family = "Gemma"
+                        else:
+                            family = "Unknown"
+                    except (TypeError, ValueError) as e:
+                        logger.error(f"Error inferring model family: {str(e)}")
+                        family = "Unknown"
                 
                 # Get template
                 template = modelfile.get("template", "Unknown")
@@ -629,15 +659,27 @@ class ModelBrowser(Container):
             if table.cursor_row is not None:
                 row = table.get_row_at(table.cursor_row)
                 # Get model ID from local models list
-                for model in self.local_models:
-                    if model["name"] == row[0]:
-                        return model["id"]
+                try:
+                    if row and len(row) > 0:
+                        row_name = str(row[0]) if row[0] is not None else ""
+                        for model in self.local_models:
+                            if model["name"] == row_name:
+                                return model["id"]
+                except (IndexError, TypeError) as e:
+                    logger.error(f"Error processing row data: {str(e)}")
         else:
             table = self.query_one("#available-models-table", DataTable)
             if table.cursor_row is not None:
                 row = table.get_row_at(table.cursor_row)
                 # Return the model name as ID
-                return row[0]
+                try:
+                    if row and len(row) > 0:
+                        return str(row[0]) if row[0] is not None else ""
+                    else:
+                        return ""
+                except (IndexError, TypeError) as e:
+                    logger.error(f"Error getting model ID from row: {str(e)}")
+                    return ""
         
         return ""
     
@@ -647,13 +689,26 @@ class ModelBrowser(Container):
         if event.data_table.id == "local-models-table":
             row = event.data_table.get_row_at(event.cursor_row)
             # Find the model ID from the display name
-            for model in self.local_models:
-                if model["name"] == row[0]:
-                    self.selected_model_id = model["id"]
-                    break
+            try:
+                if row and len(row) > 0:
+                    row_name = str(row[0]) if row[0] is not None else ""
+                    for model in self.local_models:
+                        if model["name"] == row_name:
+                            self.selected_model_id = model["id"]
+                            break
+            except (IndexError, TypeError) as e:
+                logger.error(f"Error processing row data: {str(e)}")
         elif event.data_table.id == "available-models-table":
             row = event.data_table.get_row_at(event.cursor_row)
-            self.selected_model_id = row[0]  # Model name is used as ID
+            # Model name is used as ID
+            try:
+                if row and len(row) > 0:
+                    self.selected_model_id = str(row[0]) if row[0] is not None else ""
+                else:
+                    self.selected_model_id = ""
+            except (IndexError, TypeError) as e:
+                logger.error(f"Error getting model ID from row: {str(e)}")
+                self.selected_model_id = ""
     
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle input submission (Enter key in search input)"""

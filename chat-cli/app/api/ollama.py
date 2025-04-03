@@ -298,21 +298,30 @@ class OllamaClient(BaseModelClient):
                                         continue
                                     # Add default values for missing fields to avoid UNKNOWN displays
                                     if "model_family" not in model:
-                                        # Try to infer family from name
-                                        name = model["name"].lower()
-                                        if "llama" in name:
-                                            model["model_family"] = "Llama"
-                                        elif "mistral" in name:
-                                            model["model_family"] = "Mistral"
-                                        elif "phi" in name:
-                                            model["model_family"] = "Phi"
-                                        elif "gemma" in name:
-                                            model["model_family"] = "Gemma"
-                                        else:
+                                        try:
+                                            # Try to infer family from name
+                                            name = str(model["name"]).lower() if isinstance(model["name"], (str, int, float)) else ""
+                                            if "llama" in name:
+                                                model["model_family"] = "Llama"
+                                            elif "mistral" in name:
+                                                model["model_family"] = "Mistral"
+                                            elif "phi" in name:
+                                                model["model_family"] = "Phi"
+                                            elif "gemma" in name:
+                                                model["model_family"] = "Gemma"
+                                            else:
+                                                model["model_family"] = "General"
+                                        except (KeyError, TypeError, ValueError) as e:
+                                            logger.warning(f"Error inferring model family: {str(e)}")
                                             model["model_family"] = "General"
                                     
-                                    if "description" not in model or not model["description"]:
-                                        model["description"] = f"{model['name']} model"
+                                    try:
+                                        if "description" not in model or not model["description"]:
+                                            model_name = str(model["name"]) if isinstance(model["name"], (str, int, float)) else "Unknown"
+                                            model["description"] = f"{model_name} model"
+                                    except (KeyError, TypeError, ValueError) as e:
+                                        logger.warning(f"Error setting model description: {str(e)}")
+                                        model["description"] = "Model description unavailable"
                                         
                                     # Ensure size is present
                                     if "size" not in model or not model["size"]:
