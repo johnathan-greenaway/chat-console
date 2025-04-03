@@ -274,10 +274,38 @@ class ModelBrowser(Container):
                 # Try to get additional details
                 try:
                     details = await self.ollama_client.get_model_details(model["id"])
+                    
+                    # Extract size info
                     size = self._format_size(details.get("size", 0))
-                    family = details.get("modelfile", {}).get("parameter_size", "Unknown")
+                    
+                    # Extract family info - check multiple possible locations
+                    family = "Unknown"
+                    if "modelfile" in details and details["modelfile"] is not None:
+                        # First check parameter_size which is most likely to contain family info
+                        if "parameter_size" in details["modelfile"]:
+                            family = details["modelfile"]["parameter_size"]
+                        # Fall back to other potential fields
+                        elif "family" in details["modelfile"]:
+                            family = details["modelfile"]["family"]
+                        # Try to infer from model name
+                        else:
+                            name = model["name"].lower()
+                            if "llama" in name:
+                                family = "Llama"
+                            elif "mistral" in name:
+                                family = "Mistral"
+                            elif "phi" in name:
+                                family = "Phi"
+                            elif "gemma" in name:
+                                family = "Gemma"
+                    
+                    # Extract modified date
                     modified = details.get("modified_at", "Unknown")
-                except Exception:
+                    if modified == "Unknown" and "created_at" in details:
+                        modified = details["created_at"]
+                        
+                except Exception as detail_error:
+                    self.notify(f"Error getting details for {model['name']}: {str(detail_error)}", severity="warning")
                     size = "Unknown"
                     family = "Unknown"
                     modified = "Unknown"
@@ -304,8 +332,8 @@ class ModelBrowser(Container):
             try:
                 # First try the API-based registry
                 self.available_models = await self.ollama_client.list_available_models_from_registry(query)
+                # If no models found, use the curated list
                 if not self.available_models:
-                    # If no models found, use the curated list
                     self.available_models = await self.ollama_client.get_registry_models()
             except Exception as e:
                 self.notify(f"Error from registry API: {str(e)}", severity="warning")
@@ -316,6 +344,11 @@ class ModelBrowser(Container):
             available_table = self.query_one("#available-models-table", DataTable)
             available_table.clear()
             
+            # Get number of models loaded for debugging
+            model_count = len(self.available_models)
+            self.notify(f"Found {model_count} models to display", severity="information")
+            
+            # Add all models to the table - no pagination limit
             for model in self.available_models:
                 name = model.get("name", "Unknown")
                 size = self._format_size(model.get("size", 0))
@@ -324,7 +357,8 @@ class ModelBrowser(Container):
                 
                 available_table.add_row(name, size, family, description)
             
-            self.notify(f"Loaded {len(self.available_models)} available models", severity="information")
+            actual_displayed = available_table.row_count
+            self.notify(f"Loaded {actual_displayed} available models", severity="information")
             
         except Exception as e:
             self.notify(f"Error loading available models: {str(e)}", severity="error")
@@ -529,14 +563,55 @@ class ModelBrowser(Container):
             formatted_details = f"Model: {model_id}\n"
             formatted_details += f"Size: {self._format_size(details.get('size', 0))}\n"
             
-            if "modelfile" in details:
+            # Extract family info - check multiple possible locations
+            family = "Unknown"
+            template = "Unknown"
+            license_info = "Unknown"
+            system_prompt = ""
+            
+            if "modelfile" in details and details["modelfile"] is not None:
                 modelfile = details["modelfile"]
-                formatted_details += f"Family: {modelfile.get('parameter_size', 'Unknown')}\n"
-                formatted_details += f"Template: {modelfile.get('template', 'Unknown')}\n"
-                formatted_details += f"License: {modelfile.get('license', 'Unknown')}\n"
                 
+                # Extract family/parameter size
+                if "parameter_size" in modelfile:
+                    family = modelfile.get("parameter_size")
+                elif "family" in modelfile:
+                    family = modelfile.get("family")
+                else:
+                    # Try to infer from model name
+                    name = model_id.lower()
+                    if "llama" in name:
+                        family = "Llama"
+                    elif "mistral" in name:
+                        family = "Mistral"
+                    elif "phi" in name:
+                        family = "Phi"
+                    elif "gemma" in name:
+                        family = "Gemma"
+                
+                # Get template
+                template = modelfile.get("template", "Unknown")
+                
+                # Get license
+                license_info = modelfile.get("license", "Unknown")
+                
+                # Get system prompt if available
                 if "system" in modelfile:
-                    formatted_details += f"\nSystem Prompt:\n{modelfile['system']}\n"
+                    system_prompt = modelfile["system"]
+            
+            formatted_details += f"Family: {family}\n"
+            formatted_details += f"Template: {template}\n"
+            formatted_details += f"License: {license_info}\n"
+            
+            # Add timestamps if available
+            if "modified_at" in details:
+                formatted_details += f"Modified: {details['modified_at']}\n"
+            elif "created_at" in details:
+                formatted_details += f"Created: {details['created_at']}\n"
+                
+            # Add system prompt if available
+            if system_prompt:
+                formatted_details += f"\nSystem Prompt:\n{system_prompt}\n"
             
             # Update and show details
             details_content.update(formatted_details)

@@ -290,7 +290,34 @@ class OllamaClient(BaseModelClient):
                             data = await response.json()
                             logger.debug(f"Ollama library response: {data}")
                             if "models" in data:
-                                return data.get("models", [])
+                                # If this succeeded, we'll use registry models instead of the curated list
+                                # Ensure models have all the needed fields
+                                registry_models = data.get("models", [])
+                                for model in registry_models:
+                                    if "name" not in model:
+                                        continue
+                                    # Add default values for missing fields to avoid UNKNOWN displays
+                                    if "model_family" not in model:
+                                        # Try to infer family from name
+                                        name = model["name"].lower()
+                                        if "llama" in name:
+                                            model["model_family"] = "Llama"
+                                        elif "mistral" in name:
+                                            model["model_family"] = "Mistral"
+                                        elif "phi" in name:
+                                            model["model_family"] = "Phi"
+                                        elif "gemma" in name:
+                                            model["model_family"] = "Gemma"
+                                        else:
+                                            model["model_family"] = "General"
+                                    
+                                    if "description" not in model or not model["description"]:
+                                        model["description"] = f"{model['name']} model"
+                                        
+                                    # Ensure size is present
+                                    if "size" not in model or not model["size"]:
+                                        model["size"] = 0
+                                return registry_models
             except Exception as lib_e:
                 logger.warning(f"Error using /api/library endpoint: {str(lib_e)}, falling back to /api/tags")
                 
