@@ -275,19 +275,93 @@ class ModelBrowser(Container):
                 try:
                     details = await self.ollama_client.get_model_details(model["id"])
                     
-                    # Extract size info
-                    size = self._format_size(details.get("size", 0))
+                    # Extract parameter size info (in billions)
+                    size = "Unknown"
+                    
+                    # First try to get parameter size from modelfile if available
+                    if "modelfile" in details and details["modelfile"] is not None:
+                        modelfile = details["modelfile"]
+                        if "parameter_size" in modelfile and modelfile["parameter_size"]:
+                            size = str(modelfile["parameter_size"])
+                            # Make sure it ends with B for billions if it doesn't already
+                            if not size.upper().endswith("B"):
+                                size += "B"
+                    
+                    # If not found in modelfile, try to extract from name
+                    if size == "Unknown":
+                        name = model["name"].lower()
+                        if "70b" in name:
+                            size = "70B"
+                        elif "405b" in name or "400b" in name:
+                            size = "405B"
+                        elif "34b" in name or "35b" in name:
+                            size = "34B"
+                        elif "27b" in name or "28b" in name:
+                            size = "27B"
+                        elif "13b" in name or "14b" in name:
+                            size = "13B"
+                        elif "8b" in name:
+                            size = "8B"
+                        elif "7b" in name:
+                            size = "7B"
+                        elif "6b" in name:
+                            size = "6B"
+                        elif "3b" in name:
+                            size = "3B"
+                        elif "2b" in name:
+                            size = "2B"
+                        elif "1b" in name:
+                            size = "1B"
+                        elif "mini" in name:
+                            size = "3B"
+                        elif "small" in name:
+                            size = "7B"
+                        elif "medium" in name:
+                            size = "13B"
+                        elif "large" in name:
+                            size = "34B"
+                        
+                        # Special handling for base models with no size indicator
+                        if size == "Unknown":
+                            # Remove tag part if present to get base model
+                            base_name = name.split(":")[0]
+                            
+                            # Check if we have default parameter sizes for known models
+                            model_defaults = {
+                                "llama3": "8B",
+                                "llama2": "7B",
+                                "mistral": "7B",
+                                "gemma": "7B",
+                                "gemma2": "9B",
+                                "phi": "3B",
+                                "phi2": "3B",
+                                "phi3": "3B",
+                                "orca-mini": "7B",
+                                "llava": "7B",
+                                "codellama": "7B",
+                                "neural-chat": "7B",
+                                "wizard-math": "7B",
+                                "yi": "6B",
+                                "deepseek": "7B",
+                                "deepseek-coder": "7B",
+                                "qwen": "7B",
+                                "falcon": "7B",
+                                "stable-code": "3B"
+                            }
+                            
+                            # Try to find a match in default sizes
+                            for model_name, default_size in model_defaults.items():
+                                if model_name in base_name:
+                                    size = default_size
+                                    break
                     
                     # Extract family info - check multiple possible locations
                     family = "Unknown"
                     if "modelfile" in details and details["modelfile"] is not None:
-                        # First check parameter_size which is most likely to contain family info
-                        if "parameter_size" in details["modelfile"]:
-                            family = details["modelfile"]["parameter_size"]
-                        # Fall back to other potential fields
-                        elif "family" in details["modelfile"]:
+                        # First check for family field
+                        if "family" in details["modelfile"] and details["modelfile"]["family"]:
                             family = details["modelfile"]["family"]
-                        # Try to infer from model name
+                        # Try to infer from model name if not available
                         else:
                             name = model["name"].lower()
                             if "llama" in name:
@@ -298,6 +372,26 @@ class ModelBrowser(Container):
                                 family = "Phi"
                             elif "gemma" in name:
                                 family = "Gemma"
+                            elif "yi" in name:
+                                family = "Yi"
+                            elif "orca" in name:
+                                family = "Orca"
+                            elif "wizard" in name:
+                                family = "Wizard"
+                            elif "neural" in name:
+                                family = "Neural Chat"
+                            elif "qwen" in name:
+                                family = "Qwen"
+                            elif "deepseek" in name:
+                                family = "DeepSeek"
+                            elif "falcon" in name:
+                                family = "Falcon"
+                            elif "stable" in name:
+                                family = "Stable"
+                            elif "codellama" in name:
+                                family = "CodeLlama"
+                            elif "llava" in name:
+                                family = "LLaVA"
                     
                     # Extract modified date
                     modified = details.get("modified_at", "Unknown")
@@ -351,7 +445,84 @@ class ModelBrowser(Container):
             # Add all models to the table - no pagination limit
             for model in self.available_models:
                 name = model.get("name", "Unknown")
-                size = self._format_size(model.get("size", 0))
+                
+                # Extract parameter size info (in billions)
+                size = "Unknown"
+                
+                # Check if parameter_size is available in the model metadata
+                if "parameter_size" in model and model["parameter_size"]:
+                    size = str(model["parameter_size"])
+                    # Make sure it ends with B for billions if it doesn't already
+                    if not size.upper().endswith("B"):
+                        size += "B"
+                else:
+                    # Extract from name if not available
+                    model_name = str(name).lower()
+                    if "70b" in model_name:
+                        size = "70B"
+                    elif "405b" in model_name or "400b" in model_name:
+                        size = "405B"
+                    elif "34b" in model_name or "35b" in model_name:
+                        size = "34B"
+                    elif "27b" in model_name or "28b" in model_name:
+                        size = "27B"
+                    elif "13b" in model_name or "14b" in model_name:
+                        size = "13B"
+                    elif "8b" in model_name:
+                        size = "8B"
+                    elif "7b" in model_name:
+                        size = "7B"
+                    elif "6b" in model_name:
+                        size = "6B"
+                    elif "3b" in model_name:
+                        size = "3B"
+                    elif "2b" in model_name:
+                        size = "2B"
+                    elif "1b" in model_name:
+                        size = "1B"
+                    elif "mini" in model_name:
+                        size = "3B"
+                    elif "small" in model_name:
+                        size = "7B"
+                    elif "medium" in model_name:
+                        size = "13B"
+                    elif "large" in model_name:
+                        size = "34B"
+                        
+                    # Special handling for base models with no size indicator
+                    if size == "Unknown":
+                        # Remove tag part if present to get base model
+                        base_name = model_name.split(":")[0]
+                        
+                        # Check if we have default parameter sizes for known models
+                        model_defaults = {
+                            "llama3": "8B",
+                            "llama2": "7B",
+                            "mistral": "7B",
+                            "gemma": "7B",
+                            "gemma2": "9B",
+                            "phi": "3B",
+                            "phi2": "3B",
+                            "phi3": "3B",
+                            "orca-mini": "7B",
+                            "llava": "7B",
+                            "codellama": "7B",
+                            "neural-chat": "7B",
+                            "wizard-math": "7B",
+                            "yi": "6B",
+                            "deepseek": "7B",
+                            "deepseek-coder": "7B",
+                            "qwen": "7B",
+                            "falcon": "7B",
+                            "stable-code": "3B"
+                        }
+                        
+                        # Try to find a match in default sizes
+                        for model_prefix, default_size in model_defaults.items():
+                            if model_prefix in base_name:
+                                size = default_size
+                                break
+                
                 family = model.get("model_family", "Unknown")
                 description = model.get("description", "No description available")
                 
@@ -536,7 +707,9 @@ class ModelBrowser(Container):
             self.is_pulling = False
             # Hide progress area after a delay
             async def hide_progress():
-                await self.app.sleep(3)
+                # Use asyncio.sleep instead of app.sleep
+                import asyncio
+                await asyncio.sleep(3)
                 progress_area.remove_class("visible")
             self.app.call_later(hide_progress)
     
@@ -585,7 +758,90 @@ class ModelBrowser(Container):
             
             # Format details
             formatted_details = f"Model: {model_id}\n"
-            formatted_details += f"Size: {self._format_size(details.get('size', 0))}\n"
+            
+            # Extract parameter size info
+            param_size = "Unknown"
+            
+            # First try to get parameter size from modelfile if available
+            if "modelfile" in details and details["modelfile"] is not None:
+                modelfile = details["modelfile"]
+                if "parameter_size" in modelfile and modelfile["parameter_size"]:
+                    param_size = str(modelfile["parameter_size"])
+                    # Make sure it ends with B for billions if it doesn't already
+                    if not param_size.upper().endswith("B"):
+                        param_size += "B"
+            
+            # If not found in modelfile, try to extract from name
+            if param_size == "Unknown":
+                model_name = str(model_id).lower()
+                if "70b" in model_name:
+                    param_size = "70B"
+                elif "405b" in model_name or "400b" in model_name:
+                    param_size = "405B"
+                elif "34b" in model_name or "35b" in model_name:
+                    param_size = "34B"
+                elif "27b" in model_name or "28b" in model_name:
+                    param_size = "27B"
+                elif "13b" in model_name or "14b" in model_name:
+                    param_size = "13B"
+                elif "8b" in model_name:
+                    param_size = "8B"
+                elif "7b" in model_name:
+                    param_size = "7B"
+                elif "6b" in model_name:
+                    param_size = "6B"
+                elif "3b" in model_name:
+                    param_size = "3B"
+                elif "2b" in model_name:
+                    param_size = "2B"
+                elif "1b" in model_name:
+                    param_size = "1B"
+                elif "mini" in model_name:
+                    param_size = "3B"
+                elif "small" in model_name:
+                    param_size = "7B"
+                elif "medium" in model_name:
+                    param_size = "13B"
+                elif "large" in model_name:
+                    param_size = "34B"
+                
+                # Special handling for base models with no size indicator
+                if param_size == "Unknown":
+                    # Remove tag part if present to get base model
+                    base_name = model_name.split(":")[0]
+                    
+                    # Check if we have default parameter sizes for known models
+                    model_defaults = {
+                        "llama3": "8B",
+                        "llama2": "7B",
+                        "mistral": "7B",
+                        "gemma": "7B",
+                        "gemma2": "9B",
+                        "phi": "3B",
+                        "phi2": "3B",
+                        "phi3": "3B",
+                        "orca-mini": "7B",
+                        "llava": "7B",
+                        "codellama": "7B",
+                        "neural-chat": "7B",
+                        "wizard-math": "7B",
+                        "yi": "6B",
+                        "deepseek": "7B",
+                        "deepseek-coder": "7B",
+                        "qwen": "7B",
+                        "falcon": "7B",
+                        "stable-code": "3B"
+                    }
+                    
+                    # Try to find a match in default sizes
+                    for model_name, default_size in model_defaults.items():
+                        if model_name in base_name:
+                            param_size = default_size
+                            break
+                
+            # Show both parameter size and disk size
+            formatted_details += f"Parameters: {param_size}\n"
+            formatted_details += f"Disk Size: {self._format_size(details.get('size', 0))}\n"
             
             # Extract family info - check multiple possible locations
             family = "Unknown"
