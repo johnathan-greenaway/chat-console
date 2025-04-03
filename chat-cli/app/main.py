@@ -23,12 +23,33 @@ from app.config import CONFIG, OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_BASE_UR
 from app.ui.chat_interface import MessageDisplay, InputWithFocus
 from app.ui.model_selector import ModelSelector, StyleSelector
 from app.ui.chat_list import ChatList
+from app.ui.model_browser import ModelBrowser
 from app.api.base import BaseModelClient
 from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title # Import title function
 # Import version here to avoid potential circular import issues at top level
 from app import __version__
 
 # --- Remove SettingsScreen class entirely ---
+
+class ModelBrowserScreen(Screen):
+    """Screen for browsing Ollama models."""
+
+    BINDINGS = [
+        Binding("escape", "pop_screen", "Close"),
+    ]
+    
+    CSS = """
+    #browser-wrapper {
+        width: 100%;
+        height: 100%;
+        background: $surface;
+    }
+    """
+    
+    def compose(self) -> ComposeResult:
+        """Create the model browser screen layout."""
+        with Container(id="browser-wrapper"):
+            yield ModelBrowser()
 
 class HistoryScreen(Screen):
     """Screen for viewing chat history."""
@@ -287,10 +308,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         Binding("h", "view_history", "History", show=True, key_display="h", priority=True), # Add priority
         Binding("s", "settings", "Settings", show=True, key_display="s", priority=True),     # Add priority
         Binding("t", "action_update_title", "Update Title", show=True, key_display="t", priority=True), # Add priority
+        Binding("m", "model_browser", "Model Browser", show=True, key_display="m", priority=True), # Add model browser binding
     ] # Keep SimpleChatApp BINDINGS end
 
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
     is_generating = reactive(False) # Keep SimpleChatApp reactive var
+    current_generation_task: Optional[asyncio.Task] = None # Add task reference
 
     def __init__(self, initial_text: Optional[str] = None): # Keep SimpleChatApp __init__
         super().__init__() # Keep SimpleChatApp __init__
@@ -441,26 +464,32 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         await self.create_new_conversation() # Keep SimpleChatApp action_new_conversation
         log("action_new_conversation finished") # Added log
 
-    def action_escape(self) -> None: # Modify SimpleChatApp action_escape
+    def action_escape(self) -> None:
         """Handle escape key globally."""
-        log("action_escape triggered") # Added log
+        log("action_escape triggered")
         settings_panel = self.query_one("#settings-panel")
-        log(f"Settings panel visible: {settings_panel.has_class('visible')}") # Added log
+        log(f"Settings panel visible: {settings_panel.has_class('visible')}")
+
         if settings_panel.has_class("visible"):
-            log("Hiding settings panel") # Added log
-            # If settings panel is visible, hide it
+            log("Hiding settings panel")
             settings_panel.remove_class("visible")
-            self.query_one("#message-input").focus() # Focus input after closing settings
+            self.query_one("#message-input").focus()
         elif self.is_generating:
-            log("Stopping generation") # Added log
-            # Otherwise, stop generation if running
-            self.is_generating = False # Keep SimpleChatApp action_escape
-            self.notify("Generation stopped", severity="warning") # Keep SimpleChatApp action_escape
-            loading = self.query_one("#loading-indicator") # Keep SimpleChatApp action_escape
-            loading.add_class("hidden") # Keep SimpleChatApp action_escape
-        else: # Optional: Add other escape behavior for the main screen if desired # Keep SimpleChatApp action_escape comment
-            log("Escape pressed, but settings not visible and not generating.") # Added log
-            # pass # Keep SimpleChatApp action_escape comment
+            log("Attempting to cancel generation task")
+            if self.current_generation_task and not self.current_generation_task.done():
+                log("Cancelling active generation task.")
+                self.current_generation_task.cancel()
+                # The finally block in generate_response will handle is_generating = False and UI updates
+                self.notify("Stopping generation...", severity="warning", timeout=2) # Notify user immediately
+            else:
+                # This case might happen if is_generating is True, but no active task found to cancel. Resetting flag.")
+                self.is_generating = False # Reset flag manually if task is missing
+                loading = self.query_one("#loading-indicator")
+                loading.add_class("hidden")
+        else:
+            log("Escape pressed, but settings not visible and not actively generating.")
+            # Optionally add other escape behaviors here if needed for the main screen
+            # e.g., clear input, deselect item, etc.
 
     def update_app_info(self) -> None:
         """Update the displayed app information."""
@@ -651,10 +680,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         log.error(f"Error updating UI: {str(e)}") # Use log instead of logger
 
             # Generate the response with timeout and cleanup # Keep SimpleChatApp generate_response
-            generation_task = None # Keep SimpleChatApp generate_response
+            self.current_generation_task = None # Clear previous task reference
             try: # Keep SimpleChatApp generate_response
                 # Create a task for the response generation # Keep SimpleChatApp generate_response
-                generation_task = asyncio.create_task( # Keep SimpleChatApp generate_response
+                self.current_generation_task = asyncio.create_task( # Keep SimpleChatApp generate_response
                     generate_streaming_response( # Keep SimpleChatApp generate_response
                         self, # Pass the app instance
                         api_messages, # Keep SimpleChatApp generate_response
@@ -666,11 +695,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 ) # Keep SimpleChatApp generate_response
 
                 # Wait for response with timeout # Keep SimpleChatApp generate_response
-                full_response = await asyncio.wait_for(generation_task, timeout=60)  # Longer timeout # Keep SimpleChatApp generate_response
+                log.info(f"Waiting for generation task {self.current_generation_task} with timeout...") # Add log
+                full_response = await asyncio.wait_for(self.current_generation_task, timeout=60)  # Longer timeout # Keep SimpleChatApp generate_response
+                log.info(f"Generation task {self.current_generation_task} completed. Full response length: {len(full_response) if full_response else 0}") # Add log
 
-                # Save to database only if we got a complete response # Keep SimpleChatApp generate_response
-                if self.is_generating and full_response: # Keep SimpleChatApp generate_response
-                    log("Generation finished, saving full response to DB") # Added log
+                # Save to database only if we got a complete response and weren't cancelled
+                if self.is_generating and full_response: # Check is_generating flag here
+                    log("Generation finished normally, saving full response to DB") # Added log
                     self.db.add_message( # Keep SimpleChatApp generate_response
                         self.current_conversation.id, # Keep SimpleChatApp generate_response
                         "assistant", # Keep SimpleChatApp generate_response
@@ -679,11 +710,24 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     # Force a final refresh # Keep SimpleChatApp generate_response
                     self.refresh(layout=True) # Keep SimpleChatApp generate_response
                     await asyncio.sleep(0.1)  # Wait for UI to update # Keep SimpleChatApp generate_response
-                elif not full_response:
+                elif not full_response and self.is_generating: # Only log if not cancelled
                     log("Generation finished but full_response is empty/None") # Added log
+                else:
+                    # This case handles cancellation where full_response might be partial or None
+                    log("Generation was cancelled or finished without a full response.")
+
+            except asyncio.CancelledError: # Handle cancellation explicitly
+                log.warning("Generation task was cancelled.")
+                self.notify("Generation stopped by user.", severity="warning")
+                # Remove the potentially incomplete message from UI state
+                if self.messages and self.messages[-1].role == "assistant":
+                    self.messages.pop()
+                await self.update_messages_ui() # Update UI to remove partial message
 
             except asyncio.TimeoutError: # Keep SimpleChatApp generate_response
-                log.error("Response generation timed out") # Use log instead of logger
+                log.error(f"Response generation timed out waiting for task {self.current_generation_task}") # Use log instead of logger
+                # Log state at timeout
+                log.error(f"Timeout state: is_generating={self.is_generating}, task_done={self.current_generation_task.done() if self.current_generation_task else 'N/A'}")
                 error_msg = "Response generation timed out. The model may be busy or unresponsive. Please try again." # Keep SimpleChatApp generate_response
                 self.notify(error_msg, severity="error") # Keep SimpleChatApp generate_response
 
@@ -695,31 +739,36 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 await self.update_messages_ui() # Keep SimpleChatApp generate_response
 
             finally: # Keep SimpleChatApp generate_response
-                # Ensure task is properly cancelled and cleaned up # Keep SimpleChatApp generate_response
-                if generation_task: # Keep SimpleChatApp generate_response
-                    if not generation_task.done(): # Keep SimpleChatApp generate_response
-                        log("Cancelling generation task") # Added log
-                        generation_task.cancel() # Keep SimpleChatApp generate_response
-                        try: # Keep SimpleChatApp generate_response
-                            await generation_task # Keep SimpleChatApp generate_response
-                        except (asyncio.CancelledError, Exception) as e: # Keep SimpleChatApp generate_response
-                            log.error(f"Error cleaning up generation task: {str(e)}") # Use log instead of logger
-
+                # Ensure flag is reset and task reference is cleared
+                log(f"Setting is_generating to False in finally block") # Added log
+                self.is_generating = False # Keep SimpleChatApp generate_response
+                self.current_generation_task = None # Clear task reference
+                loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
+                loading.add_class("hidden") # Keep SimpleChatApp generate_response
                 # Force a final UI refresh # Keep SimpleChatApp generate_response
                 self.refresh(layout=True) # Keep SimpleChatApp generate_response
 
         except Exception as e: # Keep SimpleChatApp generate_response
-            log.error(f"Exception during generate_response: {str(e)}") # Added log
+            # Catch any other unexpected errors during generation setup/handling
+            log.error(f"Unexpected exception during generate_response: {str(e)}") # Added log
             self.notify(f"Error generating response: {str(e)}", severity="error") # Keep SimpleChatApp generate_response
-            # Add error message # Keep SimpleChatApp generate_response
-            error_msg = f"Error generating response: {str(e)}" # Keep SimpleChatApp generate_response
+            # Add error message to UI # Keep SimpleChatApp generate_response
+            error_msg = f"Error: {str(e)}" # Keep SimpleChatApp generate_response
             self.messages.append(Message(role="assistant", content=error_msg)) # Keep SimpleChatApp generate_response
             await self.update_messages_ui() # Keep SimpleChatApp generate_response
-        finally: # Keep SimpleChatApp generate_response
-            log(f"Setting is_generating to False in finally block") # Added log
-            self.is_generating = False # Keep SimpleChatApp generate_response
+            # The finally block below will handle resetting is_generating and hiding loading
+
+        finally: # Keep SimpleChatApp generate_response - This finally block now primarily handles cleanup
+            log(f"Ensuring is_generating is False and task is cleared in outer finally block") # Added log
+            self.is_generating = False # Ensure flag is always reset
+            self.current_generation_task = None # Ensure task ref is cleared
             loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
-            loading.add_class("hidden") # Keep SimpleChatApp generate_response
+            loading.add_class("hidden") # Ensure loading indicator is hidden
+            # Re-focus input after generation attempt (success, failure, or cancel)
+            try:
+                self.query_one("#message-input").focus()
+            except Exception:
+                pass # Ignore if input not found
 
     def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None: # Keep SimpleChatApp on_model_selector_model_selected
         """Handle model selection""" # Keep SimpleChatApp on_model_selector_model_selected docstring
@@ -822,6 +871,11 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         input_widget = self.query_one("#message-input", Input) # Keep SimpleChatApp action_view_history
         if not input_widget.has_focus: # Keep SimpleChatApp action_view_history
             await self.view_chat_history() # Keep SimpleChatApp action_view_history
+            
+    def action_model_browser(self) -> None:
+        """Open the Ollama model browser screen."""
+        # Always trigger regardless of focus
+        self.push_screen(ModelBrowserScreen())
 
     def action_settings(self) -> None: # Modify SimpleChatApp action_settings
         """Action to open/close settings panel via key binding."""
@@ -852,40 +906,110 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             return
 
         # --- Define the Modal Class ---
-        class TitleInputModal(Static):
-            def __init__(self, current_title: str):
+        class ConfirmDialog(Static):
+            """A simple confirmation dialog."""
+            
+            class Confirmed(Message):
+                """Message sent when the dialog is confirmed."""
+                def __init__(self, confirmed: bool):
+                    self.confirmed = confirmed
+                    super().__init__()
+            
+            def __init__(self, message: str):
                 super().__init__()
-                self.current_title = current_title
-
+                self.message = message
+            
             def compose(self) -> ComposeResult:
-                with Vertical(id="title-modal"):
-                    yield Static("Enter new conversation title:", id="modal-label")
-                    yield Input(value=self.current_title, id="title-input")
+                with Vertical(id="confirm-dialog"):
+                    yield Static(self.message, id="confirm-message")
                     with Horizontal():
-                        yield Button("Cancel", id="cancel-button", variant="error")
-                        yield Button("Update", id="update-button", variant="success")
-
-            @on(Button.Pressed, "#update-button")
-            def update_title(self, event: Button.Pressed) -> None:
-                input_widget = self.query_one("#title-input", Input)
-                new_title = input_widget.value.strip()
-                if new_title:
-                    # Call the app's update method asynchronously
-                    asyncio.create_task(self.app.update_conversation_title(new_title))
-                self.remove() # Close the modal
-
-            @on(Button.Pressed, "#cancel-button")
+                        yield Button("No", id="no-button", variant="error")
+                        yield Button("Yes", id="yes-button", variant="success")
+            
+            @on(Button.Pressed, "#yes-button")
+            def confirm(self, event: Button.Pressed) -> None:
+                self.post_message(self.Confirmed(True))
+                self.remove() # Close the dialog
+            
+            @on(Button.Pressed, "#no-button")
             def cancel(self, event: Button.Pressed) -> None:
-                self.remove() # Close the modal
-
+                self.post_message(self.Confirmed(False))
+                self.remove() # Close the dialog
+                
+            def on_confirmed(self, event: Confirmed) -> None:
+                """Event handler for confirmation - used by the app to get the result."""
+                pass
+                
             def on_mount(self) -> None:
-                """Focus the input when the modal appears."""
-                self.query_one("#title-input", Input).focus()
+                """Set the CSS style when mounted."""
+                self.styles.width = "40"
+                self.styles.height = "auto"
+                self.styles.background = "var(--surface)"
+                self.styles.border = "thick var(--primary)"
+                self.styles.align = "center middle"
+                self.styles.padding = "1 2"
+                self.styles.layer = "modal"
+
+class TitleInputModal(Static):
+    def __init__(self, current_title: str):
+        super().__init__()
+        self.current_title = current_title
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="title-modal"):
+            yield Static("Enter new conversation title:", id="modal-label")
+            yield Input(value=self.current_title, id="title-input")
+            with Horizontal():
+                yield Button("Cancel", id="cancel-button", variant="error")
+                yield Button("Update", id="update-button", variant="success")
+
+    @on(Button.Pressed, "#update-button")
+    def update_title(self, event: Button.Pressed) -> None:
+        input_widget = self.query_one("#title-input", Input)
+        new_title = input_widget.value.strip()
+        if new_title:
+            # Call the app's update method asynchronously
+            asyncio.create_task(self.app.update_conversation_title(new_title))
+        self.remove() # Close the modal
+
+    @on(Button.Pressed, "#cancel-button")
+    def cancel(self, event: Button.Pressed) -> None:
+        self.remove() # Close the modal
+
+    async def on_mount(self) -> None:
+        """Focus the input when the modal appears."""
+        self.query_one("#title-input", Input).focus()
 
         # --- Show the modal ---
         modal = TitleInputModal(self.current_conversation.title)
         await self.mount(modal) # Use await for mounting
 
+    async def run_modal(self, modal_type: str, *args, **kwargs) -> bool:
+        """Run a modal dialog and return the result."""
+        if modal_type == "confirm_dialog":
+            # Create a confirmation dialog with the message from args
+            message = args[0] if args else "Are you sure?"
+            dialog = ConfirmDialog(message)
+            await self.mount(dialog)
+            
+            # Setup event handler to receive the result
+            result = False
+            
+            def on_confirm(event: ConfirmDialog.Confirmed) -> None:
+                nonlocal result
+                result = event.confirmed
+            
+            # Add listener for the confirmation event
+            dialog.on_confirmed = on_confirm
+            
+            # Wait for the dialog to close
+            while dialog.is_mounted:
+                await self.sleep(0.1)
+            
+            return result
+        
+        return False
+    
     async def update_conversation_title(self, new_title: str) -> None:
         """Update the current conversation title"""
         if not self.current_conversation:

@@ -86,14 +86,12 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
     buffer = []
     last_update = time.time()
     update_interval = 0.1  # Update UI every 100ms
+    generation_task = None
     
     try:
+        # The cancellation is now handled by cancelling the asyncio Task in main.py
+        # which will raise CancelledError here, interrupting the loop.
         async for chunk in client.generate_stream(messages, model, style):
-            # Check if generation was cancelled by the app (e.g., via escape key)
-            if not app.is_generating:
-                logger.info("Generation cancelled by app flag.")
-                break # Exit the loop immediately
-
             if chunk:  # Only process non-empty chunks
                 buffer.append(chunk)
                 current_time = time.time()
@@ -102,34 +100,37 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
                 if current_time - last_update >= update_interval or len(''.join(buffer)) > 100:
                     new_content = ''.join(buffer)
                     full_response += new_content
-                    # Check again before calling callback, in case it was cancelled during chunk processing
-                    if not app.is_generating:
-                        logger.info("Generation cancelled before UI update.")
-                        break
+                    # No need to check app.is_generating here, rely on CancelledError
                     await callback(full_response)
                     buffer = []
                     last_update = current_time
                     
                     # Small delay to let UI catch up
                     await asyncio.sleep(0.05)
-        
-        # Send any remaining content if generation wasn't cancelled
-        if buffer and app.is_generating:
+
+        # Send any remaining content if the loop finished normally
+        if buffer:
             new_content = ''.join(buffer)
             full_response += new_content
             await callback(full_response)
-        
-        if app.is_generating:
-            logger.info("Streaming response completed normally.")
-        else:
-             logger.info("Streaming response loop exited due to cancellation.")
-             
+
+        logger.info("Streaming response loop finished normally.") # Clarify log message
+        # Add log before returning
+        logger.info(f"generate_streaming_response returning normally. Full response length: {len(full_response)}")
         return full_response
+    except asyncio.CancelledError:
+        # This is expected when the user cancels via Escape
+        logger.info("Streaming response task cancelled.") # Clarify log message
+        # Add log before returning
+        logger.info(f"generate_streaming_response returning after cancellation. Partial response length: {len(full_response)}")
+        # Do not re-raise CancelledError, let the caller handle it
+        return full_response # Return whatever was collected so far (might be partial)
     except Exception as e:
-        logger.error(f"Error in streaming response: {str(e)}")
-        # Ensure the app knows generation stopped on error
-        app.is_generating = False
-        raise
+        logger.error(f"Error during streaming response: {str(e)}") # Clarify log message
+        # Ensure the app knows generation stopped on error ONLY if it wasn't cancelled
+        if not isinstance(e, asyncio.CancelledError):
+             app.is_generating = False # Reset flag on other errors
+        raise # Re-raise other exceptions
 
 def ensure_ollama_running() -> bool:
     """

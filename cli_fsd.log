@@ -1,0 +1,39 @@
+2025-04-01 15:45:04,692 - INFO - cli-FSD started
+2025-04-01 15:45:04,723 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-04-01 15:45:04,727 - DEBUG - http://localhost:11434 "GET /api/ps HTTP/1.1" 200 13
+2025-04-01 15:45:04,729 - DEBUG - connect_tcp.started host='localhost' port=11434 local_address=None timeout=None socket_options=None
+2025-04-01 15:45:04,729 - DEBUG - connect_tcp.complete return_value=<httpcore._backends.sync.SyncStream object at 0x7f535c1ef850>
+2025-04-01 15:45:04,729 - DEBUG - send_request_headers.started request=<Request [b'POST']>
+2025-04-01 15:45:04,730 - DEBUG - send_request_headers.complete
+2025-04-01 15:45:04,730 - DEBUG - send_request_body.started request=<Request [b'POST']>
+2025-04-01 15:45:04,730 - DEBUG - send_request_body.complete
+2025-04-01 15:45:04,730 - DEBUG - receive_response_headers.started request=<Request [b'POST']>
+2025-04-01 15:45:22,788 - DEBUG - receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Content-Type', b'application/json; charset=utf-8'), (b'Date', b'Tue, 01 Apr 2025 19:45:22 GMT'), (b'Content-Length', b'1615')])
+2025-04-01 15:45:22,789 - INFO - HTTP Request: POST http://localhost:11434/api/chat "HTTP/1.1 200 OK"
+2025-04-01 15:45:22,791 - DEBUG - receive_response_body.started request=<Request [b'POST']>
+2025-04-01 15:45:22,792 - DEBUG - receive_response_body.complete
+2025-04-01 15:45:22,792 - DEBUG - response_closed.started
+2025-04-01 15:45:22,792 - DEBUG - response_closed.complete
+2025-04-01 15:45:22,793 - DEBUG - send_request_headers.started request=<Request [b'POST']>
+2025-04-01 15:45:22,793 - DEBUG - send_request_headers.complete
+2025-04-01 15:45:22,793 - DEBUG - send_request_body.started request=<Request [b'POST']>
+2025-04-01 15:45:22,793 - DEBUG - send_request_body.complete
+2025-04-01 15:45:22,793 - DEBUG - receive_response_headers.started request=<Request [b'POST']>
+2025-04-01 15:45:30,482 - DEBUG - receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Content-Type', b'application/json; charset=utf-8'), (b'Date', b'Tue, 01 Apr 2025 19:45:30 GMT'), (b'Content-Length', b'1571')])
+2025-04-01 15:45:30,482 - INFO - HTTP Request: POST http://localhost:11434/api/chat "HTTP/1.1 200 OK"
+2025-04-01 15:45:30,482 - DEBUG - receive_response_body.started request=<Request [b'POST']>
+2025-04-01 15:45:30,482 - DEBUG - receive_response_body.complete
+2025-04-01 15:45:30,482 - DEBUG - response_closed.started
+2025-04-01 15:45:30,482 - DEBUG - response_closed.complete
+2025-04-01 15:45:30,483 - DEBUG - send_request_headers.started request=<Request [b'POST']>
+2025-04-01 15:45:30,483 - DEBUG - send_request_headers.complete
+2025-04-01 15:45:30,483 - DEBUG - send_request_body.started request=<Request [b'POST']>
+2025-04-01 15:45:30,483 - DEBUG - send_request_body.complete
+2025-04-01 15:45:30,483 - DEBUG - receive_response_headers.started request=<Request [b'POST']>
+2025-04-01 15:45:30,891 - DEBUG - receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Content-Type', b'application/json; charset=utf-8'), (b'Date', b'Tue, 01 Apr 2025 19:45:30 GMT'), (b'Content-Length', b'298')])
+2025-04-01 15:45:30,891 - INFO - HTTP Request: POST http://localhost:11434/api/chat "HTTP/1.1 200 OK"
+2025-04-01 15:45:30,891 - DEBUG - receive_response_body.started request=<Request [b'POST']>
+2025-04-01 15:45:30,891 - DEBUG - receive_response_body.complete
+2025-04-01 15:45:30,891 - DEBUG - response_closed.started
+2025-04-01 15:45:30,891 - DEBUG - response_closed.complete
+2025-04-01 15:46:08,009 - INFO - Processed query: lets construct a fractal sequence using bash
