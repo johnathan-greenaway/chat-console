@@ -270,7 +270,15 @@ class OllamaClient(BaseModelClient):
                     return data
         except Exception as e:
             logger.error(f"Error getting model details: {str(e)}")
-            raise Exception(f"Failed to get model details: {str(e)}")
+            # Return a dict with error info instead of raising an exception
+            return {
+                "error": str(e),
+                "modelfile": None,
+                "parameters": None,
+                "size": 0,
+                "created_at": None,
+                "modified_at": None
+            }
     
     async def list_available_models_from_registry(self, query: str = "") -> List[Dict[str, Any]]:
         """List available models from Ollama registry"""

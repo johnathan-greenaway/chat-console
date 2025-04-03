@@ -215,7 +215,7 @@ class ModelBrowser(Container):
         # Models container (will hold both tabs)
         with Container(id="models-container"):
             # Local models tab
-            with Container(id="local-models", classes="active"):
+            with ScrollableContainer(id="local-models", classes="active"):
                 yield DataTable(id="local-models-table")
                 with Container(id="model-actions"):
                     with Horizontal(id="action-buttons"):
@@ -224,7 +224,7 @@ class ModelBrowser(Container):
                         yield Button("View Details", id="details-button", variant="default")
             
             # Available models tab
-            with Container(id="available-models"):
+            with ScrollableContainer(id="available-models"):
                 yield DataTable(id="available-models-table")
                 with Container(id="model-actions"):
                     with Horizontal(id="action-buttons"):
@@ -232,7 +232,7 @@ class ModelBrowser(Container):
                         yield Button("View Details", id="details-available-button", variant="default")
         
         # Model details area (hidden by default)
-        with Container(id="model-details"):
+        with ScrollableContainer(id="model-details"):
             yield Static("No model selected", id="details-content")
         
         # Progress area for model downloads (hidden by default)
@@ -606,8 +606,8 @@ class ModelBrowser(Container):
             available_tab.add_class("active")
         
         # Update containers
-        local_container = self.query_one("#local-models", Container)
-        available_container = self.query_one("#available-models", Container)
+        local_container = self.query_one("#local-models", ScrollableContainer)
+        available_container = self.query_one("#available-models", ScrollableContainer)
         
         if tab == "local":
             local_container.add_class("active")
@@ -756,7 +756,13 @@ class ModelBrowser(Container):
             # Get model details from Ollama
             details = await self.ollama_client.get_model_details(model_id)
             
-            # Format details
+            # Check for error in response
+            if "error" in details:
+                error_msg = f"Error: {details['error']}"
+                details_content.update(error_msg)
+                details_container.add_class("visible")
+                return
+            
             formatted_details = f"Model: {model_id}\n"
             
             # Extract parameter size info
@@ -890,9 +896,9 @@ class ModelBrowser(Container):
             formatted_details += f"License: {license_info}\n"
             
             # Add timestamps if available
-            if "modified_at" in details:
+            if "modified_at" in details and details["modified_at"]:
                 formatted_details += f"Modified: {details['modified_at']}\n"
-            elif "created_at" in details:
+            elif "created_at" in details and details["created_at"]:
                 formatted_details += f"Created: {details['created_at']}\n"
                 
             # Add system prompt if available
