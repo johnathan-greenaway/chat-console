@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Dict, List, Any, Optional
 from textual.app import ComposeResult
@@ -253,11 +254,30 @@ class ModelBrowser(Container):
         available_table.add_columns("Model", "Size", "Family", "Description")
         available_table.cursor_type = "row"
         
+        # Show notification about model loading
+        self.notify("Initializing model browser, this might take a moment on first run...", 
+                   severity="information", timeout=5)
+        
         # Load models
         await self.load_local_models()
         
+        # Start loading available models in the background
+        asyncio.create_task(self.preload_available_models())
+        
         # Focus search input
         self.query_one("#model-search").focus()
+        
+    async def preload_available_models(self) -> None:
+        """Preload available models in the background"""
+        # Load the available models list in the background to make it faster when
+        # the user switches to the Available Models tab
+        try:
+            # This will trigger cache creation if needed, making tab switching faster
+            models = await self.ollama_client.list_available_models_from_registry()
+            if models:
+                logger.info(f"Preloaded {len(models)} available models")
+        except Exception as e:
+            logger.error(f"Error preloading available models: {str(e)}")
     
     async def load_local_models(self) -> None:
         """Load locally installed Ollama models"""
@@ -422,28 +442,58 @@ class ModelBrowser(Container):
             search_input = self.query_one("#model-search", Input)
             query = search_input.value.strip()
             
-            # Load models from registry
+            # Debug to track model loading
+            logger.info(f"Loading available models, query: '{query}'")
+            
+            # Load models from registry - don't apply the query here, get ALL models
             try:
                 # First try the API-based registry
-                self.available_models = await self.ollama_client.list_available_models_from_registry(query)
+                self.available_models = await self.ollama_client.list_available_models_from_registry("")
+                logger.info(f"Got {len(self.available_models)} models from registry")
+                
                 # If no models found, use the curated list
                 if not self.available_models:
-                    self.available_models = await self.ollama_client.get_registry_models()
+                    self.available_models = await self.ollama_client.get_registry_models("")
+                    logger.info(f"Got {len(self.available_models)} models from curated list")
             except Exception as e:
-                self.notify(f"Error from registry API: {str(e)}", severity="warning")
+                logger.error(f"Error from registry API: {str(e)}")
                 # Fallback to curated list
-                self.available_models = await self.ollama_client.get_registry_models()
+                self.available_models = await self.ollama_client.get_registry_models("")
+                logger.info(f"Fallback: Got {len(self.available_models)} models from curated list")
             
             # Clear and populate table
             available_table = self.query_one("#available-models-table", DataTable)
             available_table.clear()
             
-            # Get number of models loaded for debugging
+            # Get number of models loaded (but don't notify to avoid notification spam)
             model_count = len(self.available_models)
-            self.notify(f"Found {model_count} models to display", severity="information")
+            logger.info(f"Found {model_count} models to display")
             
-            # Add all models to the table - no pagination limit
-            for model in self.available_models:
+            # Filter models by search query if provided
+            filtered_models = self.available_models
+            if query:
+                query = query.lower()
+                filtered_models = []
+                for model in self.available_models:
+                    # Check if query matches name, description or family
+                    name = str(model.get("name", "")).lower()
+                    desc = str(model.get("description", "")).lower()
+                    family = str(model.get("model_family", "")).lower()
+                    
+                    # Also check variants if available
+                    variants_match = False
+                    if "variants" in model and model["variants"]:
+                        variants_text = " ".join([str(v).lower() for v in model["variants"]])
+                        if query in variants_text:
+                            variants_match = True
+                    
+                    if query in name or query in desc or query in family or variants_match:
+                        filtered_models.append(model)
+                
+                logger.info(f"Filtered to {len(filtered_models)} models matching '{query}'")
+            
+            # Add all filtered models to the table - no pagination limit
+            for model in filtered_models:
                 name = model.get("name", "Unknown")
                 
                 # Extract parameter size info (in billions)
@@ -455,6 +505,17 @@ class ModelBrowser(Container):
                     # Make sure it ends with B for billions if it doesn't already
                     if not size.upper().endswith("B"):
                         size += "B"
+                # Check if we can extract from variants
+                elif "variants" in model and model["variants"]:
+                    for variant in model["variants"]:
+                        if any(char.isdigit() for char in str(variant)):
+                            # This looks like a size variant (e.g., "7b", "70b")
+                            variant_str = str(variant).lower()
+                            if variant_str.endswith('b'):
+                                size = str(variant).upper()
+                            else:
+                                size = f"{variant}B"
+                            break
                 else:
                     # Extract from name if not available
                     model_name = str(name).lower()
@@ -504,6 +565,7 @@ class ModelBrowser(Container):
                             "phi": "3B",
                             "phi2": "3B",
                             "phi3": "3B",
+                            "phi4": "7B",
                             "orca-mini": "7B",
                             "llava": "7B",
                             "codellama": "7B",
@@ -526,12 +588,16 @@ class ModelBrowser(Container):
                 family = model.get("model_family", "Unknown")
                 description = model.get("description", "No description available")
                 
+                # Keep this for debugging
+                # logger.info(f"Adding model to table: {name} - {size} - {family}")
+                
                 available_table.add_row(name, size, family, description)
             
             actual_displayed = available_table.row_count
-            self.notify(f"Loaded {actual_displayed} available models", severity="information")
+            logger.info(f"Loaded {actual_displayed} available models")
             
         except Exception as e:
+            logger.error(f"Error loading available models: {str(e)}")
             self.notify(f"Error loading available models: {str(e)}", severity="error")
         finally:
             self.is_loading = False
@@ -745,218 +811,295 @@ class ModelBrowser(Container):
         model_id = self._get_selected_model_id()
         
         if not model_id:
-            self.notify("No model selected", severity="warning")
-            return
+            # Try to select the first model in the table
+            if self.current_tab == "local" and self.local_models:
+                model_id = self.local_models[0]["id"]
+            elif self.current_tab == "available" and self.available_models:
+                model_id = self.available_models[0]["name"]
+                
+            # If we still don't have a model ID, show warning and return
+            if not model_id:
+                self.notify("No model selected", severity="warning")
+                return
         
         # Get model details container
         details_container = self.query_one("#model-details")
         details_content = self.query_one("#details-content", Static)
         
-        try:
-            # Get model details from Ollama
-            details = await self.ollama_client.get_model_details(model_id)
-            
-            # Check for error in response
-            if "error" in details:
-                error_msg = f"Error: {details['error']}"
-                details_content.update(error_msg)
+        # Check if we're in "available" tab or "local" tab
+        if self.current_tab == "available":
+            # For available models, use cached info instead of making API calls
+            try:
+                # Find the model in our available_models list
+                model_info = None
+                for model in self.available_models:
+                    if model.get("name") == model_id:
+                        model_info = model
+                        break
+                
+                if not model_info:
+                    details_content.update(f"No details found for model: {model_id}")
+                    details_container.add_class("visible")
+                    return
+                
+                # Format the details from the cached info
+                formatted_details = f"Model: {model_id}\n"
+                
+                # Add parameters info
+                param_size = model_info.get("parameter_size", "Unknown")
+                if param_size and not str(param_size).upper().endswith("B"):
+                    param_size = f"{param_size}B"
+                formatted_details += f"Parameters: {param_size}\n"
+                
+                # Add family info
+                family = model_info.get("model_family", "Unknown")
+                formatted_details += f"Family: {family}\n"
+                
+                # Add description
+                description = model_info.get("description", "No description available.")
+                formatted_details += f"\nDescription:\n{description}\n"
+                
+                # Add variants if available
+                if "variants" in model_info and model_info["variants"]:
+                    formatted_details += f"\nVariants: {', '.join(model_info['variants'])}\n"
+                
+                # Add stats if available
+                if "stats" in model_info and model_info["stats"]:
+                    stats = model_info["stats"]
+                    formatted_details += f"\nStats:\n"
+                    if "pulls" in stats:
+                        formatted_details += f"Pulls: {stats['pulls']}\n"
+                    if "tags" in stats:
+                        formatted_details += f"Tags: {stats['tags']}\n"
+                    if "last_updated" in stats:
+                        formatted_details += f"Last Updated: {stats['last_updated']}\n"
+                
+                # Update and show details
+                details_content.update(formatted_details)
                 details_container.add_class("visible")
-                return
-            
-            formatted_details = f"Model: {model_id}\n"
-            
-            # Extract parameter size info
-            param_size = "Unknown"
-            
-            # First try to get parameter size from modelfile if available
-            if "modelfile" in details and details["modelfile"] is not None:
-                modelfile = details["modelfile"]
-                if "parameter_size" in modelfile and modelfile["parameter_size"]:
-                    param_size = str(modelfile["parameter_size"])
-                    # Make sure it ends with B for billions if it doesn't already
-                    if not param_size.upper().endswith("B"):
-                        param_size += "B"
-            
-            # If not found in modelfile, try to extract from name
-            if param_size == "Unknown":
-                model_name = str(model_id).lower()
-                if "70b" in model_name:
-                    param_size = "70B"
-                elif "405b" in model_name or "400b" in model_name:
-                    param_size = "405B"
-                elif "34b" in model_name or "35b" in model_name:
-                    param_size = "34B"
-                elif "27b" in model_name or "28b" in model_name:
-                    param_size = "27B"
-                elif "13b" in model_name or "14b" in model_name:
-                    param_size = "13B"
-                elif "8b" in model_name:
-                    param_size = "8B"
-                elif "7b" in model_name:
-                    param_size = "7B"
-                elif "6b" in model_name:
-                    param_size = "6B"
-                elif "3b" in model_name:
-                    param_size = "3B"
-                elif "2b" in model_name:
-                    param_size = "2B"
-                elif "1b" in model_name:
-                    param_size = "1B"
-                elif "mini" in model_name:
-                    param_size = "3B"
-                elif "small" in model_name:
-                    param_size = "7B"
-                elif "medium" in model_name:
-                    param_size = "13B"
-                elif "large" in model_name:
-                    param_size = "34B"
+            except Exception as e:
+                logger.error(f"Error showing available model details: {str(e)}")
+                details_content.update(f"Error loading details: {str(e)}")
+                details_container.add_class("visible")
+        else:
+            # For local models, we still need to get details from API
+            try:
+                # Get model details from Ollama
+                details = await self.ollama_client.get_model_details(model_id)
                 
-                # Special handling for base models with no size indicator
+                # Check for error in response
+                if "error" in details:
+                    error_msg = f"Error: {details['error']}"
+                    details_content.update(error_msg)
+                    details_container.add_class("visible")
+                    return
+                
+                formatted_details = f"Model: {model_id}\n"
+                
+                # Extract parameter size info
+                param_size = "Unknown"
+                
+                # First try to get parameter size from modelfile if available
+                if "modelfile" in details and details["modelfile"] is not None:
+                    modelfile = details["modelfile"]
+                    if "parameter_size" in modelfile and modelfile["parameter_size"]:
+                        param_size = str(modelfile["parameter_size"])
+                        # Make sure it ends with B for billions if it doesn't already
+                        if not param_size.upper().endswith("B"):
+                            param_size += "B"
+                
+                # If not found in modelfile, try to extract from name
                 if param_size == "Unknown":
-                    # Remove tag part if present to get base model
-                    base_name = model_name.split(":")[0]
+                    model_name = str(model_id).lower()
+                    if "70b" in model_name:
+                        param_size = "70B"
+                    elif "405b" in model_name or "400b" in model_name:
+                        param_size = "405B"
+                    elif "34b" in model_name or "35b" in model_name:
+                        param_size = "34B"
+                    elif "27b" in model_name or "28b" in model_name:
+                        param_size = "27B"
+                    elif "13b" in model_name or "14b" in model_name:
+                        param_size = "13B"
+                    elif "8b" in model_name:
+                        param_size = "8B"
+                    elif "7b" in model_name:
+                        param_size = "7B"
+                    elif "6b" in model_name:
+                        param_size = "6B"
+                    elif "3b" in model_name:
+                        param_size = "3B"
+                    elif "2b" in model_name:
+                        param_size = "2B"
+                    elif "1b" in model_name:
+                        param_size = "1B"
+                    elif "mini" in model_name:
+                        param_size = "3B"
+                    elif "small" in model_name:
+                        param_size = "7B"
+                    elif "medium" in model_name:
+                        param_size = "13B"
+                    elif "large" in model_name:
+                        param_size = "34B"
                     
-                    # Check if we have default parameter sizes for known models
-                    model_defaults = {
-                        "llama3": "8B",
-                        "llama2": "7B",
-                        "mistral": "7B",
-                        "gemma": "7B",
-                        "gemma2": "9B",
-                        "phi": "3B",
-                        "phi2": "3B",
-                        "phi3": "3B",
-                        "orca-mini": "7B",
-                        "llava": "7B",
-                        "codellama": "7B",
-                        "neural-chat": "7B",
-                        "wizard-math": "7B",
-                        "yi": "6B",
-                        "deepseek": "7B",
-                        "deepseek-coder": "7B",
-                        "qwen": "7B",
-                        "falcon": "7B",
-                        "stable-code": "3B"
-                    }
+                    # Special handling for base models with no size indicator
+                    if param_size == "Unknown":
+                        # Remove tag part if present to get base model
+                        base_name = model_name.split(":")[0]
+                        
+                        # Check if we have default parameter sizes for known models
+                        model_defaults = {
+                            "llama3": "8B",
+                            "llama2": "7B",
+                            "mistral": "7B",
+                            "gemma": "7B",
+                            "gemma2": "9B",
+                            "phi": "3B",
+                            "phi2": "3B",
+                            "phi3": "3B",
+                            "phi4": "7B",
+                            "orca-mini": "7B",
+                            "llava": "7B",
+                            "codellama": "7B",
+                            "neural-chat": "7B",
+                            "wizard-math": "7B",
+                            "yi": "6B",
+                            "deepseek": "7B",
+                            "deepseek-coder": "7B",
+                            "qwen": "7B",
+                            "falcon": "7B",
+                            "stable-code": "3B"
+                        }
+                        
+                        # Try to find a match in default sizes
+                        for model_name, default_size in model_defaults.items():
+                            if model_name in base_name:
+                                param_size = default_size
+                                break
                     
-                    # Try to find a match in default sizes
-                    for model_name, default_size in model_defaults.items():
-                        if model_name in base_name:
-                            param_size = default_size
-                            break
+                # Show both parameter size and disk size
+                formatted_details += f"Parameters: {param_size}\n"
+                formatted_details += f"Disk Size: {self._format_size(details.get('size', 0))}\n"
                 
-            # Show both parameter size and disk size
-            formatted_details += f"Parameters: {param_size}\n"
-            formatted_details += f"Disk Size: {self._format_size(details.get('size', 0))}\n"
-            
-            # Extract family info - check multiple possible locations
-            family = "Unknown"
-            template = "Unknown"
-            license_info = "Unknown"
-            system_prompt = ""
-            
-            if "modelfile" in details and details["modelfile"] is not None:
-                modelfile = details["modelfile"]
+                # Extract family info - check multiple possible locations
+                family = "Unknown"
+                template = "Unknown"
+                license_info = "Unknown"
+                system_prompt = ""
+                
+                if "modelfile" in details and details["modelfile"] is not None:
+                    modelfile = details["modelfile"]
 
-                # Ensure modelfile is a dictionary before accessing keys
-                if isinstance(modelfile, dict):
-                    # Extract family/parameter size
-                    if "parameter_size" in modelfile:
-                        family = modelfile.get("parameter_size")
-                    elif "family" in modelfile:
-                        family = modelfile.get("family")
-                    else:
-                        # Try to infer from model name if not explicitly set
-                        try:
-                            name = str(model_id).lower() if model_id is not None else ""
-                            if "llama" in name:
-                                family = "Llama"
-                            elif "mistral" in name:
-                                family = "Mistral"
-                            elif "phi" in name:
-                                family = "Phi"
-                            elif "gemma" in name:
-                                family = "Gemma"
-                            else:
+                    # Ensure modelfile is a dictionary before accessing keys
+                    if isinstance(modelfile, dict):
+                        # Extract family/parameter size
+                        if "parameter_size" in modelfile:
+                            family = modelfile.get("parameter_size")
+                        elif "family" in modelfile:
+                            family = modelfile.get("family")
+                        else:
+                            # Try to infer from model name if not explicitly set
+                            try:
+                                name = str(model_id).lower() if model_id is not None else ""
+                                if "llama" in name:
+                                    family = "Llama"
+                                elif "mistral" in name:
+                                    family = "Mistral"
+                                elif "phi" in name:
+                                    family = "Phi"
+                                elif "gemma" in name:
+                                    family = "Gemma"
+                                else:
+                                    family = "Unknown"
+                            except (TypeError, ValueError) as e:
+                                logger.error(f"Error inferring model family: {str(e)}")
                                 family = "Unknown"
-                        except (TypeError, ValueError) as e:
-                            logger.error(f"Error inferring model family: {str(e)}")
-                            family = "Unknown"
 
-                    # Get template
-                    template = modelfile.get("template", "Unknown")
+                        # Get template
+                        template = modelfile.get("template", "Unknown")
 
-                    # Get license
-                    license_info = modelfile.get("license", "Unknown")
+                        # Get license
+                        license_info = modelfile.get("license", "Unknown")
 
-                    # Get system prompt if available
-                    if "system" in modelfile:
-                        system_prompt = modelfile.get("system", "") # Use get for safety
-                else:
-                    # If modelfile is not a dict (e.g., a string), set defaults
-                    logger.warning(f"Modelfile for {model_id} is not a dictionary. Type: {type(modelfile)}")
-                    # Keep existing defaults or try to infer family from name again
-                    if family == "Unknown":
-                         try:
-                            name = str(model_id).lower() if model_id is not None else ""
-                            if "llama" in name: family = "Llama"
-                            elif "mistral" in name: family = "Mistral"
-                            elif "phi" in name: family = "Phi"
-                            elif "gemma" in name: family = "Gemma"
-                         except (TypeError, ValueError): pass # Ignore errors here
-                    # template, license_info, system_prompt remain "Unknown" or empty
-            
-            formatted_details += f"Family: {family}\n"
-            formatted_details += f"Template: {template}\n"
-            formatted_details += f"License: {license_info}\n"
-            
-            # Add timestamps if available
-            if "modified_at" in details and details["modified_at"]:
-                formatted_details += f"Modified: {details['modified_at']}\n"
-            elif "created_at" in details and details["created_at"]:
-                formatted_details += f"Created: {details['created_at']}\n"
+                        # Get system prompt if available
+                        if "system" in modelfile:
+                            system_prompt = modelfile.get("system", "") # Use get for safety
+                    else:
+                        # If modelfile is not a dict (e.g., a string), set defaults
+                        logger.warning(f"Modelfile for {model_id} is not a dictionary. Type: {type(modelfile)}")
+                        # Keep existing defaults or try to infer family from name again
+                        if family == "Unknown":
+                             try:
+                                name = str(model_id).lower() if model_id is not None else ""
+                                if "llama" in name: family = "Llama"
+                                elif "mistral" in name: family = "Mistral"
+                                elif "phi" in name: family = "Phi"
+                                elif "gemma" in name: family = "Gemma"
+                             except (TypeError, ValueError): pass # Ignore errors here
+                        # template, license_info, system_prompt remain "Unknown" or empty
                 
-            # Add system prompt if available
-            if system_prompt:
-                formatted_details += f"\nSystem Prompt:\n{system_prompt}\n"
-            
-            # Update and show details
-            details_content.update(formatted_details)
-            details_container.add_class("visible")
-            
-        except Exception as e:
-            self.notify(f"Error getting model details: {str(e)}", severity="error")
-            details_content.update(f"Error loading details: {str(e)}")
-            details_container.add_class("visible")
+                formatted_details += f"Family: {family}\n"
+                formatted_details += f"Template: {template}\n"
+                formatted_details += f"License: {license_info}\n"
+                
+                # Add timestamps if available
+                if "modified_at" in details and details["modified_at"]:
+                    formatted_details += f"Modified: {details['modified_at']}\n"
+                elif "created_at" in details and details["created_at"]:
+                    formatted_details += f"Created: {details['created_at']}\n"
+                    
+                # Add system prompt if available
+                if system_prompt:
+                    formatted_details += f"\nSystem Prompt:\n{system_prompt}\n"
+                
+                # Update and show details
+                details_content.update(formatted_details)
+                details_container.add_class("visible")
+                
+            except Exception as e:
+                self.notify(f"Error getting model details: {str(e)}", severity="error")
+                details_content.update(f"Error loading details: {str(e)}")
+                details_container.add_class("visible")
     
     def _get_selected_model_id(self) -> str:
         """Get the ID of the currently selected model"""
-        if self.current_tab == "local":
-            table = self.query_one("#local-models-table", DataTable)
-            if table.cursor_row is not None:
-                row = table.get_row_at(table.cursor_row)
-                # Get model ID from local models list
-                try:
-                    if row and len(row) > 0:
-                        row_name = str(row[0]) if row[0] is not None else ""
-                        for model in self.local_models:
-                            if model["name"] == row_name:
-                                return model["id"]
-                except (IndexError, TypeError) as e:
-                    logger.error(f"Error processing row data: {str(e)}")
-        else:
-            table = self.query_one("#available-models-table", DataTable)
-            if table.cursor_row is not None:
-                row = table.get_row_at(table.cursor_row)
-                # Return the model name as ID
-                try:
-                    if row and len(row) > 0:
-                        return str(row[0]) if row[0] is not None else ""
-                    else:
-                        return ""
-                except (IndexError, TypeError) as e:
-                    logger.error(f"Error getting model ID from row: {str(e)}")
-                    return ""
+        try:
+            if self.current_tab == "local":
+                table = self.query_one("#local-models-table", DataTable)
+                if table.cursor_row is not None:
+                    row = table.get_row_at(table.cursor_row)
+                    # Get model ID from local models list
+                    try:
+                        if row and len(row) > 0:
+                            row_name = str(row[0]) if row[0] is not None else ""
+                            for model in self.local_models:
+                                if model["name"] == row_name:
+                                    return model["id"]
+                    except (IndexError, TypeError) as e:
+                        logger.error(f"Error processing row data: {str(e)}")
+            else:
+                table = self.query_one("#available-models-table", DataTable)
+                if table.cursor_row is not None:
+                    try:
+                        row = table.get_row_at(table.cursor_row)
+                        # Return the model name as ID
+                        if row and len(row) > 0:
+                            return str(row[0]) if row[0] is not None else ""
+                    except Exception as e:
+                        logger.error(f"Error getting row at cursor: {str(e)}")
+                
+                # If we couldn't get a valid row, check if there are any rows and select the first one
+                if table.row_count > 0:
+                    try:
+                        # Select the first row and get its ID
+                        table.cursor_row = 0
+                        row = table.get_row_at(0)
+                        if row and len(row) > 0:
+                            return str(row[0]) if row[0] is not None else ""
+                    except Exception as e:
+                        logger.error(f"Error selecting first row: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error in _get_selected_model_id: {str(e)}")
         
         return ""
     
@@ -995,3 +1138,9 @@ class ModelBrowser(Container):
                 self.app.call_later(self.load_local_models)
             else:
                 self.app.call_later(self.load_available_models)
+                
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle input changes for live search"""
+        if event.input.id == "model-search" and self.current_tab == "available":
+            # Auto-search as user types in the available models tab
+            self.app.call_later(self.load_available_models)

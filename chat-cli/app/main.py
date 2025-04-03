@@ -300,14 +300,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
     BINDINGS = [ # Keep SimpleChatApp BINDINGS, ensure Enter is not globally bound for settings
         Binding("q", "quit", "Quit", show=True, key_display="q"),
-        # Add priority=True to ensure these capture before input
-        Binding("n", "action_new_conversation", "New Chat", show=True, key_display="n", priority=True),
-        Binding("c", "action_new_conversation", "New Chat", show=False, key_display="c", priority=True), # Add priority to alias too
+        # Removed binding for "n" (new chat) since there's a dedicated button
+        Binding("c", "action_new_conversation", "New Chat", show=False, key_display="c", priority=True), # Keep alias with priority
         Binding("escape", "escape", "Cancel / Stop", show=True, key_display="esc"), # Escape might close settings panel too
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("h", "view_history", "History", show=True, key_display="h", priority=True), # Add priority
         Binding("s", "settings", "Settings", show=True, key_display="s", priority=True),     # Add priority
-        Binding("t", "action_update_title", "Update Title", show=True, key_display="t", priority=True), # Add priority
+        # Removed binding for "t" (title update) since there's a dedicated button
         Binding("m", "model_browser", "Model Browser", show=True, key_display="m", priority=True), # Add model browser binding
     ] # Keep SimpleChatApp BINDINGS end
 
