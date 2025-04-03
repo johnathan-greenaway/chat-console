@@ -554,7 +554,7 @@ class OllamaClient(BaseModelClient):
             
     async def list_available_models_from_registry(self, query: str = "") -> List[Dict[str, Any]]:
         """List available models from Ollama registry with cache support"""
-        logger.info("Fetching available models from Ollama registry")
+        logger.info(f"Fetching available models from Ollama registry, query: '{query}'")
         
         # Check if we need to update the cache
         need_cache_update = True
@@ -584,6 +584,49 @@ class OllamaClient(BaseModelClient):
         except Exception as e:
             logger.warning(f"Error checking cache: {str(e)}")
         
+        # Always read the base file first
+        base_models = []
+        try:
+            # Read the base models file
+            base_file_path = Path(__file__).parent.parent / "data" / "ollama-models-base.json"
+            if base_file_path.exists():
+                with open(base_file_path, 'r') as f:
+                    base_data = json.load(f)
+                    if "models" in base_data:
+                        base_models = base_data["models"]
+                        logger.info(f"Loaded {len(base_models)} models from base file")
+                        
+                # Process base models to ensure they have proper format
+                for model in base_models:
+                    # Make sure they have model_family
+                    if "model_family" not in model and "name" in model:
+                        name = model["name"].lower()
+                        if "llama" in name:
+                            model["model_family"] = "Llama"
+                        elif "mistral" in name:
+                            model["model_family"] = "Mistral"
+                        elif "phi" in name:
+                            model["model_family"] = "Phi"
+                        elif "gemma" in name:
+                            model["model_family"] = "Gemma"
+                        elif "qwen" in name:
+                            model["model_family"] = "Qwen"
+                        else:
+                            # Try to extract family from name (before any colon)
+                            base_name = name.split(":")[0]
+                            model["model_family"] = base_name.capitalize()
+                
+                # If no cache yet but base file exists, use base models and trigger update
+                if not models_from_cache and base_models:
+                    models_from_cache = base_models
+                    logger.info(f"Using {len(base_models)} models from base file while cache updates")
+                    
+                    # Start cache update in background
+                    asyncio.create_task(self._fetch_and_cache_models())
+                    need_cache_update = False
+        except Exception as e:
+            logger.warning(f"Error loading base models file: {str(e)}")
+        
         # If we need to update the cache, do it now
         if need_cache_update:
             # Run the cache update in the background if we have cached data
@@ -594,19 +637,23 @@ class OllamaClient(BaseModelClient):
                 # We need to wait for the cache update
                 models_from_cache = await self._fetch_and_cache_models()
         
-        # Filter the models by query if provided
-        if query and models_from_cache:
-            query = query.lower()
-            filtered_models = []
-            for model in models_from_cache:
-                # Check if query matches name, description or family
-                if (query in model.get("name", "").lower() or 
-                    query in model.get("description", "").lower() or 
-                    query in model.get("model_family", "").lower()):
-                    filtered_models.append(model)
-            return filtered_models
+        # Always make sure base models are included
+        if base_models:
+            # Create a set of existing model names
+            existing_names = set(model.get("name", "") for model in models_from_cache)
+            
+            # Add base models if not already in cache
+            for model in base_models:
+                if model.get("name") and model["name"] not in existing_names:
+                    models_from_cache.append(model)
+                    existing_names.add(model["name"])
+            
+            logger.info(f"Combined total: {len(models_from_cache)} models")
+            
+        # Log the number of models available
+        logger.info(f"Total available models: {len(models_from_cache)}")
         
-        # Return all models if no query or no matches
+        # No filtering here - the UI will handle filtering
         return models_from_cache
             
     async def get_registry_models(self, query: str = "") -> List[Dict[str, Any]]:
