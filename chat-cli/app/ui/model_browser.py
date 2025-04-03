@@ -857,39 +857,54 @@ class ModelBrowser(Container):
             
             if "modelfile" in details and details["modelfile"] is not None:
                 modelfile = details["modelfile"]
-                
-                # Extract family/parameter size
-                if "parameter_size" in modelfile:
-                    family = modelfile.get("parameter_size")
-                elif "family" in modelfile:
-                    family = modelfile.get("family")
-                else:
-                    # Try to infer from model name
-                    try:
-                        name = str(model_id).lower() if model_id is not None else ""
-                        if "llama" in name:
-                            family = "Llama"
-                        elif "mistral" in name:
-                            family = "Mistral"
-                        elif "phi" in name:
-                            family = "Phi"
-                        elif "gemma" in name:
-                            family = "Gemma"
-                        else:
+
+                # Ensure modelfile is a dictionary before accessing keys
+                if isinstance(modelfile, dict):
+                    # Extract family/parameter size
+                    if "parameter_size" in modelfile:
+                        family = modelfile.get("parameter_size")
+                    elif "family" in modelfile:
+                        family = modelfile.get("family")
+                    else:
+                        # Try to infer from model name if not explicitly set
+                        try:
+                            name = str(model_id).lower() if model_id is not None else ""
+                            if "llama" in name:
+                                family = "Llama"
+                            elif "mistral" in name:
+                                family = "Mistral"
+                            elif "phi" in name:
+                                family = "Phi"
+                            elif "gemma" in name:
+                                family = "Gemma"
+                            else:
+                                family = "Unknown"
+                        except (TypeError, ValueError) as e:
+                            logger.error(f"Error inferring model family: {str(e)}")
                             family = "Unknown"
-                    except (TypeError, ValueError) as e:
-                        logger.error(f"Error inferring model family: {str(e)}")
-                        family = "Unknown"
-                
-                # Get template
-                template = modelfile.get("template", "Unknown")
-                
-                # Get license
-                license_info = modelfile.get("license", "Unknown")
-                
-                # Get system prompt if available
-                if "system" in modelfile:
-                    system_prompt = modelfile["system"]
+
+                    # Get template
+                    template = modelfile.get("template", "Unknown")
+
+                    # Get license
+                    license_info = modelfile.get("license", "Unknown")
+
+                    # Get system prompt if available
+                    if "system" in modelfile:
+                        system_prompt = modelfile.get("system", "") # Use get for safety
+                else:
+                    # If modelfile is not a dict (e.g., a string), set defaults
+                    logger.warning(f"Modelfile for {model_id} is not a dictionary. Type: {type(modelfile)}")
+                    # Keep existing defaults or try to infer family from name again
+                    if family == "Unknown":
+                         try:
+                            name = str(model_id).lower() if model_id is not None else ""
+                            if "llama" in name: family = "Llama"
+                            elif "mistral" in name: family = "Mistral"
+                            elif "phi" in name: family = "Phi"
+                            elif "gemma" in name: family = "Gemma"
+                         except (TypeError, ValueError): pass # Ignore errors here
+                    # template, license_info, system_prompt remain "Unknown" or empty
             
             formatted_details += f"Family: {family}\n"
             formatted_details += f"Template: {template}\n"
