@@ -2,6 +2,10 @@ import aiohttp
 import asyncio
 import json
 import logging
+import os
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
 from .base import BaseModelClient
 
@@ -17,6 +21,9 @@ class OllamaClient(BaseModelClient):
         
         # Track active stream session
         self._active_stream_session = None
+        
+        # Path to the cached models file
+        self.models_cache_path = Path(__file__).parent.parent / "data" / "ollama-models.json"
         
         # Try to start Ollama if not running
         if not ensure_ollama_running():
@@ -280,32 +287,59 @@ class OllamaClient(BaseModelClient):
                 "modified_at": None
             }
     
-    async def list_available_models_from_registry(self, query: str = "") -> List[Dict[str, Any]]:
-        """List available models from Ollama registry"""
-        logger.info("Fetching available models from Ollama registry")
+    async def _fetch_and_cache_models(self) -> List[Dict[str, Any]]:
+        """Fetch models from Ollama website and cache them for 24 hours"""
+        logger.info("Performing a full fetch of Ollama models to update cache")
+        
         try:
-            # First try to scrape the Ollama website for better model data
+            # First load models from base file
+            base_models = []
+            try:
+                # Read the base models file
+                base_file_path = Path(__file__).parent.parent / "data" / "ollama-models-base.json"
+                if base_file_path.exists():
+                    with open(base_file_path, 'r') as f:
+                        base_data = json.load(f)
+                        if "models" in base_data:
+                            base_models = base_data["models"]
+                            logger.info(f"Loaded {len(base_models)} models from base file")
+                            
+                            # Process models from the base file to ensure consistent format
+                            for model in base_models:
+                                # Convert any missing fields to expected format
+                                if "parameter_size" not in model and "variants" in model and model["variants"]:
+                                    # Use the first variant as the default parameter size if not specified
+                                    for variant in model["variants"]:
+                                        if any(char.isdigit() for char in variant):
+                                            # This looks like a size variant (e.g., "7b", "70b")
+                                            if variant.lower().endswith('b'):
+                                                model["parameter_size"] = variant.upper()
+                                            else:
+                                                model["parameter_size"] = f"{variant}B"
+                                            break
+                            
+            except Exception as e:
+                logger.warning(f"Error loading base models file: {str(e)}")
+            
+            # Web scraping for more models
+            scraped_models = []
             try:
                 async with aiohttp.ClientSession() as session:
-                    # Try to get model data from the Ollama website search page
+                    # Get model data from the Ollama website search page (without query to get all models)
                     search_url = "https://ollama.com/search"
-                    if query:
-                        search_url += f"?q={query}"
                     
-                    logger.info(f"Fetching models from Ollama web: {search_url}")
+                    logger.info(f"Fetching all models from Ollama web: {search_url}")
                     async with session.get(
                         search_url,
-                        timeout=10,
+                        timeout=20,  # Longer timeout for comprehensive scrape
                         headers={"User-Agent": "Mozilla/5.0 (compatible; chat-console/1.0)"}
                     ) as response:
                         if response.status == 200:
                             html = await response.text()
                             
                             # Extract model data from JSON embedded in the page
-                            # The data is in a script tag with JSON containing model information
                             try:
                                 import re
-                                import json
                                 
                                 # Look for model data in JSON format
                                 model_match = re.search(r'window\.__NEXT_DATA__\s*=\s*({.+?});', html, re.DOTALL)
@@ -321,7 +355,6 @@ class OllamaClient(BaseModelClient):
                                         logger.info(f"Found {len(web_models)} models on Ollama website")
                                         
                                         # Process models
-                                        processed_models = []
                                         for model in web_models:
                                             try:
                                                 # Skip models without necessary data
@@ -334,6 +367,10 @@ class OllamaClient(BaseModelClient):
                                                     "description": model.get('description', f"{model.get('name')} model"),
                                                     "model_family": model.get('modelFamily', 'Unknown'),
                                                 }
+                                                
+                                                # Add variants if available
+                                                if model.get('variants'):
+                                                    processed_model["variants"] = model.get('variants', [])
                                                 
                                                 # Extract parameter size from model details
                                                 if model.get('parameterSize'):
@@ -390,6 +427,7 @@ class OllamaClient(BaseModelClient):
                                                             "phi": "3B",
                                                             "phi2": "3B",
                                                             "phi3": "3B",
+                                                            "phi4": "7B",
                                                             "orca-mini": "7B",
                                                             "llava": "7B",
                                                             "codellama": "7B",
@@ -423,6 +461,12 @@ class OllamaClient(BaseModelClient):
                                                                     first_variant = variants[0]
                                                                     if first_variant and 'parameterSize' in first_variant:
                                                                         param_size = f"{first_variant['parameterSize']}B"
+                                                                    # Just use the first variant if it looks like a size
+                                                                    elif isinstance(first_variant, str) and any(char.isdigit() for char in first_variant):
+                                                                        if first_variant.lower().endswith('b'):
+                                                                            param_size = first_variant.upper()
+                                                                        else:
+                                                                            param_size = f"{first_variant}B"
                                                             except Exception as e:
                                                                 logger.warning(f"Error getting parameter size from variants: {str(e)}")
                                                     
@@ -455,179 +499,119 @@ class OllamaClient(BaseModelClient):
                                                 else:
                                                     processed_model["size"] = 4500000000  # Default to ~4.5GB
                                                 
-                                                processed_models.append(processed_model)
+                                                scraped_models.append(processed_model)
                                             except Exception as e:
                                                 logger.warning(f"Error processing web model {model.get('name', 'unknown')}: {str(e)}")
-                                                
-                                        if processed_models:
-                                            logger.info(f"Successfully processed {len(processed_models)} models from Ollama website")
-                                            return processed_models
                             except Exception as e:
                                 logger.warning(f"Error extracting model data from Ollama website: {str(e)}")
             except Exception as web_e:
                 logger.warning(f"Error fetching from Ollama website: {str(web_e)}")
             
-            # Next try the library endpoint (newer Ollama versions)
+            # Add curated models from the registry
+            curated_models = await self.get_registry_models("")
+            
+            # Combine all models - prefer base models, then scraped models, then curated
+            all_models = []
+            existing_names = set()
+            
+            # First add all base models (highest priority)
+            for model in base_models:
+                if model.get("name"):
+                    all_models.append(model)
+                    existing_names.add(model["name"])
+            
+            # Then add scraped models if not already added
+            for model in scraped_models:
+                if model.get("name") and model["name"] not in existing_names:
+                    all_models.append(model)
+                    existing_names.add(model["name"])
+            
+            # Finally add curated models if not already added
+            for model in curated_models:
+                if model.get("name") and model["name"] not in existing_names:
+                    all_models.append(model)
+                    existing_names.add(model["name"])
+            
+            # Cache the combined models
+            cache_data = {
+                "last_updated": datetime.now().isoformat(),
+                "models": all_models
+            }
+            
             try:
-                async with aiohttp.ClientSession() as session:
-                    url = f"{self.base_url}/api/library"
-                    if query:
-                        url += f"?query={query}"
-                    async with session.get(
-                        url,
-                        timeout=10
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            logger.debug(f"Ollama library response: {data}")
-                            if "models" in data:
-                                # If this succeeded, we'll use registry models instead of the curated list
-                                # Ensure models have all the needed fields
-                                registry_models = data.get("models", [])
-                                
-                                # Create a new list to store processed models
-                                processed_models = []
-                                
-                                for model in registry_models:
-                                    if "name" not in model:
-                                        continue
-                                    
-                                    # Process the model
-                                    try:
-                                        # Add default values for missing fields to avoid UNKNOWN displays
-                                        if "model_family" not in model:
-                                            try:
-                                                # Try to infer family from name
-                                                name = str(model["name"]).lower() if isinstance(model["name"], (str, int, float)) else ""
-                                                if "llama" in name:
-                                                    model["model_family"] = "Llama"
-                                                elif "mistral" in name:
-                                                    model["model_family"] = "Mistral"
-                                                elif "phi" in name:
-                                                    model["model_family"] = "Phi"
-                                                elif "gemma" in name:
-                                                    model["model_family"] = "Gemma"
-                                                else:
-                                                    model["model_family"] = "General"
-                                            except (KeyError, TypeError, ValueError) as e:
-                                                logger.warning(f"Error inferring model family: {str(e)}")
-                                                model["model_family"] = "General"
-                                        
-                                        try:
-                                            if "description" not in model or not model["description"]:
-                                                model_name = str(model["name"]) if isinstance(model["name"], (str, int, float)) else "Unknown"
-                                                model["description"] = f"{model_name} model"
-                                        except (KeyError, TypeError, ValueError) as e:
-                                            logger.warning(f"Error setting model description: {str(e)}")
-                                            model["description"] = "Model description unavailable"
-                                            
-                                        # Ensure size is present and has a reasonable value
-                                        if "size" not in model or not model["size"] or model["size"] == 0:
-                                            # Set a reasonable default size based on model name
-                                            try:
-                                                name = str(model["name"]).lower() if isinstance(model["name"], (str, int, float)) else ""
-                                                if "70b" in name or "65b" in name:
-                                                    model["size"] = 40000000000  # 40GB for 70B models
-                                                elif "405b" in name or "400b" in name:
-                                                    model["size"] = 200000000000  # 200GB for 405B models
-                                                elif "34b" in name or "35b" in name:
-                                                    model["size"] = 20000000000  # 20GB for 34B models
-                                                elif "27b" in name or "28b" in name:
-                                                    model["size"] = 15000000000  # 15GB for 27B models
-                                                elif "13b" in name or "14b" in name:
-                                                    model["size"] = 8000000000   # 8GB for 13B models
-                                                elif "7b" in name or "8b" in name:
-                                                    model["size"] = 4500000000   # 4.5GB for 7-8B models
-                                                elif "6b" in name:
-                                                    model["size"] = 3500000000   # 3.5GB for 6B models
-                                                elif "3b" in name:
-                                                    model["size"] = 2000000000   # 2GB for 3B models
-                                                elif "1b" in name or "2b" in name:
-                                                    model["size"] = 1500000000   # 1.5GB for 1-2B models
-                                                else:
-                                                    model["size"] = 4500000000   # Default to 4.5GB if unknown
-                                            except (KeyError, TypeError, ValueError) as e:
-                                                logger.warning(f"Error setting model size: {str(e)}")
-                                                model["size"] = 4500000000  # Default fallback size
-                                        
-                                        # Add parameter_size field based on model name
-                                        if "parameter_size" not in model:
-                                            try:
-                                                name = str(model["name"]).lower() if isinstance(model["name"], (str, int, float)) else ""
-                                                if "70b" in name:
-                                                    model["parameter_size"] = "70B"
-                                                elif "405b" in name or "400b" in name:
-                                                    model["parameter_size"] = "405B"
-                                                elif "34b" in name or "35b" in name:
-                                                    model["parameter_size"] = "34B"
-                                                elif "27b" in name or "28b" in name:
-                                                    model["parameter_size"] = "27B"
-                                                elif "13b" in name or "14b" in name:
-                                                    model["parameter_size"] = "13B"
-                                                elif "8b" in name:
-                                                    model["parameter_size"] = "8B"
-                                                elif "7b" in name:
-                                                    model["parameter_size"] = "7B"
-                                                elif "6b" in name:
-                                                    model["parameter_size"] = "6B"
-                                                elif "3b" in name:
-                                                    model["parameter_size"] = "3B"
-                                                elif "2b" in name:
-                                                    model["parameter_size"] = "2B"
-                                                elif "1b" in name:
-                                                    model["parameter_size"] = "1B"
-                                                elif "mini" in name:
-                                                    model["parameter_size"] = "3B"
-                                                elif "small" in name:
-                                                    model["parameter_size"] = "7B"
-                                                elif "medium" in name:
-                                                    model["parameter_size"] = "13B"
-                                                elif "large" in name:
-                                                    model["parameter_size"] = "34B"
-                                                else:
-                                                    model["parameter_size"] = "Unknown"
-                                            except (KeyError, TypeError, ValueError) as e:
-                                                logger.warning(f"Error setting parameter size: {str(e)}")
-                                                model["parameter_size"] = "Unknown"
-                                            
-                                        # Add to processed models list
-                                        processed_models.append(model)
-                                    except Exception as e:
-                                        logger.warning(f"Error processing model {model.get('name', 'unknown')}: {str(e)}")
-                                    
-                                return processed_models
-            except Exception as lib_e:
-                logger.warning(f"Error using /api/library endpoint: {str(lib_e)}, falling back to /api/tags")
+                with open(self.models_cache_path, 'w') as f:
+                    json.dump(cache_data, f, indent=2)
+                logger.info(f"Cached {len(all_models)} models to {self.models_cache_path}")
+            except Exception as cache_error:
+                logger.error(f"Error caching models: {str(cache_error)}")
+            
+            return all_models
                 
-            # Fallback to tags endpoint (older Ollama versions)
-            async with aiohttp.ClientSession() as session:
-                url = f"{self.base_url}/api/tags"
-                if query:
-                    url += f"?query={query}"
-                async with session.get(
-                    url,
-                    timeout=10
-                ) as response:
-                    response.raise_for_status()
-                    data = await response.json()
-                    logger.debug(f"Ollama registry response: {data}")
-                    
-                    if "models" in data:
-                        # This is local models, not registry models
-                        # Return empty list since we can't get registry models
-                        logger.warning("Tags endpoint returned local models, not registry models")
-                        return []
-                    
-                    # Try to determine if we're dealing with an older version
-                    # Just return an empty list in this case
-                    return []
         except Exception as e:
-            logger.error(f"Error listing registry models: {str(e)}")
-            raise Exception(f"Failed to list models from registry: {str(e)}")
+            logger.error(f"Error during model fetch and cache: {str(e)}")
+            # Return an empty list in case of catastrophic failure
+            return []
+            
+    async def list_available_models_from_registry(self, query: str = "") -> List[Dict[str, Any]]:
+        """List available models from Ollama registry with cache support"""
+        logger.info("Fetching available models from Ollama registry")
+        
+        # Check if we need to update the cache
+        need_cache_update = True
+        models_from_cache = []
+        
+        try:
+            # Try to read from cache first
+            if self.models_cache_path.exists():
+                try:
+                    with open(self.models_cache_path, 'r') as f:
+                        cache_data = json.load(f)
+                    
+                    # Check if cache is still valid (less than 24 hours old)
+                    if cache_data.get("last_updated"):
+                        last_updated = datetime.fromisoformat(cache_data["last_updated"])
+                        # Cache valid if less than 24 hours old
+                        if datetime.now() - last_updated < timedelta(hours=24):
+                            need_cache_update = False
+                            models_from_cache = cache_data.get("models", [])
+                            logger.info(f"Using cached models from {last_updated.isoformat()} ({len(models_from_cache)} models)")
+                        else:
+                            logger.info(f"Cache from {last_updated.isoformat()} is older than 24 hours, refreshing")
+                except Exception as e:
+                    logger.warning(f"Error reading cache: {str(e)}, will refresh")
+            else:
+                logger.info("No cache found, creating a new one")
+        except Exception as e:
+            logger.warning(f"Error checking cache: {str(e)}")
+        
+        # If we need to update the cache, do it now
+        if need_cache_update:
+            # Run the cache update in the background if we have cached data
+            if models_from_cache:
+                # We can use cached data for now but update in background
+                asyncio.create_task(self._fetch_and_cache_models())
+            else:
+                # We need to wait for the cache update
+                models_from_cache = await self._fetch_and_cache_models()
+        
+        # Filter the models by query if provided
+        if query and models_from_cache:
+            query = query.lower()
+            filtered_models = []
+            for model in models_from_cache:
+                # Check if query matches name, description or family
+                if (query in model.get("name", "").lower() or 
+                    query in model.get("description", "").lower() or 
+                    query in model.get("model_family", "").lower()):
+                    filtered_models.append(model)
+            return filtered_models
+        
+        # Return all models if no query or no matches
+        return models_from_cache
             
     async def get_registry_models(self, query: str = "") -> List[Dict[str, Any]]:
         """Get a curated list of popular Ollama models"""
-        logger.info("Returning a curated list of popular Ollama models")
+        logger.info("Returning a curated list of popular Ollama models (query: {})".format(query or "none"))
         
         # Provide a curated list of popular models as fallback
         models = [

@@ -1,0 +1,254 @@
+{
+  "last_updated": "2025-04-03T03:23:28.880126",
+  "models": [
+    {
+      "name": "llama3",
+      "description": "Meta's Llama 3 8B model",
+      "model_family": "Llama",
+      "size": 4500000000,
+      "parameter_size": "8B"
+    },
+    {
+      "name": "llama3:8b",
+      "description": "Meta's Llama 3 8B parameter model",
+      "model_family": "Llama",
+      "size": 4500000000,
+      "parameter_size": "8B"
+    },
+    {
+      "name": "llama3:70b",
+      "description": "Meta's Llama 3 70B parameter model",
+      "model_family": "Llama",
+      "size": 40000000000,
+      "parameter_size": "70B"
+    },
+    {
+      "name": "llama3.1:8b",
+      "description": "Meta's Llama 3.1 8B parameter model",
+      "model_family": "Llama",
+      "size": 4500000000
+    },
+    {
+      "name": "llama3.1:70b",
+      "description": "Meta's Llama 3.1 70B parameter model",
+      "model_family": "Llama",
+      "size": 40000000000
+    },
+    {
+      "name": "llama3.1:405b",
+      "description": "Meta's Llama 3.1 405B parameter model",
+      "model_family": "Llama",
+      "size": 200000000000
+    },
+    {
+      "name": "gemma:2b",
+      "description": "Google's Gemma 2B parameter model",
+      "model_family": "Gemma",
+      "size": 1500000000
+    },
+    {
+      "name": "gemma:7b",
+      "description": "Google's Gemma 7B parameter model",
+      "model_family": "Gemma",
+      "size": 4000000000
+    },
+    {
+      "name": "gemma2:9b",
+      "description": "Google's Gemma 2 9B parameter model",
+      "model_family": "Gemma",
+      "size": 5000000000
+    },
+    {
+      "name": "gemma2:27b",
+      "description": "Google's Gemma 2 27B parameter model",
+      "model_family": "Gemma",
+      "size": 15000000000
+    },
+    {
+      "name": "mistral",
+      "description": "Mistral 7B model - balanced performance",
+      "model_family": "Mistral",
+      "size": 4200000000
+    },
+    {
+      "name": "mistral:7b",
+      "description": "Mistral 7B model - balanced performance",
+      "model_family": "Mistral",
+      "size": 4200000000
+    },
+    {
+      "name": "mistral:8x7b",
+      "description": "Mistral 8x7B mixture of experts model",
+      "model_family": "Mistral",
+      "size": 15000000000
+    },
+    {
+      "name": "phi3:mini",
+      "description": "Microsoft's Phi-3 Mini model",
+      "model_family": "Phi",
+      "size": 3500000000
+    },
+    {
+      "name": "phi3:small",
+      "description": "Microsoft's Phi-3 Small model",
+      "model_family": "Phi",
+      "size": 7000000000
+    },
+    {
+      "name": "phi3:medium",
+      "description": "Microsoft's Phi-3 Medium model",
+      "model_family": "Phi",
+      "size": 14000000000
+    },
+    {
+      "name": "phi2",
+      "description": "Microsoft's Phi-2 model, small but capable",
+      "model_family": "Phi",
+      "size": 2800000000
+    },
+    {
+      "name": "orca-mini",
+      "description": "Small, fast model optimized for chat",
+      "model_family": "Orca",
+      "size": 2000000000
+    },
+    {
+      "name": "orca-mini:3b",
+      "description": "Small 3B parameter model optimized for chat",
+      "model_family": "Orca",
+      "size": 2000000000
+    },
+    {
+      "name": "orca-mini:7b",
+      "description": "Medium 7B parameter model optimized for chat",
+      "model_family": "Orca",
+      "size": 4000000000
+    },
+    {
+      "name": "llava",
+      "description": "Multimodal model with vision capabilities",
+      "model_family": "LLaVA",
+      "size": 4700000000
+    },
+    {
+      "name": "llava:13b",
+      "description": "Multimodal model with vision capabilities (13B)",
+      "model_family": "LLaVA",
+      "size": 8000000000
+    },
+    {
+      "name": "llava:34b",
+      "description": "Multimodal model with vision capabilities (34B)",
+      "model_family": "LLaVA",
+      "size": 20000000000
+    },
+    {
+      "name": "codellama",
+      "description": "Llama model fine-tuned for code generation",
+      "model_family": "CodeLlama",
+      "size": 4200000000
+    },
+    {
+      "name": "codellama:7b",
+      "description": "7B parameter Llama model for code generation",
+      "model_family": "CodeLlama",
+      "size": 4200000000
+    },
+    {
+      "name": "codellama:13b",
+      "description": "13B parameter Llama model for code generation",
+      "model_family": "CodeLlama",
+      "size": 8000000000
+    },
+    {
+      "name": "codellama:34b",
+      "description": "34B parameter Llama model for code generation",
+      "model_family": "CodeLlama",
+      "size": 20000000000
+    },
+    {
+      "name": "neural-chat",
+      "description": "Intel's Neural Chat model",
+      "model_family": "Neural Chat",
+      "size": 4200000000
+    },
+    {
+      "name": "wizard-math",
+      "description": "Specialized for math problem solving",
+      "model_family": "Wizard",
+      "size": 4200000000
+    },
+    {
+      "name": "yi",
+      "description": "01AI's Yi model, high performance",
+      "model_family": "Yi",
+      "size": 4500000000
+    },
+    {
+      "name": "yi:6b",
+      "description": "01AI's Yi 6B parameter model",
+      "model_family": "Yi",
+      "size": 3500000000
+    },
+    {
+      "name": "yi:9b",
+      "description": "01AI's Yi 9B parameter model",
+      "model_family": "Yi",
+      "size": 5000000000
+    },
+    {
+      "name": "yi:34b",
+      "description": "01AI's Yi 34B parameter model, excellent performance",
+      "model_family": "Yi",
+      "size": 20000000000
+    },
+    {
+      "name": "stable-code",
+      "description": "Stability AI's code generation model",
+      "model_family": "StableCode",
+      "size": 4200000000
+    },
+    {
+      "name": "llama2",
+      "description": "Meta's Llama 2 model",
+      "model_family": "Llama",
+      "size": 4200000000
+    },
+    {
+      "name": "llama2:7b",
+      "description": "Meta's Llama 2 7B parameter model",
+      "model_family": "Llama",
+      "size": 4200000000
+    },
+    {
+      "name": "llama2:13b",
+      "description": "Meta's Llama 2 13B parameter model",
+      "model_family": "Llama",
+      "size": 8000000000
+    },
+    {
+      "name": "llama2:70b",
+      "description": "Meta's Llama 2 70B parameter model",
+      "model_family": "Llama",
+      "size": 40000000000
+    },
+    {
+      "name": "deepseek-coder",
+      "description": "DeepSeek's code generation model",
+      "model_family": "DeepSeek",
+      "size": 4200000000
+    },
+    {
+      "name": "falcon:40b",
+      "description": "TII's Falcon 40B, very capable model",
+      "model_family": "Falcon",
+      "size": 25000000000
+    },
+    {
+      "name": "qwen:14b",
+      "description": "Alibaba's Qwen 14B model",
+      "model_family": "Qwen",
+      "size": 9000000000
+    }
+  ]
+}

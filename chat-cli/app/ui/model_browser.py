@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Dict, List, Any, Optional
 from textual.app import ComposeResult
@@ -253,11 +254,30 @@ class ModelBrowser(Container):
         available_table.add_columns("Model", "Size", "Family", "Description")
         available_table.cursor_type = "row"
         
+        # Show notification about model loading
+        self.notify("Initializing model browser, this might take a moment on first run...", 
+                   severity="information", timeout=5)
+        
         # Load models
         await self.load_local_models()
         
+        # Start loading available models in the background
+        asyncio.create_task(self.preload_available_models())
+        
         # Focus search input
         self.query_one("#model-search").focus()
+        
+    async def preload_available_models(self) -> None:
+        """Preload available models in the background"""
+        # Load the available models list in the background to make it faster when
+        # the user switches to the Available Models tab
+        try:
+            # This will trigger cache creation if needed, making tab switching faster
+            models = await self.ollama_client.list_available_models_from_registry()
+            if models:
+                logger.info(f"Preloaded {len(models)} available models")
+        except Exception as e:
+            logger.error(f"Error preloading available models: {str(e)}")
     
     async def load_local_models(self) -> None:
         """Load locally installed Ollama models"""
@@ -428,19 +448,19 @@ class ModelBrowser(Container):
                 self.available_models = await self.ollama_client.list_available_models_from_registry(query)
                 # If no models found, use the curated list
                 if not self.available_models:
-                    self.available_models = await self.ollama_client.get_registry_models()
+                    self.available_models = await self.ollama_client.get_registry_models(query)
             except Exception as e:
                 self.notify(f"Error from registry API: {str(e)}", severity="warning")
                 # Fallback to curated list
-                self.available_models = await self.ollama_client.get_registry_models()
+                self.available_models = await self.ollama_client.get_registry_models(query)
             
             # Clear and populate table
             available_table = self.query_one("#available-models-table", DataTable)
             available_table.clear()
             
-            # Get number of models loaded for debugging
+            # Get number of models loaded (but don't notify to avoid notification spam)
             model_count = len(self.available_models)
-            self.notify(f"Found {model_count} models to display", severity="information")
+            logger.info(f"Found {model_count} models to display")
             
             # Add all models to the table - no pagination limit
             for model in self.available_models:
@@ -529,7 +549,7 @@ class ModelBrowser(Container):
                 available_table.add_row(name, size, family, description)
             
             actual_displayed = available_table.row_count
-            self.notify(f"Loaded {actual_displayed} available models", severity="information")
+            logger.info(f"Loaded {actual_displayed} available models")
             
         except Exception as e:
             self.notify(f"Error loading available models: {str(e)}", severity="error")
@@ -995,3 +1015,9 @@ class ModelBrowser(Container):
                 self.app.call_later(self.load_local_models)
             else:
                 self.app.call_later(self.load_available_models)
+                
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle input changes for live search"""
+        if event.input.id == "model-search" and self.current_tab == "available":
+            # Auto-search as user types in the available models tab
+            self.app.call_later(self.load_available_models)
