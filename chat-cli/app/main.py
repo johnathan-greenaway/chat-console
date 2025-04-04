@@ -302,7 +302,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         Binding("q", "quit", "Quit", show=True, key_display="q"),
         # Removed binding for "n" (new chat) since there's a dedicated button
         Binding("c", "action_new_conversation", "New Chat", show=False, key_display="c", priority=True), # Keep alias with priority
-        Binding("escape", "escape", "Cancel / Stop", show=True, key_display="esc"), # Escape might close settings panel too
+        Binding("escape", "action_escape", "Cancel / Stop", show=True, key_display="esc"), # Updated to call our async method
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("h", "view_history", "History", show=True, key_display="h", priority=True), # Add priority
         Binding("s", "settings", "Settings", show=True, key_display="s", priority=True),     # Add priority
@@ -463,7 +463,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         await self.create_new_conversation() # Keep SimpleChatApp action_new_conversation
         log("action_new_conversation finished") # Added log
 
-    def action_escape(self) -> None:
+    async def action_escape(self) -> None:
         """Handle escape key globally."""
         log("action_escape triggered")
         settings_panel = self.query_one("#settings-panel")
@@ -477,6 +477,18 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             log("Attempting to cancel generation task")
             if self.current_generation_task and not self.current_generation_task.done():
                 log("Cancelling active generation task.")
+                # Get the client for the current model
+                try:
+                    model = self.selected_model
+                    client = BaseModelClient.get_client_for_model(model)
+                    # Call the client's cancel method if it's an Ollama client
+                    if hasattr(client, 'cancel_stream'):
+                        log("Calling client.cancel_stream() to terminate API session")
+                        await client.cancel_stream()
+                except Exception as e:
+                    log.error(f"Error cancelling client stream: {str(e)}")
+                
+                # Now cancel the asyncio task
                 self.current_generation_task.cancel()
                 # The finally block in generate_response will handle is_generating = False and UI updates
                 self.notify("Stopping generation...", severity="warning", timeout=2) # Notify user immediately
@@ -608,166 +620,143 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         # Focus back on input
         input_widget.focus()
 
-    async def generate_response(self) -> None: # Keep SimpleChatApp generate_response
-        """Generate an AI response.""" # Keep SimpleChatApp generate_response docstring
-        if not self.current_conversation or not self.messages: # Keep SimpleChatApp generate_response
-            return # Keep SimpleChatApp generate_response
+    async def generate_response(self) -> None:
+        """Generate an AI response using a non-blocking worker."""
+        if not self.current_conversation or not self.messages:
+            return
 
-        self.is_generating = True # Keep SimpleChatApp generate_response
-        log(f"Setting is_generating to True") # Added log
-        loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
-        loading.remove_class("hidden") # Keep SimpleChatApp generate_response
+        self.is_generating = True
+        log("Setting is_generating to True")
+        loading = self.query_one("#loading-indicator")
+        loading.remove_class("hidden")
 
-        try: # Keep SimpleChatApp generate_response
-            # Get conversation parameters # Keep SimpleChatApp generate_response
-            model = self.selected_model # Keep SimpleChatApp generate_response
-            style = self.selected_style # Keep SimpleChatApp generate_response
+        try:
+            # Get conversation parameters
+            model = self.selected_model
+            style = self.selected_style
 
-            # Convert messages to API format # Keep SimpleChatApp generate_response
-            api_messages = [] # Keep SimpleChatApp generate_response
-            for msg in self.messages: # Keep SimpleChatApp generate_response
-                api_messages.append({ # Keep SimpleChatApp generate_response
-                    "role": msg.role, # Keep SimpleChatApp generate_response
-                    "content": msg.content # Keep SimpleChatApp generate_response
-                }) # Keep SimpleChatApp generate_response
+            # Convert messages to API format
+            api_messages = []
+            for msg in self.messages:
+                api_messages.append({
+                    "role": msg.role,
+                    "content": msg.content
+                })
 
-            # Get appropriate client # Keep SimpleChatApp generate_response
-            try: # Keep SimpleChatApp generate_response
-                client = BaseModelClient.get_client_for_model(model) # Keep SimpleChatApp generate_response
-                if client is None: # Keep SimpleChatApp generate_response
-                    raise Exception(f"No client available for model: {model}") # Keep SimpleChatApp generate_response
-            except Exception as e: # Keep SimpleChatApp generate_response
-                self.notify(f"Failed to initialize model client: {str(e)}", severity="error") # Keep SimpleChatApp generate_response
-                return # Keep SimpleChatApp generate_response
-
-            # Start streaming response # Keep SimpleChatApp generate_response
-            assistant_message = Message(role="assistant", content="Thinking...") # Keep SimpleChatApp generate_response
-            self.messages.append(assistant_message) # Keep SimpleChatApp generate_response
-            messages_container = self.query_one("#messages-container") # Keep SimpleChatApp generate_response
-            message_display = MessageDisplay(assistant_message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp generate_response
-            messages_container.mount(message_display) # Keep SimpleChatApp generate_response
-            messages_container.scroll_end(animate=False) # Keep SimpleChatApp generate_response
-
-            # Add small delay to show thinking state # Keep SimpleChatApp generate_response
-            await asyncio.sleep(0.5) # Keep SimpleChatApp generate_response
-
-            # Stream chunks to the UI with synchronization # Keep SimpleChatApp generate_response
-            update_lock = asyncio.Lock() # Keep SimpleChatApp generate_response
-
-            async def update_ui(content: str): # Keep SimpleChatApp generate_response
-                if not self.is_generating: # Keep SimpleChatApp generate_response
-                    log("update_ui called but is_generating is False, returning.") # Added log
-                    return # Keep SimpleChatApp generate_response
-
-                async with update_lock: # Keep SimpleChatApp generate_response
-                    try: # Keep SimpleChatApp generate_response
-                        # Clear thinking indicator on first content # Keep SimpleChatApp generate_response
-                        if assistant_message.content == "Thinking...": # Keep SimpleChatApp generate_response
-                            assistant_message.content = "" # Keep SimpleChatApp generate_response
-
-                        # Update message with full content so far # Keep SimpleChatApp generate_response
-                        assistant_message.content = content # Keep SimpleChatApp generate_response
-                        # Update UI with full content # Keep SimpleChatApp generate_response
-                        await message_display.update_content(content) # Keep SimpleChatApp generate_response
-                        # Force a refresh and scroll # Keep SimpleChatApp generate_response
-                        self.refresh(layout=True) # Keep SimpleChatApp generate_response
-                        await asyncio.sleep(0.05)  # Longer delay for UI stability # Keep SimpleChatApp generate_response
-                        messages_container.scroll_end(animate=False) # Keep SimpleChatApp generate_response
-                        # Force another refresh to ensure content is visible # Keep SimpleChatApp generate_response
-                        self.refresh(layout=True) # Keep SimpleChatApp generate_response
-                    except Exception as e: # Keep SimpleChatApp generate_response
-                        log.error(f"Error updating UI: {str(e)}") # Use log instead of logger
-
-            # Generate the response with timeout and cleanup # Keep SimpleChatApp generate_response
-            self.current_generation_task = None # Clear previous task reference
-            try: # Keep SimpleChatApp generate_response
-                # Create a task for the response generation # Keep SimpleChatApp generate_response
-                self.current_generation_task = asyncio.create_task( # Keep SimpleChatApp generate_response
-                    generate_streaming_response( # Keep SimpleChatApp generate_response
-                        self, # Pass the app instance
-                        api_messages, # Keep SimpleChatApp generate_response
-                        model, # Keep SimpleChatApp generate_response
-                        style, # Keep SimpleChatApp generate_response
-                        client, # Keep SimpleChatApp generate_response
-                        update_ui # Keep SimpleChatApp generate_response
-                    ) # Keep SimpleChatApp generate_response
-                ) # Keep SimpleChatApp generate_response
-
-                # Wait for response with timeout # Keep SimpleChatApp generate_response
-                log.info(f"Waiting for generation task {self.current_generation_task} with timeout...") # Add log
-                full_response = await asyncio.wait_for(self.current_generation_task, timeout=60)  # Longer timeout # Keep SimpleChatApp generate_response
-                log.info(f"Generation task {self.current_generation_task} completed. Full response length: {len(full_response) if full_response else 0}") # Add log
-
-                # Save to database only if we got a complete response and weren't cancelled
-                if self.is_generating and full_response: # Check is_generating flag here
-                    log("Generation finished normally, saving full response to DB") # Added log
-                    self.db.add_message( # Keep SimpleChatApp generate_response
-                        self.current_conversation.id, # Keep SimpleChatApp generate_response
-                        "assistant", # Keep SimpleChatApp generate_response
-                        full_response # Keep SimpleChatApp generate_response
-                    ) # Keep SimpleChatApp generate_response
-                    # Force a final refresh # Keep SimpleChatApp generate_response
-                    self.refresh(layout=True) # Keep SimpleChatApp generate_response
-                    await asyncio.sleep(0.1)  # Wait for UI to update # Keep SimpleChatApp generate_response
-                elif not full_response and self.is_generating: # Only log if not cancelled
-                    log("Generation finished but full_response is empty/None") # Added log
-                else:
-                    # This case handles cancellation where full_response might be partial or None
-                    log("Generation was cancelled or finished without a full response.")
-
-            except asyncio.CancelledError: # Handle cancellation explicitly
-                log.warning("Generation task was cancelled.")
-                self.notify("Generation stopped by user.", severity="warning")
-                # Remove the potentially incomplete message from UI state
-                if self.messages and self.messages[-1].role == "assistant":
-                    self.messages.pop()
-                await self.update_messages_ui() # Update UI to remove partial message
-
-            except asyncio.TimeoutError: # Keep SimpleChatApp generate_response
-                log.error(f"Response generation timed out waiting for task {self.current_generation_task}") # Use log instead of logger
-                # Log state at timeout
-                log.error(f"Timeout state: is_generating={self.is_generating}, task_done={self.current_generation_task.done() if self.current_generation_task else 'N/A'}")
-                error_msg = "Response generation timed out. The model may be busy or unresponsive. Please try again." # Keep SimpleChatApp generate_response
-                self.notify(error_msg, severity="error") # Keep SimpleChatApp generate_response
-
-                # Remove the incomplete message # Keep SimpleChatApp generate_response
-                if self.messages and self.messages[-1].role == "assistant": # Keep SimpleChatApp generate_response
-                    self.messages.pop() # Keep SimpleChatApp generate_response
-
-                # Update UI to remove the incomplete message # Keep SimpleChatApp generate_response
-                await self.update_messages_ui() # Keep SimpleChatApp generate_response
-
-            finally: # Keep SimpleChatApp generate_response
-                # Ensure flag is reset and task reference is cleared
-                log(f"Setting is_generating to False in finally block") # Added log
-                self.is_generating = False # Keep SimpleChatApp generate_response
-                self.current_generation_task = None # Clear task reference
-                loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
-                loading.add_class("hidden") # Keep SimpleChatApp generate_response
-                # Force a final UI refresh # Keep SimpleChatApp generate_response
-                self.refresh(layout=True) # Keep SimpleChatApp generate_response
-
-        except Exception as e: # Keep SimpleChatApp generate_response
-            # Catch any other unexpected errors during generation setup/handling
-            log.error(f"Unexpected exception during generate_response: {str(e)}") # Added log
-            self.notify(f"Error generating response: {str(e)}", severity="error") # Keep SimpleChatApp generate_response
-            # Add error message to UI # Keep SimpleChatApp generate_response
-            error_msg = f"Error: {str(e)}" # Keep SimpleChatApp generate_response
-            self.messages.append(Message(role="assistant", content=error_msg)) # Keep SimpleChatApp generate_response
-            await self.update_messages_ui() # Keep SimpleChatApp generate_response
-            # The finally block below will handle resetting is_generating and hiding loading
-
-        finally: # Keep SimpleChatApp generate_response - This finally block now primarily handles cleanup
-            log(f"Ensuring is_generating is False and task is cleared in outer finally block") # Added log
-            self.is_generating = False # Ensure flag is always reset
-            self.current_generation_task = None # Ensure task ref is cleared
-            loading = self.query_one("#loading-indicator") # Keep SimpleChatApp generate_response
-            loading.add_class("hidden") # Ensure loading indicator is hidden
-            # Re-focus input after generation attempt (success, failure, or cancel)
+            # Get appropriate client
             try:
-                self.query_one("#message-input").focus()
-            except Exception:
-                pass # Ignore if input not found
+                client = BaseModelClient.get_client_for_model(model)
+                if client is None:
+                    raise Exception(f"No client available for model: {model}")
+            except Exception as e:
+                self.notify(f"Failed to initialize model client: {str(e)}", severity="error")
+                self.is_generating = False
+                loading.add_class("hidden")
+                return
+
+            # Start streaming response
+            assistant_message = Message(role="assistant", content="Thinking...")
+            self.messages.append(assistant_message)
+            messages_container = self.query_one("#messages-container")
+            message_display = MessageDisplay(assistant_message, highlight_code=CONFIG["highlight_code"])
+            messages_container.mount(message_display)
+            messages_container.scroll_end(animate=False)
+
+            # Add small delay to show thinking state
+            await asyncio.sleep(0.5)
+
+            # Stream chunks to the UI with synchronization
+            update_lock = asyncio.Lock()
+
+            async def update_ui(content: str):
+                if not self.is_generating:
+                    log("update_ui called but is_generating is False, returning.")
+                    return
+
+                async with update_lock:
+                    try:
+                        # Clear thinking indicator on first content
+                        if assistant_message.content == "Thinking...":
+                            assistant_message.content = ""
+
+                        # Update message with full content so far
+                        assistant_message.content = content
+                        # Update UI with full content
+                        await message_display.update_content(content)
+                        # Force a refresh and scroll
+                        self.refresh(layout=True)
+                        await asyncio.sleep(0.05)  # Longer delay for UI stability
+                        messages_container.scroll_end(animate=False)
+                        # Force another refresh to ensure content is visible
+                        self.refresh(layout=True)
+                    except Exception as e:
+                        log.error(f"Error updating UI: {str(e)}")
+
+            # Define worker for background processing
+            @work(exit_on_error=True)
+            async def run_generation_worker():
+                try:
+                    # Generate the response in background
+                    full_response = await generate_streaming_response(
+                        self,
+                        api_messages,
+                        model,
+                        style,
+                        client,
+                        update_ui
+                    )
+                    
+                    # Save complete response to database
+                    if self.is_generating and full_response:
+                        log("Generation completed normally, saving to database")
+                        self.db.add_message(
+                            self.current_conversation.id,
+                            "assistant",
+                            full_response
+                        )
+                    
+                    # Final UI refresh
+                    self.refresh(layout=True)
+                    
+                except asyncio.CancelledError:
+                    log.warning("Generation worker was cancelled")
+                    # Remove the incomplete message
+                    if self.messages and self.messages[-1].role == "assistant":
+                        self.messages.pop()
+                    await self.update_messages_ui()
+                    self.notify("Generation stopped by user", severity="warning", timeout=2)
+                    
+                except Exception as e:
+                    log.error(f"Error in generation worker: {str(e)}")
+                    self.notify(f"Generation error: {str(e)}", severity="error", timeout=5)
+                    # Add error message to UI
+                    if self.messages and self.messages[-1].role == "assistant":
+                        self.messages.pop()  # Remove thinking message
+                    error_msg = f"Error: {str(e)}"
+                    self.messages.append(Message(role="assistant", content=error_msg))
+                    await self.update_messages_ui()
+                    
+                finally:
+                    # Always clean up state and UI
+                    log("Generation worker completed, resetting state")
+                    self.is_generating = False
+                    self.current_generation_task = None
+                    loading = self.query_one("#loading-indicator")
+                    loading.add_class("hidden")
+                    self.refresh(layout=True)
+                    self.query_one("#message-input").focus()
+                    
+            # Start the worker and keep a reference to it
+            worker = run_generation_worker()
+            self.current_generation_task = worker
+            
+        except Exception as e:
+            log.error(f"Error setting up generation: {str(e)}")
+            self.notify(f"Error: {str(e)}", severity="error")
+            self.is_generating = False
+            loading = self.query_one("#loading-indicator")
+            loading.add_class("hidden")
+            self.query_one("#message-input").focus()
 
     def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None: # Keep SimpleChatApp on_model_selector_model_selected
         """Handle model selection""" # Keep SimpleChatApp on_model_selector_model_selected docstring
