@@ -477,30 +477,45 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             log("Attempting to cancel generation task")
             if self.current_generation_task and not self.current_generation_task.done():
                 log("Cancelling active generation task.")
-                # Get the client for the current model
+                
+                # Get the client for the current model first and cancel the connection
                 try:
                     model = self.selected_model
                     client = BaseModelClient.get_client_for_model(model)
-                    # Call the client's cancel method if it's an Ollama client
+                    
+                    # Call the client's cancel method if it's supported
                     if hasattr(client, 'cancel_stream'):
                         log("Calling client.cancel_stream() to terminate API session")
-                        await client.cancel_stream()
+                        try:
+                            # This will close the HTTP connection to Ollama server
+                            await client.cancel_stream()
+                            log("Client stream cancelled successfully")
+                        except Exception as e:
+                            log.error(f"Error in client.cancel_stream(): {str(e)}")
                 except Exception as e:
-                    log.error(f"Error cancelling client stream: {str(e)}")
+                    log.error(f"Error setting up client cancellation: {str(e)}")
                 
-                # Now cancel the asyncio task
-                self.current_generation_task.cancel()
-                # The finally block in generate_response will handle is_generating = False and UI updates
-                self.notify("Stopping generation...", severity="warning", timeout=2) # Notify user immediately
+                # Now cancel the asyncio task - this should raise CancelledError in the task
+                try:
+                    log("Cancelling asyncio task")
+                    self.current_generation_task.cancel()
+                    # Give a moment for cancellation to propagate
+                    await asyncio.sleep(0.1)
+                    log(f"Task cancelled. Task done: {self.current_generation_task.done()}")
+                except Exception as e:
+                    log.error(f"Error cancelling task: {str(e)}")
+                
+                # Notify user that we're stopping
+                self.notify("Stopping generation...", severity="warning", timeout=2)
             else:
-                # This case might happen if is_generating is True, but no active task found to cancel. Resetting flag.")
-                self.is_generating = False # Reset flag manually if task is missing
+                # This happens if is_generating is True, but no active task found to cancel
+                log("No active generation task found, but is_generating=True. Resetting state.")
+                self.is_generating = False
                 loading = self.query_one("#loading-indicator")
                 loading.add_class("hidden")
         else:
             log("Escape pressed, but settings not visible and not actively generating.")
-            # Optionally add other escape behaviors here if needed for the main screen
-            # e.g., clear input, deselect item, etc.
+            # Optionally add other escape behaviors here if needed
 
     def update_app_info(self) -> None:
         """Update the displayed app information."""
