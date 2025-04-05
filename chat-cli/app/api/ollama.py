@@ -22,6 +22,9 @@ class OllamaClient(BaseModelClient):
         # Track active stream session
         self._active_stream_session = None
         
+        # Track model loading state
+        self._model_loading = False
+        
         # Path to the cached models file
         self.models_cache_path = Path(__file__).parent.parent / "data" / "ollama-models.json"
         
@@ -191,6 +194,10 @@ class OllamaClient(BaseModelClient):
                                 raise aiohttp.ClientError("Model not ready")
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                         logger.info(f"Model cold start detected: {str(e)}")
+                        # Set model loading flag
+                        self._model_loading = True
+                        logger.info("Setting model_loading state to True")
+                        
                         # Model might need loading, try pulling it
                         async with session.post(
                             f"{self.base_url}/api/pull",
@@ -199,8 +206,10 @@ class OllamaClient(BaseModelClient):
                         ) as pull_response:
                             if pull_response.status != 200:
                                 logger.error("Failed to pull model")
+                                self._model_loading = False  # Reset flag on failure
                                 raise Exception("Failed to pull model")
                             logger.info("Model pulled successfully")
+                            self._model_loading = False  # Reset flag after successful pull
                 
                 # Now proceed with actual generation
                 session = aiohttp.ClientSession()
@@ -277,7 +286,12 @@ class OllamaClient(BaseModelClient):
             logger.info("Cancelling active stream session")
             await self._active_stream_session.close()
             self._active_stream_session = None
+            self._model_loading = False
             logger.info("Stream session closed successfully")
+            
+    def is_loading_model(self) -> bool:
+        """Check if Ollama is currently loading a model"""
+        return self._model_loading
             
     async def get_model_details(self, model_id: str) -> Dict[str, Any]:
         """Get detailed information about a specific Ollama model"""
