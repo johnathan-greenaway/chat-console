@@ -88,7 +88,37 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
     update_interval = 0.1  # Update UI every 100ms
     
     try:
+        # Update UI with model loading state if it's an Ollama client
+        if hasattr(client, 'is_loading_model'):
+            # Send signal to update UI for model loading if needed
+            try:
+                # The client might be in model loading state even before generating
+                model_loading = client.is_loading_model()
+                logger.info(f"Initial model loading state: {model_loading}")
+                
+                # Get the chat interface and update loading indicator
+                if hasattr(app, 'query_one'):
+                    loading = app.query_one("#loading-indicator")
+                    if model_loading:
+                        loading.add_class("model-loading")
+                        app.query_one("#loading-text").update("Loading Ollama model...")
+                    else:
+                        loading.remove_class("model-loading")
+            except Exception as e:
+                logger.error(f"Error setting initial loading state: {str(e)}")
+        
         stream_generator = client.generate_stream(messages, model, style)
+        
+        # Check if we just entered model loading state
+        if hasattr(client, 'is_loading_model') and client.is_loading_model():
+            logger.info("Model loading started during generation")
+            try:
+                if hasattr(app, 'query_one'):
+                    loading = app.query_one("#loading-indicator")
+                    loading.add_class("model-loading")
+                    app.query_one("#loading-text").update("Loading Ollama model...")
+            except Exception as e:
+                logger.error(f"Error updating UI for model loading: {str(e)}")
         
         # Use asyncio.shield to ensure we can properly interrupt the stream processing
         async for chunk in stream_generator:
@@ -99,6 +129,27 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
                 if hasattr(client, 'cancel_stream'):
                     await client.cancel_stream()
                 raise asyncio.CancelledError()
+                
+            # Check if model loading state changed
+            if hasattr(client, 'is_loading_model'):
+                model_loading = client.is_loading_model()
+                try:
+                    if hasattr(app, 'query_one'):
+                        loading = app.query_one("#loading-indicator")
+                        loading_text = app.query_one("#loading-text")
+                        
+                        if model_loading and not loading.has_class("model-loading"):
+                            # Model loading started
+                            logger.info("Model loading started during streaming")
+                            loading.add_class("model-loading")
+                            loading_text.update("⚙️ Loading Ollama model...")
+                        elif not model_loading and loading.has_class("model-loading"):
+                            # Model loading finished
+                            logger.info("Model loading finished during streaming")
+                            loading.remove_class("model-loading")
+                            loading_text.update("▪▪▪ Generating response...")
+                except Exception as e:
+                    logger.error(f"Error updating loading state during streaming: {str(e)}")
                 
             if chunk:  # Only process non-empty chunks
                 buffer.append(chunk)
