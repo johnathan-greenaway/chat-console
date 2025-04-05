@@ -208,7 +208,7 @@ class OllamaClient(BaseModelClient):
                 
                 try:
                     logger.debug(f"Sending streaming request to {self.base_url}/api/generate")
-                    async with session.post(
+                    response = await session.post(
                         f"{self.base_url}/api/generate",
                         json={
                             "model": model,
@@ -217,19 +217,36 @@ class OllamaClient(BaseModelClient):
                             "stream": True
                         },
                         timeout=60  # Longer timeout for actual generation
-                    ) as response:
-                        response.raise_for_status()
-                        async for line in response.content:
-                            if line:
-                                chunk = line.decode().strip()
-                                try:
-                                    data = json.loads(chunk)
-                                    if "response" in data:
-                                        yield data["response"]
-                                except json.JSONDecodeError:
-                                    continue
-                        logger.info("Streaming completed successfully")
-                        return
+                    )
+                    response.raise_for_status()
+                    
+                    # Process the response stream
+                    while True:
+                        if not self._active_stream_session:
+                            logger.info("Stream session was closed externally")
+                            break
+                            
+                        try:
+                            line = await asyncio.wait_for(response.content.readline(), timeout=0.5)
+                            if not line:  # End of stream
+                                break
+                                
+                            chunk = line.decode().strip()
+                            try:
+                                data = json.loads(chunk)
+                                if "response" in data:
+                                    yield data["response"]
+                            except json.JSONDecodeError:
+                                continue
+                        except asyncio.TimeoutError:
+                            # This allows checking for cancellation regularly
+                            continue
+                        except asyncio.CancelledError:
+                            logger.info("Stream processing was cancelled")
+                            raise
+                            
+                    logger.info("Streaming completed successfully")
+                    return
                 finally:
                     self._active_stream_session = None  # Clear reference when done
                     await session.close()  # Ensure session is closed
@@ -260,6 +277,7 @@ class OllamaClient(BaseModelClient):
             logger.info("Cancelling active stream session")
             await self._active_stream_session.close()
             self._active_stream_session = None
+            logger.info("Stream session closed successfully")
             
     async def get_model_details(self, model_id: str) -> Dict[str, Any]:
         """Get detailed information about a specific Ollama model"""
