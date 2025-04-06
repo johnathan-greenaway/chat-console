@@ -5,8 +5,27 @@ Simplified version of Chat CLI with AI functionality
 import os
 import asyncio
 import typer
+import logging
 from typing import List, Optional, Callable, Awaitable
 from datetime import datetime
+
+# Create a dedicated logger that definitely writes to a file
+log_dir = os.path.expanduser("~/.cache/chat-cli")
+os.makedirs(log_dir, exist_ok=True)
+debug_log_file = os.path.join(log_dir, "debug.log")
+
+# Configure the logger
+file_handler = logging.FileHandler(debug_log_file)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+# Get the logger and add the handler
+debug_logger = logging.getLogger("chat-cli-debug")
+debug_logger.setLevel(logging.DEBUG)
+debug_logger.addHandler(file_handler)
+
+# Add a convenience function to log to this file
+def debug_log(message):
+    debug_logger.info(message)
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer, Center
@@ -605,6 +624,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         # If this is the first message and dynamic titles are enabled, generate one
         if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True):
             log("First message detected, generating title...")
+            debug_log("First message detected, attempting to generate conversation title")
             title_generation_in_progress = True # Use a local flag
             loading = self.query_one("#loading-indicator")
             loading.remove_class("hidden") # Show loading for title gen
@@ -612,13 +632,71 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             try:
                 # Get appropriate client
                 model = self.selected_model
+                debug_log(f"Selected model for title generation: '{model}'")
+                
+                # Check if model is valid
+                if not model:
+                    debug_log("Model is empty, falling back to default")
+                    # Fallback to a safe default model - preferring OpenAI if key exists
+                    if OPENAI_API_KEY:
+                        model = "gpt-3.5-turbo"
+                        debug_log("Falling back to OpenAI gpt-3.5-turbo for title generation")
+                    elif ANTHROPIC_API_KEY:
+                        model = "claude-instant-1.2"
+                        debug_log("Falling back to Anthropic claude-instant-1.2 for title generation")
+                    else:
+                        # Last resort - check for a common Ollama model
+                        try:
+                            from app.api.ollama import OllamaClient
+                            ollama = OllamaClient()
+                            models = await ollama.get_available_models()
+                            if models and len(models) > 0:
+                                debug_log(f"Found {len(models)} Ollama models, using first one")
+                                model = models[0].get("id", "llama3")
+                            else:
+                                model = "llama3"  # Common default
+                            debug_log(f"Falling back to Ollama model: {model}")
+                        except Exception as ollama_err:
+                            debug_log(f"Error getting Ollama models: {str(ollama_err)}")
+                            model = "llama3"  # Final fallback
+                            debug_log("Final fallback to llama3")
+
+                debug_log(f"Getting client for model: {model}")
                 client = BaseModelClient.get_client_for_model(model)
+                
                 if client is None:
-                    raise Exception(f"No client available for model: {model}")
+                    debug_log(f"No client available for model: {model}, trying to initialize")
+                    # Try to determine client type and initialize manually
+                    client_type = BaseModelClient.get_client_type_for_model(model)
+                    if client_type:
+                        debug_log(f"Found client type {client_type.__name__} for {model}, initializing")
+                        try:
+                            client = client_type()
+                            debug_log("Client initialized successfully")
+                        except Exception as init_err:
+                            debug_log(f"Error initializing client: {str(init_err)}")
+                    
+                    if client is None:
+                        debug_log("Could not initialize client, falling back to safer model")
+                        # Try a different model as last resort
+                        if OPENAI_API_KEY:
+                            from app.api.openai import OpenAIClient
+                            client = OpenAIClient()
+                            model = "gpt-3.5-turbo"
+                            debug_log("Falling back to OpenAI for title generation")
+                        elif ANTHROPIC_API_KEY:
+                            from app.api.anthropic import AnthropicClient
+                            client = AnthropicClient()
+                            model = "claude-instant-1.2"
+                            debug_log("Falling back to Anthropic for title generation")
+                        else:
+                            raise Exception("No valid API clients available for title generation")
 
                 # Generate title
                 log(f"Calling generate_conversation_title with model: {model}")
+                debug_log(f"Calling generate_conversation_title with model: {model}")
                 title = await generate_conversation_title(content, model, client)
+                debug_log(f"Generated title: {title}")
                 log(f"Generated title: {title}")
 
                 # Update conversation title in database
@@ -633,10 +711,17 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
                 # Update conversation object
                 self.current_conversation.title = title
+                
+                # IMPORTANT: Save the successful model for consistency
+                # If the title was generated with a different model than initially selected,
+                # update the selected_model to match so the response uses the same model
+                debug_log(f"Using same model for chat response: '{model}'")
+                self.selected_model = model
 
                 self.notify(f"Conversation title set to: {title}", severity="information", timeout=3)
 
             except Exception as e:
+                debug_log(f"Failed to generate title: {str(e)}")
                 log.error(f"Failed to generate title: {str(e)}")
                 self.notify(f"Failed to generate title: {str(e)}", severity="warning")
             finally:
@@ -645,7 +730,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # This check might be redundant if generate_response always shows it anyway
                 if not self.is_generating:
                      loading.add_class("hidden")
-
+                     
+                # Small delay to ensure state is updated
+                await asyncio.sleep(0.1)
+                
+        # Log just before generate_response call
+        debug_log(f"About to call generate_response with model: '{self.selected_model}'")
+                
         # Generate AI response (will set self.is_generating and handle loading indicator)
         await self.generate_response()
 
@@ -654,19 +745,28 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
     async def generate_response(self) -> None:
         """Generate an AI response using a non-blocking worker."""
+        # Import debug_log function from main
+        debug_log(f"Entering generate_response method")
+        
         if not self.current_conversation or not self.messages:
+            debug_log("No current conversation or messages, returning")
             return
 
         self.is_generating = True
         log("Setting is_generating to True")
+        debug_log("Setting is_generating to True")
         loading = self.query_one("#loading-indicator")
         loading.remove_class("hidden")
         
         # For Ollama models, show the loading indicator immediately
         from app.api.ollama import OllamaClient
+        debug_log(f"Current selected model: '{self.selected_model}'")
         client_type = BaseModelClient.get_client_type_for_model(self.selected_model)
+        debug_log(f"Client type: {client_type.__name__ if client_type else 'None'}")
+        
         if self.selected_model and client_type == OllamaClient:
             log("Ollama model detected, showing immediate loading indicator")
+            debug_log("Ollama model detected, showing immediate loading indicator")
             loading.add_class("model-loading")
             # Update the loading indicator text directly
             loading.update("⚙️ Preparing Ollama model...")
@@ -684,27 +784,106 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             # Get conversation parameters
             model = self.selected_model
             style = self.selected_style
+            
+            debug_log(f"Using model: '{model}', style: '{style}'")
 
-            # Convert messages to API format
+            # Ensure we have a valid model
+            if not model:
+                debug_log("Model is empty, selecting a default model")
+                # Same fallback logic as in autotitling - this ensures consistency
+                if OPENAI_API_KEY:
+                    model = "gpt-3.5-turbo"
+                    debug_log("Falling back to OpenAI gpt-3.5-turbo")
+                elif ANTHROPIC_API_KEY:
+                    model = "claude-instant-1.2"
+                    debug_log("Falling back to Anthropic claude-instant-1.2")
+                else:
+                    # Check for a common Ollama model
+                    try:
+                        ollama = OllamaClient()
+                        models = await ollama.get_available_models()
+                        if models and len(models) > 0:
+                            debug_log(f"Found {len(models)} Ollama models, using first one")
+                            model = models[0].get("id", "llama3")
+                        else:
+                            model = "llama3"  # Common default
+                        debug_log(f"Falling back to Ollama model: {model}")
+                    except Exception as ollama_err:
+                        debug_log(f"Error getting Ollama models: {str(ollama_err)}")
+                        model = "llama3"  # Final fallback
+                        debug_log("Final fallback to llama3")
+
+            # Convert messages to API format with enhanced error checking
             api_messages = []
-            for msg in self.messages:
-                api_messages.append({
-                    "role": msg.role,
-                    "content": msg.content
-                })
+            debug_log(f"Converting {len(self.messages)} messages to API format")
+            
+            for i, msg in enumerate(self.messages):
+                try:
+                    debug_log(f"Processing message {i}: type={type(msg).__name__}, dir={dir(msg)}")
+                    debug_log(f"Adding message to API format: role={msg.role}, content_len={len(msg.content)}")
+                    
+                    # Create a fully validated message dict
+                    message_dict = {
+                        "role": msg.role if hasattr(msg, 'role') and msg.role else "user",
+                        "content": msg.content if hasattr(msg, 'content') and msg.content else ""
+                    }
+                    
+                    api_messages.append(message_dict)
+                    debug_log(f"Successfully added message {i}")
+                except Exception as e:
+                    debug_log(f"Error adding message {i} to API format: {str(e)}")
+                    # Create a safe fallback message
+                    fallback_msg = {
+                        "role": "user",
+                        "content": str(msg) if msg is not None else "Error retrieving message content"
+                    }
+                    api_messages.append(fallback_msg)
+                    debug_log(f"Added fallback message for {i}")
+            
+            debug_log(f"Prepared {len(api_messages)} messages for API")
 
             # Get appropriate client
+            debug_log(f"Getting client for model: {model}")
             try:
                 client = BaseModelClient.get_client_for_model(model)
+                debug_log(f"Client: {client.__class__.__name__ if client else 'None'}")
+                
                 if client is None:
-                    raise Exception(f"No client available for model: {model}")
+                    debug_log(f"No client available for model: {model}, trying to initialize")
+                    # Try to determine client type and initialize manually
+                    client_type = BaseModelClient.get_client_type_for_model(model)
+                    if client_type:
+                        debug_log(f"Found client type {client_type.__name__} for {model}, initializing")
+                        try:
+                            client = client_type()
+                            debug_log(f"Successfully initialized {client_type.__name__}")
+                        except Exception as init_err:
+                            debug_log(f"Error initializing client: {str(init_err)}")
+                    
+                    if client is None:
+                        debug_log("Could not initialize client, falling back to safer model")
+                        # Try a different model as last resort
+                        if OPENAI_API_KEY:
+                            from app.api.openai import OpenAIClient
+                            client = OpenAIClient()
+                            model = "gpt-3.5-turbo"
+                            debug_log("Falling back to OpenAI client")
+                        elif ANTHROPIC_API_KEY:
+                            from app.api.anthropic import AnthropicClient
+                            client = AnthropicClient()
+                            model = "claude-instant-1.2"
+                            debug_log("Falling back to Anthropic client")
+                        else:
+                            raise Exception("No valid API clients available")
             except Exception as e:
+                debug_log(f"Failed to initialize model client: {str(e)}")
                 self.notify(f"Failed to initialize model client: {str(e)}", severity="error")
                 self.is_generating = False
                 loading.add_class("hidden")
                 return
 
             # Start streaming response
+            debug_log("Creating assistant message with 'Thinking...'")
             assistant_message = Message(role="assistant", content="Thinking...")
             self.messages.append(assistant_message)
             messages_container = self.query_one("#messages-container")
@@ -720,13 +899,14 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
             async def update_ui(content: str):
                 if not self.is_generating:
-                    log("update_ui called but is_generating is False, returning.")
+                    debug_log("update_ui called but is_generating is False, returning.")
                     return
 
                 async with update_lock:
                     try:
                         # Clear thinking indicator on first content
                         if assistant_message.content == "Thinking...":
+                            debug_log("First content received, clearing 'Thinking...'")
                             assistant_message.content = ""
 
                         # Update message with full content so far
@@ -740,24 +920,42 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         # Force another refresh to ensure content is visible
                         self.refresh(layout=True)
                     except Exception as e:
+                        debug_log(f"Error updating UI: {str(e)}")
                         log.error(f"Error updating UI: {str(e)}")
 
             # Define worker for background processing
             @work(exit_on_error=True)
             async def run_generation_worker():
                 try:
-                    # Generate the response in background
-                    full_response = await generate_streaming_response(
-                        self,
-                        api_messages,
-                        model,
-                        style,
-                        client,
-                        update_ui
-                    )
+                    debug_log(f"Starting generation worker with model: {model}")
+                    # Add detailed debug logging before calling generate_streaming_response
+                    debug_log(f"About to call generate_streaming_response with messages: {len(api_messages)}, model: {model}, style: {style}")
+                    try:
+                        debug_log(f"Messages details: {[{'role': m['role'], 'content_len': len(m['content'])} for m in api_messages]}")
+                    except Exception as e:
+                        debug_log(f"Error logging message details: {e}")
+                    
+                    # Then add more specific debugging around the generate_streaming_response call:
+                    try:
+                        full_response = await generate_streaming_response(
+                            self,
+                            api_messages,
+                            model,
+                            style,
+                            client,
+                            update_ui
+                        )
+                        debug_log("generate_streaming_response returned successfully")
+                    except Exception as e:
+                        debug_log(f"Error in generate_streaming_response: {str(e)}")
+                        raise
+                    
+                    debug_log("Generation complete, full_response length: " + 
+                             str(len(full_response) if full_response else 0))
                     
                     # Save complete response to database
                     if self.is_generating and full_response:
+                        debug_log("Generation completed normally, saving to database")
                         log("Generation completed normally, saving to database")
                         self.db.add_message(
                             self.current_conversation.id,
@@ -769,31 +967,38 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     self.refresh(layout=True)
                     
                 except asyncio.CancelledError:
+                    debug_log("Generation worker was cancelled")
                     log.warning("Generation worker was cancelled")
                     # Remove the incomplete message
                     if self.messages and self.messages[-1].role == "assistant":
+                        debug_log("Removing incomplete assistant message")
                         self.messages.pop()
                     await self.update_messages_ui()
                     self.notify("Generation stopped by user", severity="warning", timeout=2)
                     
                 except Exception as e:
+                    debug_log(f"Error in generation worker: {str(e)}")
                     log.error(f"Error in generation worker: {str(e)}")
                     self.notify(f"Generation error: {str(e)}", severity="error", timeout=5)
                     # Add error message to UI
                     if self.messages and self.messages[-1].role == "assistant":
+                        debug_log("Removing thinking message")
                         self.messages.pop()  # Remove thinking message
                     error_msg = f"Error: {str(e)}"
+                    debug_log(f"Adding error message: {error_msg}")
                     self.messages.append(Message(role="assistant", content=error_msg))
                     await self.update_messages_ui()
                     
                 finally:
                     # Always clean up state and UI
+                    debug_log("Generation worker completed, resetting state")
                     log("Generation worker completed, resetting state")
                     self.is_generating = False
                     self.current_generation_task = None
                     
                     # Stop the animation task
                     if self._loading_animation_task and not self._loading_animation_task.done():
+                        debug_log("Cancelling loading animation task")
                         self._loading_animation_task.cancel()
                     self._loading_animation_task = None
                     
@@ -803,10 +1008,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     self.query_one("#message-input").focus()
                     
             # Start the worker and keep a reference to it
+            debug_log("Starting generation worker")
             worker = run_generation_worker()
             self.current_generation_task = worker
             
         except Exception as e:
+            debug_log(f"Error setting up generation: {str(e)}")
             log.error(f"Error setting up generation: {str(e)}")
             self.notify(f"Error: {str(e)}", severity="error")
             self.is_generating = False

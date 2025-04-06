@@ -89,117 +89,206 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
 # Modified signature to accept app instance
 async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict], model: str, style: str, client: Any, callback: Any) -> str:
     """Generate a streaming response from the model"""
+    # Import debug_log function from main
+    from app.main import debug_log
+
     logger.info(f"Starting streaming response with model: {model}")
+    debug_log(f"Starting streaming response with model: '{model}', client type: {type(client).__name__}")
+    
+    # Very defensive check of messages format
+    if not messages:
+        debug_log("Error: messages list is empty")
+        raise ValueError("Messages list cannot be empty")
+    
+    for i, msg in enumerate(messages):
+        try:
+            debug_log(f"Message {i}: role={msg.get('role', 'missing')}, content_len={len(msg.get('content', ''))}")
+            # Ensure essential fields exist
+            if 'role' not in msg:
+                debug_log(f"Adding missing 'role' to message {i}")
+                msg['role'] = 'user'  # Default to user
+            if 'content' not in msg:
+                debug_log(f"Adding missing 'content' to message {i}")
+                msg['content'] = ''  # Default to empty string
+        except Exception as e:
+            debug_log(f"Error checking message {i}: {str(e)}")
+            # Try to repair the message
+            messages[i] = {
+                'role': 'user',
+                'content': str(msg) if msg else ''
+            }
+            debug_log(f"Repaired message {i}")
+    
+    debug_log(f"Messages validation complete: {len(messages)} total messages")
+    
     full_response = ""
     buffer = []
     last_update = time.time()
     update_interval = 0.1  # Update UI every 100ms
     
     try:
+        # Check that we have a valid client and model before proceeding
+        if client is None:
+            debug_log("Error: client is None, cannot proceed with streaming")
+            raise ValueError("Model client is None, cannot proceed with streaming")
+            
+        # Check if the client has the required generate_stream method
+        if not hasattr(client, 'generate_stream'):
+            debug_log(f"Error: client {type(client).__name__} does not have generate_stream method")
+            raise ValueError(f"Client {type(client).__name__} does not support streaming")
+            
         # Set initial model loading state if using Ollama
         # Always show the model loading indicator for Ollama until we confirm otherwise
         is_ollama = 'ollama' in str(type(client)).lower()
+        debug_log(f"Is Ollama client: {is_ollama}")
         
         if is_ollama and hasattr(app, 'query_one'):
             try:
                 # Show model loading indicator by default for Ollama
+                debug_log("Showing initial model loading indicator for Ollama")
                 logger.info("Showing initial model loading indicator for Ollama")
                 loading = app.query_one("#loading-indicator")
                 loading.add_class("model-loading")
                 loading.update("⚙️ Loading Ollama model...")
             except Exception as e:
+                debug_log(f"Error setting initial Ollama loading state: {str(e)}")
                 logger.error(f"Error setting initial Ollama loading state: {str(e)}")
         
         # Now proceed with streaming
+        debug_log(f"Starting stream generation with messages length: {len(messages)}")
         logger.info(f"Starting stream generation for model: {model}")
-        stream_generator = client.generate_stream(messages, model, style)
+        
+        # Defensive approach - wrap the stream generation in a try-except
+        try:
+            debug_log("Calling client.generate_stream()")
+            stream_generator = client.generate_stream(messages, model, style)
+            debug_log("Successfully obtained stream generator")
+        except Exception as stream_init_error:
+            debug_log(f"Error initializing stream generator: {str(stream_init_error)}")
+            logger.error(f"Error initializing stream generator: {str(stream_init_error)}")
+            raise  # Re-raise to be handled in the main catch block
         
         # After getting the generator, check if we're NOT in model loading state
         if hasattr(client, 'is_loading_model') and not client.is_loading_model() and hasattr(app, 'query_one'):
             try:
+                debug_log("Model is ready for generation, updating UI")
                 logger.info("Model is ready for generation, updating UI")
                 loading = app.query_one("#loading-indicator")
                 loading.remove_class("model-loading")
-                loading.update("[▪▪▪ Generating response...]")
+                loading.update("▪▪▪ Generating response...")
             except Exception as e:
+                debug_log(f"Error updating UI after stream init: {str(e)}")
                 logger.error(f"Error updating UI after stream init: {str(e)}")
         
-        # Use asyncio.shield to ensure we can properly interrupt the stream processing
-        async for chunk in stream_generator:
-            # Check for cancellation frequently
-            if asyncio.current_task().cancelled():
-                logger.info("Task cancellation detected during chunk processing")
-                # Close the client stream if possible
-                if hasattr(client, 'cancel_stream'):
-                    await client.cancel_stream()
-                raise asyncio.CancelledError()
-                
-            # Check if model loading state changed, but more safely
-            if hasattr(client, 'is_loading_model'):
-                try:
-                    # Get the model loading state
-                    model_loading = client.is_loading_model()
+        # Process the stream with careful error handling
+        debug_log("Beginning to process stream chunks")
+        try:
+            async for chunk in stream_generator:
+                # Check for cancellation frequently
+                if asyncio.current_task().cancelled():
+                    debug_log("Task cancellation detected during chunk processing")
+                    logger.info("Task cancellation detected during chunk processing")
+                    # Close the client stream if possible
+                    if hasattr(client, 'cancel_stream'):
+                        debug_log("Calling client.cancel_stream() due to task cancellation")
+                        await client.cancel_stream()
+                    raise asyncio.CancelledError()
                     
-                    # Safely update the UI elements if they exist
-                    if hasattr(app, 'query_one'):
-                        try:
-                            loading = app.query_one("#loading-indicator")
-                            
-                            # Check for class existence first
-                            if model_loading and hasattr(loading, 'has_class') and not loading.has_class("model-loading"):
-                                # Model loading started
-                                logger.info("Model loading started during streaming")
-                                loading.add_class("model-loading")
-                                loading.update("⚙️ Loading Ollama model...")
-                            elif not model_loading and hasattr(loading, 'has_class') and loading.has_class("model-loading"):
-                                # Model loading finished
-                                logger.info("Model loading finished during streaming")
-                                loading.remove_class("model-loading")
-                                loading.update("▪▪▪ Generating response...")
-                        except Exception as ui_e:
-                            logger.error(f"Error updating UI elements: {str(ui_e)}")
-                except Exception as e:
-                    logger.error(f"Error checking model loading state: {str(e)}")
+                # Check if model loading state changed, but more safely
+                if hasattr(client, 'is_loading_model'):
+                    try:
+                        # Get the model loading state
+                        model_loading = client.is_loading_model()
+                        debug_log(f"Model loading state: {model_loading}")
+                        
+                        # Safely update the UI elements if they exist
+                        if hasattr(app, 'query_one'):
+                            try:
+                                loading = app.query_one("#loading-indicator")
+                                
+                                # Check for class existence first
+                                if model_loading and hasattr(loading, 'has_class') and not loading.has_class("model-loading"):
+                                    # Model loading started
+                                    debug_log("Model loading started during streaming")
+                                    logger.info("Model loading started during streaming")
+                                    loading.add_class("model-loading")
+                                    loading.update("⚙️ Loading Ollama model...")
+                                elif not model_loading and hasattr(loading, 'has_class') and loading.has_class("model-loading"):
+                                    # Model loading finished
+                                    debug_log("Model loading finished during streaming")
+                                    logger.info("Model loading finished during streaming")
+                                    loading.remove_class("model-loading")
+                                    loading.update("▪▪▪ Generating response...")
+                            except Exception as ui_e:
+                                debug_log(f"Error updating UI elements: {str(ui_e)}")
+                                logger.error(f"Error updating UI elements: {str(ui_e)}")
+                    except Exception as e:
+                        debug_log(f"Error checking model loading state: {str(e)}")
+                        logger.error(f"Error checking model loading state: {str(e)}")
                 
-            if chunk:  # Only process non-empty chunks
-                buffer.append(chunk)
-                current_time = time.time()
-                
-                # Update UI if enough time has passed or buffer is large
-                if current_time - last_update >= update_interval or len(''.join(buffer)) > 100:
-                    new_content = ''.join(buffer)
-                    full_response += new_content
-                    # Send content to UI
-                    await callback(full_response)
-                    buffer = []
-                    last_update = current_time
+                # Process the chunk
+                if chunk:  # Only process non-empty chunks
+                    debug_log(f"Received chunk of length: {len(chunk)}")
+                    buffer.append(chunk)
+                    current_time = time.time()
                     
-                    # Small delay to let UI catch up
-                    await asyncio.sleep(0.05)
+                    # Update UI if enough time has passed or buffer is large
+                    if current_time - last_update >= update_interval or len(''.join(buffer)) > 100:
+                        new_content = ''.join(buffer)
+                        full_response += new_content
+                        # Send content to UI
+                        debug_log(f"Updating UI with content length: {len(full_response)}")
+                        await callback(full_response)
+                        buffer = []
+                        last_update = current_time
+                        
+                        # Small delay to let UI catch up
+                        await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            debug_log("CancelledError in stream processing")
+            raise
+        except Exception as chunk_error:
+            debug_log(f"Error processing stream chunks: {str(chunk_error)}")
+            logger.error(f"Error processing stream chunks: {str(chunk_error)}")
+            raise
 
         # Send any remaining content if the loop finished normally
         if buffer:
             new_content = ''.join(buffer)
             full_response += new_content
+            debug_log(f"Sending final content, total length: {len(full_response)}")
             await callback(full_response)
 
+        debug_log(f"Streaming response completed successfully. Response length: {len(full_response)}")
         logger.info(f"Streaming response completed successfully. Response length: {len(full_response)}")
         return full_response
         
     except asyncio.CancelledError:
         # This is expected when the user cancels via Escape
+        debug_log(f"Streaming response task cancelled. Partial response length: {len(full_response)}")
         logger.info(f"Streaming response task cancelled. Partial response length: {len(full_response)}")
         # Ensure the client stream is closed
         if hasattr(client, 'cancel_stream'):
-            await client.cancel_stream()
+            debug_log("Calling client.cancel_stream() after cancellation")
+            try:
+                await client.cancel_stream()
+                debug_log("Successfully cancelled client stream")
+            except Exception as cancel_err:
+                debug_log(f"Error cancelling client stream: {str(cancel_err)}")
         # Return whatever was collected so far
         return full_response
         
     except Exception as e:
+        debug_log(f"Error during streaming response: {str(e)}")
         logger.error(f"Error during streaming response: {str(e)}")
         # Close the client stream if possible
         if hasattr(client, 'cancel_stream'):
-            await client.cancel_stream()
+            debug_log("Attempting to cancel client stream after error")
+            try:
+                await client.cancel_stream()
+                debug_log("Successfully cancelled client stream after error")
+            except Exception as cancel_err:
+                debug_log(f"Error cancelling client stream after error: {str(cancel_err)}")
         # Re-raise the exception for the caller to handle
         raise
 

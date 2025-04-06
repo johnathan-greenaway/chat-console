@@ -34,17 +34,62 @@ class OllamaClient(BaseModelClient):
         
     def _prepare_messages(self, messages: List[Dict[str, str]], style: Optional[str] = None) -> str:
         """Convert chat messages to Ollama format"""
+        try:
+            from app.main import debug_log  # Import debug logging
+            debug_log(f"_prepare_messages called with {len(messages)} messages and style: {style}")
+        except ImportError:
+            # If debug_log not available, create a no-op function
+            debug_log = lambda msg: None
+        
         # Start with any style instructions
         formatted_messages = []
         if style and style != "default":
-            formatted_messages.append(self._get_style_instructions(style))
-            
+            style_instructions = self._get_style_instructions(style)
+            debug_log(f"Adding style instructions: {style_instructions[:50]}...")
+            formatted_messages.append(style_instructions)
+        
         # Add message content, preserving conversation flow
-        for msg in messages:
-            formatted_messages.append(msg["content"])
-            
+        for i, msg in enumerate(messages):
+            try:
+                debug_log(f"Processing message {i}: role={msg.get('role', 'unknown')}, content length={len(msg.get('content', ''))}")
+                
+                # Safely extract content with fallback
+                if "content" in msg and msg["content"] is not None:
+                    content = msg["content"]
+                    formatted_messages.append(content)
+                else:
+                    debug_log(f"Message {i} has no valid content key, using fallback")
+                    # Try to get content from alternative sources
+                    if isinstance(msg, dict):
+                        # Try to convert the whole message to string as last resort
+                        content = str(msg)
+                        debug_log(f"Using fallback content: {content[:50]}...")
+                        formatted_messages.append(content)
+                    else:
+                        debug_log(f"Message {i} is not a dict, skipping")
+                
+            except KeyError as e:
+                debug_log(f"KeyError processing message {i}: {e}, message: {msg}")
+                # Handle missing key more gracefully
+                content = msg.get('content', '')
+                if content:
+                    formatted_messages.append(content)
+                else:
+                    debug_log(f"Warning: Message {i} has no content, skipping")
+            except Exception as e:
+                debug_log(f"Error processing message {i}: {e}")
+                # Continue processing other messages
+                continue
+        
+        # Defensive check to ensure we have something to return
+        if not formatted_messages:
+            debug_log("Warning: No formatted messages were created, using fallback")
+            formatted_messages = ["Please provide some input for the model to respond to."]
+        
         # Join with double newlines for better readability
-        return "\n\n".join(formatted_messages)
+        result = "\n\n".join(formatted_messages)
+        debug_log(f"Final formatted prompt length: {len(result)}")
+        return result
     
     def _get_style_instructions(self, style: str) -> str:
         """Get formatting instructions for different styles"""
@@ -168,7 +213,49 @@ class OllamaClient(BaseModelClient):
                             max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming text completion using Ollama"""
         logger.info(f"Starting streaming generation with model: {model}")
-        prompt = self._prepare_messages(messages, style)
+        try:
+            from app.main import debug_log  # Import debug logging if available
+            debug_log(f"Starting streaming generation with model: {model}")
+        except ImportError:
+            # If debug_log not available, create a no-op function
+            debug_log = lambda msg: None
+            
+        debug_log(f"generate_stream called with model: {model}, {len(messages)} messages")
+        
+        # At the beginning of the method, check messages format
+        if not messages:
+            debug_log("Error: messages is empty")
+            raise ValueError("Messages list is empty")
+        
+        for i, msg in enumerate(messages):
+            try:
+                if not isinstance(msg, dict):
+                    debug_log(f"Error: message {i} is not a dict: {type(msg)}")
+                    raise ValueError(f"Message {i} is not a dictionary")
+                if 'role' not in msg:
+                    debug_log(f"Error: message {i} missing 'role' key, using default")
+                    msg['role'] = 'user'
+                if 'content' not in msg:
+                    debug_log(f"Error: message {i} missing 'content' key, using default")
+                    msg['content'] = ''
+            except Exception as e:
+                debug_log(f"Error validating message {i}: {str(e)}")
+        
+        # Now prepare the messages with our robust _prepare_messages method
+        try:
+            debug_log("Calling _prepare_messages to format prompt")
+            prompt = self._prepare_messages(messages, style)
+            debug_log(f"Prompt prepared, length: {len(prompt)}")
+        except Exception as prep_error:
+            debug_log(f"Error preparing messages: {str(prep_error)}")
+            # Create a simple fallback prompt
+            if len(messages) > 0 and isinstance(messages[-1], dict) and 'content' in messages[-1]:
+                prompt = messages[-1]['content']
+                debug_log(f"Using last message content as fallback prompt: {prompt[:100]}...")
+            else:
+                prompt = "Please respond to the user's query."
+                debug_log("Using generic fallback prompt")
+                
         retries = 2
         last_error = None
         self._active_stream_session = None  # Track the active session
@@ -179,6 +266,7 @@ class OllamaClient(BaseModelClient):
                 async with aiohttp.ClientSession() as session:
                     try:
                         logger.info("Testing model availability...")
+                        debug_log("Testing model availability...")
                         async with session.post(
                             f"{self.base_url}/api/generate",
                             json={
@@ -191,12 +279,15 @@ class OllamaClient(BaseModelClient):
                         ) as response:
                             if response.status != 200:
                                 logger.warning(f"Model test request failed with status {response.status}")
+                                debug_log(f"Model test request failed with status {response.status}")
                                 raise aiohttp.ClientError("Model not ready")
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                         logger.info(f"Model cold start detected: {str(e)}")
+                        debug_log(f"Model cold start detected: {str(e)}")
                         # Set model loading flag
                         self._model_loading = True
                         logger.info("Setting model_loading state to True")
+                        debug_log("Setting model_loading state to True")
                         
                         # Model might need loading, try pulling it
                         async with session.post(
@@ -206,9 +297,11 @@ class OllamaClient(BaseModelClient):
                         ) as pull_response:
                             if pull_response.status != 200:
                                 logger.error("Failed to pull model")
+                                debug_log("Failed to pull model")
                                 self._model_loading = False  # Reset flag on failure
                                 raise Exception("Failed to pull model")
                             logger.info("Model pulled successfully")
+                            debug_log("Model pulled successfully")
                             self._model_loading = False  # Reset flag after successful pull
                 
                 # Now proceed with actual generation
@@ -217,6 +310,8 @@ class OllamaClient(BaseModelClient):
                 
                 try:
                     logger.debug(f"Sending streaming request to {self.base_url}/api/generate")
+                    debug_log(f"Sending streaming request to {self.base_url}/api/generate")
+                    
                     response = await session.post(
                         f"{self.base_url}/api/generate",
                         json={
@@ -228,56 +323,66 @@ class OllamaClient(BaseModelClient):
                         timeout=60  # Longer timeout for actual generation
                     )
                     response.raise_for_status()
+                    debug_log(f"Response status: {response.status}")
                     
-                    # Process the response stream
-                    while True:
-                        if not self._active_stream_session:
-                            logger.info("Stream session was closed externally")
+                    # Use a simpler async iteration pattern that's less error-prone
+                    async for line in response.content:
+                        # Check cancellation periodically
+                        if self._active_stream_session is None:
+                            debug_log("Stream session closed, stopping stream processing")
                             break
                             
                         try:
-                            line = await asyncio.wait_for(response.content.readline(), timeout=0.5)
-                            if not line:  # End of stream
-                                break
-                                
-                            chunk = line.decode().strip()
-                            try:
-                                data = json.loads(chunk)
-                                if "response" in data:
-                                    yield data["response"]
-                            except json.JSONDecodeError:
-                                continue
-                        except asyncio.TimeoutError:
-                            # This allows checking for cancellation regularly
+                            # Process the chunk
+                            if line:
+                                chunk = line.decode().strip()
+                                try:
+                                    data = json.loads(chunk)
+                                    if "response" in data:
+                                        debug_log(f"Yielding chunk of length: {len(data['response'])}")
+                                        yield data["response"]
+                                except json.JSONDecodeError:
+                                    debug_log("JSON decode error in chunk")
+                                    continue
+                        except Exception as chunk_err:
+                            debug_log(f"Error processing chunk: {str(chunk_err)}")
+                            # Continue instead of breaking to try processing more chunks
                             continue
-                        except asyncio.CancelledError:
-                            logger.info("Stream processing was cancelled")
-                            raise
-                            
+                    
                     logger.info("Streaming completed successfully")
+                    debug_log("Streaming completed successfully")
                     return
                 finally:
                     self._active_stream_session = None  # Clear reference when done
                     await session.close()  # Ensure session is closed
+                    debug_log("Stream session closed")
                         
             except aiohttp.ClientConnectorError:
                 last_error = "Could not connect to Ollama server. Make sure Ollama is running and accessible at " + self.base_url
+                debug_log(f"ClientConnectorError: {last_error}")
             except aiohttp.ClientResponseError as e:
                 last_error = f"Ollama API error: {e.status} - {e.message}"
+                debug_log(f"ClientResponseError: {last_error}")
             except aiohttp.ClientTimeout:
                 last_error = "Request to Ollama server timed out"
+                debug_log(f"ClientTimeout: {last_error}")
             except asyncio.CancelledError:
                 logger.info("Streaming cancelled by client")
+                debug_log("CancelledError: Streaming cancelled by client")
                 raise  # Propagate cancellation
             except Exception as e:
                 last_error = f"Error streaming completion: {str(e)}"
+                debug_log(f"General exception: {last_error}")
             
             logger.error(f"Streaming attempt failed: {last_error}")
+            debug_log(f"Streaming attempt failed: {last_error}")
             retries -= 1
             if retries >= 0:
                 logger.info(f"Retrying stream... {retries} attempts remaining")
+                debug_log(f"Retrying stream... {retries} attempts remaining")
                 await asyncio.sleep(1)
                 
+        debug_log(f"All retries failed. Last error: {last_error}")
         raise Exception(last_error)
         
     async def cancel_stream(self) -> None:
