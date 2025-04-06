@@ -684,55 +684,123 @@ class ModelBrowser(Container):
     
     async def _run_selected_model(self) -> None:
         """Set the selected model as the active model in the main app"""
+        # Import debug_log function from main
+        from app.main import debug_log
+        
+        debug_log(f"Entering _run_selected_model for tab {self.current_tab}")
+        
         # Try several ways to get a valid model ID
         model_id = ""
         
         # First try the selected_model_id property
         if self.selected_model_id and self.selected_model_id.strip():
+            debug_log(f"Using model_id from selected_model_id: {self.selected_model_id}")
             logger.info(f"Using model_id from selected_model_id: {self.selected_model_id}")
             model_id = self.selected_model_id
         
         # If that didn't work, try getting it through the getter method
         if not model_id:
+            debug_log("Trying to get model_id from _get_selected_model_id method")
             logger.info("Trying to get model_id from _get_selected_model_id method")
             model_id = self._get_selected_model_id()
+            debug_log(f"_get_selected_model_id returned: '{model_id}'")
             
         # As a last resort, if we're in local tab, try to just get the first model
-        if not model_id and self.current_tab == "local" and self.local_models:
-            try:
-                first_model = self.local_models[0]
-                if isinstance(first_model, dict) and "id" in first_model:
-                    logger.info(f"Falling back to first model in list: {first_model['id']}")
-                    model_id = first_model["id"]
-            except Exception as e:
-                logger.error(f"Error getting first local model: {str(e)}")
+        if not model_id and self.current_tab == "local":
+            debug_log("Trying fallback to first local model")
+            
+            # Extra defensive check for local_models
+            if not self.local_models:
+                debug_log("local_models list is empty or None")
+            else:
+                debug_log(f"local_models has {len(self.local_models)} items")
+                try:
+                    # Check if the list is valid and not empty
+                    if len(self.local_models) > 0:
+                        first_model = self.local_models[0]
+                        debug_log(f"First local model: {repr(first_model)}")
+                        
+                        # Very defensive checks
+                        if first_model is None:
+                            debug_log("First model is None")
+                        elif not isinstance(first_model, dict):
+                            debug_log(f"First model is not a dict: {type(first_model)}")
+                        elif "id" not in first_model:
+                            debug_log(f"First model has no 'id' key: {first_model}")
+                        else:
+                            model_id = first_model.get("id", "")
+                            debug_log(f"Falling back to first model in list: {model_id}")
+                            logger.info(f"Falling back to first model in list: {model_id}")
+                    else:
+                        debug_log("local_models list is empty")
+                except Exception as e:
+                    debug_log(f"Error getting first local model: {str(e)}")
+                    logger.error(f"Error getting first local model: {str(e)}")
                 
         # Or if we're in available tab, try to get name of first available model
-        if not model_id and self.current_tab == "available" and self.available_models:
-            try:
-                first_model = self.available_models[0]
-                if isinstance(first_model, dict) and "name" in first_model:
-                    logger.info(f"Falling back to first available model: {first_model['name']}")
-                    model_id = first_model["name"]
-            except Exception as e:
-                logger.error(f"Error getting first available model: {str(e)}")
-        
-        if not model_id:
-            self.notify("No model selected", severity="warning")
-            return
+        if not model_id and self.current_tab == "available":
+            debug_log("Trying fallback to first available model")
             
+            # Extra defensive check for available_models
+            if not self.available_models:
+                debug_log("available_models list is empty or None")
+            else:
+                debug_log(f"available_models has {len(self.available_models)} items")
+                try:
+                    # Check if the list is valid and not empty
+                    if len(self.available_models) > 0:
+                        first_model = self.available_models[0]
+                        debug_log(f"First available model: {repr(first_model)}")
+                        
+                        # Very defensive checks
+                        if first_model is None:
+                            debug_log("First available model is None")
+                        elif not isinstance(first_model, dict):
+                            debug_log(f"First available model is not a dict: {type(first_model)}")
+                        elif "name" not in first_model:
+                            debug_log(f"First available model has no 'name' key: {first_model}")
+                        else:
+                            model_id = first_model.get("name", "")
+                            debug_log(f"Falling back to first available model: {model_id}")
+                            logger.info(f"Falling back to first available model: {model_id}")
+                    else:
+                        debug_log("available_models list is empty")
+                except Exception as e:
+                    debug_log(f"Error getting first available model: {str(e)}")
+                    logger.error(f"Error getting first available model: {str(e)}")
+        
+        # Last resort - hardcoded fallback to a common model
+        if not model_id:
+            debug_log("All attempts to get model_id failed, checking if we should use default")
+            # Only use default if we're in the available models tab, otherwise notify user
+            if self.current_tab == "available":
+                debug_log("Using 'llama3' as last-resort default")
+                model_id = "llama3"
+                self.notify("No model selected, using llama3 as default", severity="warning")
+            else:
+                debug_log("No model_id found and no default for local tab")
+                self.notify("No model selected", severity="warning")
+                return
+            
+        debug_log(f"Final model_id: {model_id}")
         logger.info(f"Setting model to: {model_id}")
         
         try:
             # Set the model in the app
             if hasattr(self.app, "selected_model"):
+                debug_log("Setting model in the app")
                 self.app.selected_model = model_id
+                debug_log("Updating app info")
                 self.app.update_app_info()  # Update app info to show new model
+                debug_log("Model set successfully")
                 self.notify(f"Model set to: {model_id}", severity="success")
+                debug_log("Closing model browser screen")
                 self.app.pop_screen()  # Close the model browser screen
             else:
+                debug_log("app does not have selected_model attribute")
                 self.notify("Cannot set model: app interface not available", severity="error")
         except Exception as e:
+            debug_log(f"Error setting model: {str(e)}")
             logger.error(f"Error setting model: {str(e)}")
             self.notify(f"Error setting model: {str(e)}", severity="error")
             
@@ -1096,138 +1164,329 @@ class ModelBrowser(Container):
     
     def _get_selected_model_id(self) -> str:
         """Get the ID of the currently selected model"""
+        # Import debug_log function from main
+        from app.main import debug_log
+        
+        debug_log(f"Entering _get_selected_model_id for tab {self.current_tab}")
+        
         try:
             if self.current_tab == "local":
+                debug_log("Processing local models tab")
                 table = self.query_one("#local-models-table", DataTable)
+                
+                # Log table state
+                debug_log(f"Table cursor_row: {table.cursor_row}, row_count: {table.row_count}")
+                
                 if table.cursor_row is not None and table.row_count > 0:
                     # Safety checks on cursor row
                     if table.cursor_row < 0 or table.cursor_row >= table.row_count:
+                        debug_log(f"Invalid cursor row {table.cursor_row} for table with {table.row_count} rows")
                         logger.error(f"Invalid cursor row {table.cursor_row} for table with {table.row_count} rows")
                         return ""
                         
                     try:
+                        debug_log(f"Getting row at cursor position {table.cursor_row}")
                         row = table.get_row_at(table.cursor_row)
-                        # Get model ID from local models list
-                        # More permissive checks to ensure model selection works
-                        if row and len(row) > 0:
-                            row_name = str(row[0]) if row[0] is not None else ""
-                            # Debug log to see what we're matching
-                            logger.info(f"Looking for model with name: {row_name}")
-                            
-                            for model in self.local_models:
-                                try:
-                                    if model.get("name") == row_name:
-                                        logger.info(f"Found matching model: {model.get('id')}")
-                                        return model.get("id")
-                                except Exception as model_err:
-                                    logger.error(f"Error processing model: {model_err}")
-                                    continue
+                        debug_log(f"Row data: {repr(row)}")
+                        
+                        # Use a more permissive approach that works with any indexable type
+                        if row and hasattr(row, '__getitem__') and len(row) > 0:
+                            try:
+                                row_value = row[0]
+                                row_name = str(row_value) if row_value is not None else ""
+                                debug_log(f"Row name extracted: '{row_name}'")
+                                
+                                # Check if local_models is valid
+                                if not self.local_models:
+                                    debug_log("local_models list is empty")
+                                    return ""
+                                    
+                                debug_log(f"Searching through {len(self.local_models)} local models")
+                                for i, model in enumerate(self.local_models):
+                                    try:
+                                        # Defensively check if model is a dict and has required keys
+                                        if not isinstance(model, dict):
+                                            debug_log(f"Model at index {i} is not a dict: {repr(model)}")
+                                            continue
+                                            
+                                        model_name = model.get("name")
+                                        model_id = model.get("id")
+                                        
+                                        if model_name is None:
+                                            debug_log(f"Model at index {i} has no name: {repr(model)}")
+                                            continue
+                                            
+                                        debug_log(f"Comparing '{model_name}' with '{row_name}'")
+                                        if model_name == row_name:
+                                            debug_log(f"Found matching model: {model_id}")
+                                            return model_id
+                                    except Exception as model_err:
+                                        debug_log(f"Error processing model at index {i}: {str(model_err)}")
+                                        logger.error(f"Error processing model: {model_err}")
+                                        continue
+                                        
+                                # If we got here, no match was found
+                                debug_log(f"No matching model found for '{row_name}'")
+                            except Exception as extract_err:
+                                debug_log(f"Error extracting row name: {str(extract_err)}")
+                        else:
+                            debug_log(f"Invalid row data: Row doesn't support indexing, is empty, or is None: {repr(row)}")
+                            return ""
+                                
                     except (IndexError, TypeError, AttributeError) as e:
+                        debug_log(f"Error processing row data in _get_selected_model_id: {str(e)}")
                         logger.error(f"Error processing row data in _get_selected_model_id: {str(e)}")
             else:
+                debug_log("Processing available models tab")
                 table = self.query_one("#available-models-table", DataTable)
+                
+                # Log table state
+                debug_log(f"Available table cursor_row: {table.cursor_row}, row_count: {table.row_count}")
+                
                 if table.cursor_row is not None and table.row_count > 0:
                     # Safety checks on cursor row
                     if table.cursor_row < 0 or table.cursor_row >= table.row_count:
+                        debug_log(f"Invalid cursor row {table.cursor_row} for table with {table.row_count} rows")
                         logger.error(f"Invalid cursor row {table.cursor_row} for table with {table.row_count} rows")
                         # Try to select first row instead of returning empty
                         table.cursor_row = 0
+                        debug_log("Reset cursor_row to 0")
                     
                     try:
+                        debug_log(f"Getting row at cursor position {table.cursor_row}")
                         row = table.get_row_at(table.cursor_row)
-                        # Return the model name as ID with simpler error checking
-                        if row and len(row) > 0:
-                            model_name = str(row[0]) if row[0] is not None else ""
-                            logger.info(f"Selected available model: {model_name}")
-                            return model_name
+                        debug_log(f"Row data: {repr(row)}")
+                        
+                        # Use a more permissive approach that works with any indexable type
+                        if row and hasattr(row, '__getitem__') and len(row) > 0:
+                            try:
+                                row_value = row[0]
+                                model_name = str(row_value) if row_value is not None else ""
+                                debug_log(f"Available model selected: '{model_name}'")
+                                logger.info(f"Selected available model: {model_name}")
+                                return model_name
+                            except Exception as extract_err:
+                                debug_log(f"Error extracting row name: {str(extract_err)}")
+                                return ""
+                        else:
+                            debug_log(f"Invalid row data: Row doesn't support indexing, is empty, or is None: {repr(row)}")
+                            return ""
+                                
                     except (IndexError, TypeError, AttributeError) as e:
+                        debug_log(f"Error getting row at cursor: {str(e)}")
                         logger.error(f"Error getting row at cursor: {str(e)}")
                 
                 # If we couldn't get a valid row, check if there are any rows and select the first one
+                debug_log("Trying fallback to first row")
                 if hasattr(table, 'row_count') and table.row_count > 0:
                     try:
                         # Select the first row and get its ID
+                        debug_log(f"Setting cursor_row to 0 and getting first row")
                         table.cursor_row = 0
                         row = table.get_row_at(0)
-                        if row and len(row) > 0:
-                            model_name = str(row[0]) if row[0] is not None else ""
-                            logger.info(f"Selected first available model: {model_name}")
-                            return model_name
+                        debug_log(f"First row data: {repr(row)}")
+                        
+                        # Use a more permissive approach that works with any indexable type
+                        if row and hasattr(row, '__getitem__') and len(row) > 0:
+                            try:
+                                row_value = row[0]
+                                model_name = str(row_value) if row_value is not None else ""
+                                debug_log(f"First available model selected: '{model_name}'")
+                                logger.info(f"Selected first available model: {model_name}")
+                                return model_name
+                            except Exception as extract_err:
+                                debug_log(f"Error extracting first row name: {str(extract_err)}")
+                                return ""
+                        else:
+                            debug_log(f"Invalid first row data: Row doesn't support indexing, is empty, or is None: {repr(row)}")
+                            return ""
+                                
                     except (IndexError, TypeError, AttributeError) as e:
+                        debug_log(f"Error selecting first row: {str(e)}")
                         logger.error(f"Error selecting first row: {str(e)}")
+                else:
+                    debug_log("Table has no rows or row_count attribute missing")
         except Exception as e:
+            debug_log(f"Unexpected error in _get_selected_model_id: {str(e)}")
             logger.error(f"Error in _get_selected_model_id: {str(e)}")
         
+        debug_log("No model ID found, returning empty string")
         return ""
     
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection in data tables"""
+        # Import debug_log function from main
+        from app.main import debug_log
+        
+        debug_log(f"Entering on_data_table_row_selected")
+        
         # Set selected model ID based on the selected row
         try:
-            if not hasattr(event, 'data_table') or not event.data_table or not hasattr(event, 'cursor_row'):
+            # Check if event has valid structure
+            if not hasattr(event, 'data_table') or not event.data_table:
+                debug_log("Event has no data_table attribute or it is None")
                 logger.error("Invalid event in on_data_table_row_selected")
                 return
                 
-            if not hasattr(event.data_table, 'id') or not event.data_table.id:
-                logger.error("Data table has no ID in on_data_table_row_selected")
+            if not hasattr(event, 'cursor_row'):
+                debug_log("Event has no cursor_row attribute")
+                logger.error("Event has no cursor_row attribute")
                 return
                 
+            debug_log(f"Event cursor_row: {event.cursor_row}")
+                
+            if not hasattr(event.data_table, 'id') or not event.data_table.id:
+                debug_log("Data table has no ID attribute or it is empty")
+                logger.error("Data table has no ID in on_data_table_row_selected")
+                return
+            
+            debug_log(f"Data table ID: {event.data_table.id}")
+                
             if event.data_table.id == "local-models-table":
+                debug_log("Processing local models table")
                 try:
                     # Carefully get the row data
                     if event.cursor_row is None or event.cursor_row < 0:
+                        debug_log(f"Invalid cursor row: {event.cursor_row}")
                         logger.error(f"Invalid cursor row: {event.cursor_row}")
                         return
                         
                     # Check row count to avoid index errors
+                    if not hasattr(event.data_table, 'row_count'):
+                        debug_log("Data table has no row_count attribute")
+                        return
+                        
+                    debug_log(f"Table row_count: {event.data_table.row_count}")
+                        
                     if event.data_table.row_count <= event.cursor_row:
+                        debug_log(f"Cursor row {event.cursor_row} exceeds row count {event.data_table.row_count}")
                         logger.error(f"Cursor row {event.cursor_row} exceeds row count {event.data_table.row_count}")
                         return
                         
+                    debug_log(f"Getting row at cursor position {event.cursor_row}")
                     row = event.data_table.get_row_at(event.cursor_row)
+                    debug_log(f"Row data: {repr(row)}")
                     
                     # Find the model ID from the display name with more permissive checks
-                    if row and len(row) > 0:
-                        row_name = str(row[0]) if row[0] is not None else ""
-                        logger.info(f"DataTable row selected with name: {row_name}")
-                        for model in self.local_models:
+                    try:
+                        # Check if row is valid and can be indexed
+                        if row is None:
+                            debug_log("Row is None")
+                            return
+                            
+                        if not hasattr(row, '__getitem__') or not hasattr(row, '__len__'):
+                            debug_log(f"Row doesn't support indexing or length: {type(row)}")
+                            return
+                            
+                        if len(row) <= 0:
+                            debug_log("Row has no items")
+                            return
+                            
+                        # Extract the first item (model name)
+                        try:
+                            row_value = row[0]
+                            row_name = str(row_value) if row_value is not None else ""
+                            debug_log(f"DataTable row selected with name: '{row_name}'")
+                            logger.info(f"DataTable row selected with name: {row_name}")
+                        except Exception as idx_err:
+                            debug_log(f"Error accessing row[0]: {str(idx_err)}")
+                            return
+                        
+                        # Check if local_models is a valid list
+                        if not self.local_models:
+                            debug_log("local_models list is empty or None")
+                            return
+                            
+                        debug_log(f"Searching through {len(self.local_models)} local models")
+                        for i, model in enumerate(self.local_models):
                             try:
-                                if model.get("name") == row_name:
+                                # Use .get() for safer dictionary access
+                                model_name = model.get("name", None)
+                                if model_name is None:
+                                    debug_log(f"Model at index {i} has no name")
+                                    continue
+                                    
+                                debug_log(f"Comparing '{model_name}' with '{row_name}'")
+                                if model_name == row_name:
                                     model_id = model.get("id", "")
+                                    debug_log(f"Found match. Setting selected_model_id to: '{model_id}'")
                                     logger.info(f"Setting selected_model_id to: {model_id}")
                                     self.selected_model_id = model_id
                                     break
                             except Exception as model_err:
+                                debug_log(f"Error processing model at index {i}: {str(model_err)}")
                                 logger.error(f"Error matching local model: {str(model_err)}")
                                 continue
+                    except (IndexError, TypeError) as idx_err:
+                        debug_log(f"Error accessing row data: {str(idx_err)}")
+                        logger.error(f"Error accessing row data: {str(idx_err)}")
                 except (IndexError, TypeError, AttributeError) as e:
+                    debug_log(f"Error processing local table row data: {str(e)}")
                     logger.error(f"Error processing local table row data: {str(e)}")
             elif event.data_table.id == "available-models-table":
+                debug_log("Processing available models table")
                 try:
                     # Similar safety checks for available models
                     if event.cursor_row is None or event.cursor_row < 0:
+                        debug_log(f"Invalid cursor row: {event.cursor_row}")
                         logger.error(f"Invalid cursor row: {event.cursor_row}")
                         return
                         
                     # Check row count to avoid index errors
+                    if not hasattr(event.data_table, 'row_count'):
+                        debug_log("Data table has no row_count attribute")
+                        return
+                        
+                    debug_log(f"Available table row_count: {event.data_table.row_count}")
+                        
                     if event.data_table.row_count <= event.cursor_row:
+                        debug_log(f"Cursor row {event.cursor_row} exceeds row count {event.data_table.row_count}")
                         logger.error(f"Cursor row {event.cursor_row} exceeds row count {event.data_table.row_count}")
                         return
                         
+                    debug_log(f"Getting row at cursor position {event.cursor_row}")
                     row = event.data_table.get_row_at(event.cursor_row)
+                    debug_log(f"Row data: {repr(row)}")
                     
                     # Model name is used as ID, with more permissive checks
-                    if row and len(row) > 0:
-                        model_name = str(row[0]) if row[0] is not None else ""
-                        logger.info(f"Available model selected: {model_name}")
-                        self.selected_model_id = model_name
-                    else:
+                    try:
+                        # Check if row is valid and can be indexed
+                        if row is None:
+                            debug_log("Row is None")
+                            return
+                            
+                        if not hasattr(row, '__getitem__') or not hasattr(row, '__len__'):
+                            debug_log(f"Row doesn't support indexing or length: {type(row)}")
+                            return
+                            
+                        if len(row) <= 0:
+                            debug_log("Row has no items")
+                            return
+                            
+                        # Extract the first item (model name)
+                        try:
+                            row_value = row[0]
+                            model_name = str(row_value) if row_value is not None else ""
+                            debug_log(f"Available model selected: '{model_name}'")
+                            logger.info(f"Selected available model: {model_name}")
+                            self.selected_model_id = model_name
+                        except Exception as access_err:
+                            debug_log(f"Error accessing row[0]: {str(access_err)}")
+                            logger.error(f"Error accessing row[0]: {str(access_err)}")
+                            self.selected_model_id = ""
+                    except (IndexError, TypeError) as idx_err:
+                        debug_log(f"Error accessing available table row data: {str(idx_err)}")
+                        logger.error(f"Error accessing available table row data: {str(idx_err)}")
                         self.selected_model_id = ""
                 except (IndexError, TypeError, AttributeError) as e:
+                    debug_log(f"Error getting model ID from available table row: {str(e)}")
                     logger.error(f"Error getting model ID from available table row: {str(e)}")
                     self.selected_model_id = ""
+            else:
+                debug_log(f"Unknown table ID: {event.data_table.id}")
         except Exception as e:
             # Catch-all for any other errors
+            debug_log(f"Unexpected error in on_data_table_row_selected: {str(e)}")
             logger.error(f"Unexpected error in on_data_table_row_selected: {str(e)}")
             self.selected_model_id = ""
     
