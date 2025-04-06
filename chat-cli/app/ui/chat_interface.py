@@ -204,6 +204,11 @@ class ChatInterface(Container):
         display: none;
         padding: 0 1;
     }
+    
+    #loading-indicator.model-loading {
+        background: $warning;
+        color: $text;
+    }
     """
     
     class MessageSent(Message):
@@ -238,7 +243,7 @@ class ChatInterface(Container):
                 yield MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
         with Container(id="input-area"):
             yield Container(
-                Label("Generating response...", id="loading-text"),
+                Label("▪▪▪ Generating response...", id="loading-text", markup=True),
                 id="loading-indicator"
             )
             with Container(id="controls"):
@@ -328,16 +333,30 @@ class ChatInterface(Container):
         if input_widget.has_focus:
             input_widget.focus()
         
-    def start_loading(self) -> None:
-        """Show loading indicator"""
+    def start_loading(self, model_loading: bool = False) -> None:
+        """Show loading indicator
+        
+        Args:
+            model_loading: If True, indicates Ollama is loading a model
+        """
         self.is_loading = True
         loading = self.query_one("#loading-indicator")
+        loading_text = self.query_one("#loading-text")
+        
+        if model_loading:
+            loading.add_class("model-loading")
+            loading_text.update("⚙️ Loading Ollama model...")
+        else:
+            loading.remove_class("model-loading")
+            loading_text.update("▪▪▪ Generating response...")
+            
         loading.display = True
         
     def stop_loading(self) -> None:
         """Hide loading indicator"""
         self.is_loading = False
         loading = self.query_one("#loading-indicator")
+        loading.remove_class("model-loading")
         loading.display = False
         
     def clear_messages(self) -> None:
