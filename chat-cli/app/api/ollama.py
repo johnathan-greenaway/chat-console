@@ -267,14 +267,27 @@ class OllamaClient(BaseModelClient):
                     try:
                         logger.info("Testing model availability...")
                         debug_log("Testing model availability...")
+                        # Build test payload with careful error handling
+                        try:
+                            test_payload = {
+                                "model": str(model) if model is not None else "gemma:2b",
+                                "prompt": "test",
+                                "temperature": float(temperature) if temperature is not None else 0.7,
+                                "stream": False
+                            }
+                            debug_log(f"Prepared test payload: {test_payload}")
+                        except Exception as payload_error:
+                            debug_log(f"Error preparing test payload: {str(payload_error)}, using defaults")
+                            test_payload = {
+                                "model": "gemma:2b",  # Safe default
+                                "prompt": "test",
+                                "temperature": 0.7,
+                                "stream": False
+                            }
+                            
                         async with session.post(
                             f"{self.base_url}/api/generate",
-                            json={
-                                "model": model,
-                                "prompt": "test",
-                                "temperature": temperature,
-                                "stream": False
-                            },
+                            json=test_payload,
                             timeout=2
                         ) as response:
                             if response.status != 200:
@@ -290,9 +303,17 @@ class OllamaClient(BaseModelClient):
                         debug_log("Setting model_loading state to True")
                         
                         # Model might need loading, try pulling it
+                        # Prepare pull payload safely
+                        try:
+                            pull_payload = {"name": str(model) if model is not None else "gemma:2b"}
+                            debug_log(f"Prepared pull payload: {pull_payload}")
+                        except Exception as pull_err:
+                            debug_log(f"Error preparing pull payload: {str(pull_err)}, using default")
+                            pull_payload = {"name": "gemma:2b"}  # Safe default
+                            
                         async with session.post(
                             f"{self.base_url}/api/pull",
-                            json={"name": model},
+                            json=pull_payload,
                             timeout=60
                         ) as pull_response:
                             if pull_response.status != 200:
@@ -310,22 +331,38 @@ class OllamaClient(BaseModelClient):
                 
                 try:
                     logger.debug(f"Sending streaming request to {self.base_url}/api/generate")
-                    debug_log(f"Sending streaming request to {self.base_url}/api/generate")
+                    debug_log(f"Sending streaming request to {self.base_url}/api/generate with model: {model}")
+                    debug_log(f"Request payload: model={model}, prompt_length={len(prompt) if prompt else 0}, temperature={temperature}")
                     
+                    # Build request payload with careful error handling
+                    try:
+                        request_payload = {
+                            "model": str(model) if model is not None else "gemma:2b",  # Default if model is None
+                            "prompt": str(prompt) if prompt is not None else "Please respond to the user's query.",
+                            "temperature": float(temperature) if temperature is not None else 0.7,
+                            "stream": True
+                        }
+                        debug_log(f"Prepared request payload successfully")
+                    except Exception as payload_error:
+                        debug_log(f"Error preparing payload: {str(payload_error)}, using defaults")
+                        request_payload = {
+                            "model": "gemma:2b",  # Safe default
+                            "prompt": "Please respond to the user's query.",
+                            "temperature": 0.7,
+                            "stream": True
+                        }
+                    
+                    debug_log(f"Sending request to Ollama API")
                     response = await session.post(
                         f"{self.base_url}/api/generate",
-                        json={
-                            "model": model,
-                            "prompt": prompt,
-                            "temperature": temperature,
-                            "stream": True
-                        },
+                        json=request_payload,
                         timeout=60  # Longer timeout for actual generation
                     )
                     response.raise_for_status()
                     debug_log(f"Response status: {response.status}")
                     
                     # Use a simpler async iteration pattern that's less error-prone
+                    debug_log("Starting to process response stream")
                     async for line in response.content:
                         # Check cancellation periodically
                         if self._active_stream_session is None:
@@ -338,9 +375,12 @@ class OllamaClient(BaseModelClient):
                                 chunk = line.decode().strip()
                                 try:
                                     data = json.loads(chunk)
-                                    if "response" in data:
-                                        debug_log(f"Yielding chunk of length: {len(data['response'])}")
+                                    if isinstance(data, dict) and "response" in data:
+                                        chunk_length = len(data["response"]) if data["response"] else 0
+                                        debug_log(f"Yielding chunk of length: {chunk_length}")
                                         yield data["response"]
+                                    else:
+                                        debug_log(f"Response key not in chunk data: {list(data.keys()) if isinstance(data, dict) else type(data)}")
                                 except json.JSONDecodeError:
                                     debug_log("JSON decode error in chunk")
                                     continue
