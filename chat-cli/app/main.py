@@ -211,10 +211,16 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         color: $text;
         content-align: center middle;
         text-align: center;
+        text-style: bold;
     }
 
     #loading-indicator.hidden { # Keep SimpleChatApp CSS
         display: none;
+    }
+    
+    #loading-indicator.model-loading {
+        background: $warning;
+        color: $text;
     }
 
     #input-area { # Keep SimpleChatApp CSS
@@ -313,6 +319,8 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
     is_generating = reactive(False) # Keep SimpleChatApp reactive var
     current_generation_task: Optional[asyncio.Task] = None # Add task reference
+    _loading_frame = 0 # Track animation frame
+    _loading_animation_task: Optional[asyncio.Task] = None # Animation task
 
     def __init__(self, initial_text: Optional[str] = None): # Keep SimpleChatApp __init__
         super().__init__() # Keep SimpleChatApp __init__
@@ -347,7 +355,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 pass
 
             # Loading indicator
-            yield Static("Generating response...", id="loading-indicator", classes="hidden")
+            yield Static("▪▪▪ Generating response...", id="loading-indicator", classes="hidden", markup=False)
 
             # Input area
             with Container(id="input-area"):
@@ -511,6 +519,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # This happens if is_generating is True, but no active task found to cancel
                 log("No active generation task found, but is_generating=True. Resetting state.")
                 self.is_generating = False
+                
+                # Make sure to cancel animation task too
+                if self._loading_animation_task and not self._loading_animation_task.done():
+                    try:
+                        self._loading_animation_task.cancel()
+                    except Exception as e:
+                        log.error(f"Error cancelling animation task: {str(e)}")
+                self._loading_animation_task = None
+                
                 loading = self.query_one("#loading-indicator")
                 loading.add_class("hidden")
         else:
@@ -644,6 +661,24 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         log("Setting is_generating to True")
         loading = self.query_one("#loading-indicator")
         loading.remove_class("hidden")
+        
+        # For Ollama models, show the loading indicator immediately
+        from app.api.ollama import OllamaClient
+        client_type = BaseModelClient.get_client_type_for_model(self.selected_model)
+        if self.selected_model and client_type == OllamaClient:
+            log("Ollama model detected, showing immediate loading indicator")
+            loading.add_class("model-loading")
+            # Update the loading indicator text directly
+            loading.update("⚙️ Preparing Ollama model...")
+        else:
+            loading.remove_class("model-loading")
+            # Start with a simple animation pattern that won't cause markup issues
+            self._loading_frame = 0
+            # Stop any existing animation task
+            if self._loading_animation_task and not self._loading_animation_task.done():
+                self._loading_animation_task.cancel()
+            # Start the animation
+            self._loading_animation_task = asyncio.create_task(self._animate_loading_task(loading))
 
         try:
             # Get conversation parameters
@@ -756,6 +791,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     log("Generation worker completed, resetting state")
                     self.is_generating = False
                     self.current_generation_task = None
+                    
+                    # Stop the animation task
+                    if self._loading_animation_task and not self._loading_animation_task.done():
+                        self._loading_animation_task.cancel()
+                    self._loading_animation_task = None
+                    
                     loading = self.query_one("#loading-indicator")
                     loading.add_class("hidden")
                     self.refresh(layout=True)
@@ -879,6 +920,53 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         """Open the Ollama model browser screen."""
         # Always trigger regardless of focus
         self.push_screen(ModelBrowserScreen())
+        
+    async def _animate_loading_task(self, loading_widget: Static) -> None:
+        """Animate the loading indicator with a simple text animation"""
+        try:
+            # Animation frames (simple text animation)
+            frames = [
+                "▪▫▫ Generating response...",
+                "▪▪▫ Generating response...",
+                "▪▪▪ Generating response...",
+                "▫▪▪ Generating response...",
+                "▫▫▪ Generating response...",
+                "▫▫▫ Generating response..."
+            ]
+            
+            while self.is_generating:
+                try:
+                    # Update the loading text with safety checks
+                    if frames and len(frames) > 0:
+                        frame_idx = self._loading_frame % len(frames)
+                        loading_widget.update(frames[frame_idx])
+                    else:
+                        # Fallback if frames is empty
+                        loading_widget.update("▪▪▪ Generating response...")
+                    
+                    self._loading_frame += 1
+                    # Small delay between frames
+                    await asyncio.sleep(0.3)
+                except Exception as e:
+                    # If any error occurs, use a simple fallback and continue
+                    log.error(f"Animation frame error: {str(e)}")
+                    try:
+                        loading_widget.update("▪▪▪ Generating response...")
+                    except:
+                        pass
+                    await asyncio.sleep(0.3)
+                
+        except asyncio.CancelledError:
+            # Normal cancellation
+            pass
+        except Exception as e:
+            # Log any errors but don't crash
+            log.error(f"Error in loading animation: {str(e)}")
+            # Reset to basic text
+            try:
+                loading_widget.update("▪▪▪ Generating response...")
+            except:
+                pass
 
     def action_settings(self) -> None: # Modify SimpleChatApp action_settings
         """Action to open/close settings panel via key binding."""
@@ -907,6 +995,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         if not self.current_conversation:
             self.notify("No active conversation", severity="warning")
             return
+            
+        # Create and mount the title input modal
+        modal = TitleInputModal(self.current_conversation.title)
+        await self.mount(modal)
 
         # --- Define the Modal Class ---
         class ConfirmDialog(Static):
@@ -982,10 +1074,6 @@ class TitleInputModal(Static):
     async def on_mount(self) -> None:
         """Focus the input when the modal appears."""
         self.query_one("#title-input", Input).focus()
-
-        # --- Show the modal ---
-        modal = TitleInputModal(self.current_conversation.title)
-        await self.mount(modal) # Use await for mounting
 
     async def run_modal(self, modal_type: str, *args, **kwargs) -> bool:
         """Run a modal dialog and return the result."""

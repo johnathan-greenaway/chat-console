@@ -220,12 +220,44 @@ class ModelSelector(Container):
             model_options = await self._get_model_options(self.selected_provider)
             model_select.set_options(model_options)
             # Select first model of new provider
-            if model_options:
-                self.selected_model = model_options[0][1]
-                model_select.value = self.selected_model
-                model_select.remove_class("hide")
-                self.query_one("#custom-model-input").add_class("hide")
-                self.post_message(self.ModelSelected(self.selected_model))
+            if model_options and len(model_options) > 0:
+                # Check if model_options is properly structured as a list of tuples
+                try:
+                    # Get the first non-custom model if available
+                    first_model = None
+                    for model_option in model_options:
+                        if isinstance(model_option, tuple) and len(model_option) >= 2 and model_option[1] != "custom":
+                            first_model = model_option
+                            break
+                    
+                    # If no non-custom models, use the first model
+                    if not first_model and isinstance(model_options[0], tuple) and len(model_options[0]) >= 2:
+                        first_model = model_options[0]
+                        
+                    # Set the model if we found one
+                    if first_model and len(first_model) >= 2:
+                        self.selected_model = first_model[1]
+                        model_select.value = self.selected_model
+                        model_select.remove_class("hide")
+                        self.query_one("#custom-model-input").add_class("hide")
+                        self.post_message(self.ModelSelected(self.selected_model))
+                    else:
+                        # Fall back to custom if no valid model found
+                        self.selected_model = "custom"
+                        model_select.value = "custom"
+                        model_select.add_class("hide")
+                        custom_input = self.query_one("#custom-model-input")
+                        custom_input.remove_class("hide")
+                        custom_input.focus()
+                except (IndexError, TypeError) as e:
+                    logger.error(f"Error selecting first model: {e}")
+                    # Fall back to custom
+                    self.selected_model = "custom"
+                    model_select.value = "custom"
+                    model_select.add_class("hide")
+                    custom_input = self.query_one("#custom-model-input")
+                    custom_input.remove_class("hide")
+                    custom_input.focus()
                 
         elif event.select.id == "model-select":
             if event.value == "custom":

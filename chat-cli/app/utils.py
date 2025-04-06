@@ -53,9 +53,17 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
                  # For now, let's assume a hypothetical non-streaming call or adapt stream
                  # Simplified adaptation: collect stream chunks
                  title_chunks = []
-                 async for chunk in client.generate_stream(title_prompt, model, style=""): # Assuming style might not apply or needs default
-                     title_chunks.append(chunk)
-                 title = "".join(title_chunks)
+                 try:
+                     async for chunk in client.generate_stream(title_prompt, model, style=""): # Assuming style might not apply or needs default
+                         if chunk is not None:  # Ensure we only process non-None chunks
+                             title_chunks.append(chunk)
+                     title = "".join(title_chunks)
+                     # If we didn't get any content, use a default
+                     if not title.strip():
+                         title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                 except Exception as stream_error:
+                     logger.error(f"Error during title stream processing: {str(stream_error)}")
+                     title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
             else:
                  raise NotImplementedError("Client does not support a suitable method for title generation.")
 
@@ -88,37 +96,33 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
     update_interval = 0.1  # Update UI every 100ms
     
     try:
-        # Update UI with model loading state if it's an Ollama client
-        if hasattr(client, 'is_loading_model'):
-            # Send signal to update UI for model loading if needed
-            try:
-                # The client might be in model loading state even before generating
-                model_loading = client.is_loading_model()
-                logger.info(f"Initial model loading state: {model_loading}")
-                
-                # Get the chat interface and update loading indicator
-                if hasattr(app, 'query_one'):
-                    loading = app.query_one("#loading-indicator")
-                    if model_loading:
-                        loading.add_class("model-loading")
-                        app.query_one("#loading-text").update("Loading Ollama model...")
-                    else:
-                        loading.remove_class("model-loading")
-            except Exception as e:
-                logger.error(f"Error setting initial loading state: {str(e)}")
+        # Set initial model loading state if using Ollama
+        # Always show the model loading indicator for Ollama until we confirm otherwise
+        is_ollama = 'ollama' in str(type(client)).lower()
         
+        if is_ollama and hasattr(app, 'query_one'):
+            try:
+                # Show model loading indicator by default for Ollama
+                logger.info("Showing initial model loading indicator for Ollama")
+                loading = app.query_one("#loading-indicator")
+                loading.add_class("model-loading")
+                loading.update("⚙️ Loading Ollama model...")
+            except Exception as e:
+                logger.error(f"Error setting initial Ollama loading state: {str(e)}")
+        
+        # Now proceed with streaming
+        logger.info(f"Starting stream generation for model: {model}")
         stream_generator = client.generate_stream(messages, model, style)
         
-        # Check if we just entered model loading state
-        if hasattr(client, 'is_loading_model') and client.is_loading_model():
-            logger.info("Model loading started during generation")
+        # After getting the generator, check if we're NOT in model loading state
+        if hasattr(client, 'is_loading_model') and not client.is_loading_model() and hasattr(app, 'query_one'):
             try:
-                if hasattr(app, 'query_one'):
-                    loading = app.query_one("#loading-indicator")
-                    loading.add_class("model-loading")
-                    app.query_one("#loading-text").update("Loading Ollama model...")
+                logger.info("Model is ready for generation, updating UI")
+                loading = app.query_one("#loading-indicator")
+                loading.remove_class("model-loading")
+                loading.update("[▪▪▪ Generating response...]")
             except Exception as e:
-                logger.error(f"Error updating UI for model loading: {str(e)}")
+                logger.error(f"Error updating UI after stream init: {str(e)}")
         
         # Use asyncio.shield to ensure we can properly interrupt the stream processing
         async for chunk in stream_generator:
@@ -130,26 +134,32 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
                     await client.cancel_stream()
                 raise asyncio.CancelledError()
                 
-            # Check if model loading state changed
+            # Check if model loading state changed, but more safely
             if hasattr(client, 'is_loading_model'):
-                model_loading = client.is_loading_model()
                 try:
+                    # Get the model loading state
+                    model_loading = client.is_loading_model()
+                    
+                    # Safely update the UI elements if they exist
                     if hasattr(app, 'query_one'):
-                        loading = app.query_one("#loading-indicator")
-                        loading_text = app.query_one("#loading-text")
-                        
-                        if model_loading and not loading.has_class("model-loading"):
-                            # Model loading started
-                            logger.info("Model loading started during streaming")
-                            loading.add_class("model-loading")
-                            loading_text.update("⚙️ Loading Ollama model...")
-                        elif not model_loading and loading.has_class("model-loading"):
-                            # Model loading finished
-                            logger.info("Model loading finished during streaming")
-                            loading.remove_class("model-loading")
-                            loading_text.update("▪▪▪ Generating response...")
+                        try:
+                            loading = app.query_one("#loading-indicator")
+                            
+                            # Check for class existence first
+                            if model_loading and hasattr(loading, 'has_class') and not loading.has_class("model-loading"):
+                                # Model loading started
+                                logger.info("Model loading started during streaming")
+                                loading.add_class("model-loading")
+                                loading.update("⚙️ Loading Ollama model...")
+                            elif not model_loading and hasattr(loading, 'has_class') and loading.has_class("model-loading"):
+                                # Model loading finished
+                                logger.info("Model loading finished during streaming")
+                                loading.remove_class("model-loading")
+                                loading.update("▪▪▪ Generating response...")
+                        except Exception as ui_e:
+                            logger.error(f"Error updating UI elements: {str(ui_e)}")
                 except Exception as e:
-                    logger.error(f"Error updating loading state during streaming: {str(e)}")
+                    logger.error(f"Error checking model loading state: {str(e)}")
                 
             if chunk:  # Only process non-empty chunks
                 buffer.append(chunk)

@@ -243,7 +243,7 @@ class ChatInterface(Container):
                 yield MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
         with Container(id="input-area"):
             yield Container(
-                Label("▪▪▪ Generating response...", id="loading-text", markup=True),
+                Label("▪▪▪ Generating response...", id="loading-text", markup=False),
                 id="loading-indicator"
             )
             with Container(id="controls"):

@@ -28,6 +28,49 @@ class BaseModelClient(ABC):
         pass
     
     @staticmethod
+    def get_client_type_for_model(model_name: str) -> type:
+        """Get the client class for a model without instantiating it"""
+        from ..config import CONFIG, AVAILABLE_PROVIDERS
+        from .anthropic import AnthropicClient
+        from .openai import OpenAIClient
+        from .ollama import OllamaClient
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Get model info and provider
+        model_info = CONFIG["available_models"].get(model_name)
+        model_name_lower = model_name.lower()
+        
+        # If model is in config, use its provider
+        if model_info:
+            provider = model_info["provider"]
+        # For custom models, try to infer provider
+        else:
+            # First try Ollama for known model names or if selected from Ollama UI
+            if (any(name in model_name_lower for name in ["llama", "mistral", "codellama", "gemma"]) or
+                model_name in [m["id"] for m in CONFIG.get("ollama_models", [])]):
+                provider = "ollama"
+            # Then try other providers
+            elif any(name in model_name_lower for name in ["gpt", "text-", "davinci"]):
+                provider = "openai"
+            elif any(name in model_name_lower for name in ["claude", "anthropic"]):
+                provider = "anthropic"
+            else:
+                # Default to Ollama for unknown models
+                provider = "ollama"
+        
+        # Return appropriate client class
+        if provider == "ollama":
+            return OllamaClient
+        elif provider == "openai":
+            return OpenAIClient
+        elif provider == "anthropic":
+            return AnthropicClient
+        else:
+            return None
+            
+    @staticmethod
     def get_client_for_model(model_name: str) -> 'BaseModelClient':
         """Factory method to get appropriate client for model"""
         from ..config import CONFIG, AVAILABLE_PROVIDERS
