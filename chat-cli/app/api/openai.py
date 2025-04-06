@@ -55,21 +55,63 @@ class OpenAIClient(BaseModelClient):
                             temperature: float = 0.7, 
                             max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming text completion using OpenAI"""
+        try:
+            from app.main import debug_log  # Import debug logging if available
+            debug_log(f"OpenAI: starting streaming generation with model: {model}")
+        except ImportError:
+            # If debug_log not available, create a no-op function
+            debug_log = lambda msg: None
+            
         processed_messages = self._prepare_messages(messages, style)
         
         try:
+            debug_log(f"OpenAI: preparing {len(processed_messages)} messages for stream")
+            
+            # Safely prepare messages
+            try:
+                api_messages = []
+                for m in processed_messages:
+                    if isinstance(m, dict) and "role" in m and "content" in m:
+                        api_messages.append({"role": m["role"], "content": m["content"]})
+                    else:
+                        debug_log(f"OpenAI: skipping invalid message: {m}")
+                
+                debug_log(f"OpenAI: prepared {len(api_messages)} valid messages")
+            except Exception as msg_error:
+                debug_log(f"OpenAI: error preparing messages: {str(msg_error)}")
+                # Fallback to a simpler message format if processing fails
+                api_messages = [{"role": "user", "content": "Please respond to my request."}]
+            
+            debug_log("OpenAI: requesting stream")
             stream = await self.client.chat.completions.create(
                 model=model,
-                messages=[{"role": m["role"], "content": m["content"]} for m in processed_messages],
+                messages=api_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
             )
             
+            debug_log("OpenAI: stream created successfully, processing chunks")
             async for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
+                try:
+                    if chunk.choices and hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
+                        content = chunk.choices[0].delta.content
+                        if content is not None:
+                            # Ensure we're returning a string
+                            text = str(content)
+                            debug_log(f"OpenAI: yielding chunk of length: {len(text)}")
+                            yield text
+                        else:
+                            debug_log("OpenAI: skipping None content chunk")
+                    else:
+                        debug_log("OpenAI: skipping chunk with missing content")
+                except Exception as chunk_error:
+                    debug_log(f"OpenAI: error processing chunk: {str(chunk_error)}")
+                    # Skip problematic chunks but continue processing
+                    continue
+                    
         except Exception as e:
+            debug_log(f"OpenAI: error in generate_stream: {str(e)}")
             raise Exception(f"OpenAI streaming error: {str(e)}")
     
     def get_available_models(self) -> List[Dict[str, Any]]:

@@ -33,6 +33,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Input, Label, Static, Header, Footer, ListView, ListItem
 from textual.binding import Binding
 from textual import work, log, on
+from textual.worker import Worker, WorkerState # Import Worker class and WorkerState enum
 from textual.screen import Screen
 from openai import OpenAI
 from app.models import Message, Conversation
@@ -898,6 +899,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             update_lock = asyncio.Lock()
 
             async def update_ui(content: str):
+                # This function remains the same, called by the worker
                 if not self.is_generating:
                     debug_log("update_ui called but is_generating is False, returning.")
                     return
@@ -923,103 +925,151 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         debug_log(f"Error updating UI: {str(e)}")
                         log.error(f"Error updating UI: {str(e)}")
 
-            # Define worker for background processing
-            @work(exit_on_error=True)
-            async def run_generation_worker():
-                try:
-                    debug_log(f"Starting generation worker with model: {model}")
-                    # Add detailed debug logging before calling generate_streaming_response
-                    debug_log(f"About to call generate_streaming_response with messages: {len(api_messages)}, model: {model}, style: {style}")
-                    try:
-                        debug_log(f"Messages details: {[{'role': m['role'], 'content_len': len(m['content'])} for m in api_messages]}")
-                    except Exception as e:
-                        debug_log(f"Error logging message details: {e}")
-                    
-                    # Then add more specific debugging around the generate_streaming_response call:
-                    try:
-                        full_response = await generate_streaming_response(
-                            self,
-                            api_messages,
-                            model,
-                            style,
-                            client,
-                            update_ui
-                        )
-                        debug_log("generate_streaming_response returned successfully")
-                    except Exception as e:
-                        debug_log(f"Error in generate_streaming_response: {str(e)}")
-                        raise
-                    
-                    debug_log("Generation complete, full_response length: " + 
-                             str(len(full_response) if full_response else 0))
-                    
-                    # Save complete response to database
-                    if self.is_generating and full_response:
-                        debug_log("Generation completed normally, saving to database")
-                        log("Generation completed normally, saving to database")
-                        self.db.add_message(
-                            self.current_conversation.id,
-                            "assistant",
-                            full_response
-                        )
-                    
-                    # Final UI refresh
-                    self.refresh(layout=True)
-                    
-                except asyncio.CancelledError:
-                    debug_log("Generation worker was cancelled")
-                    log.warning("Generation worker was cancelled")
-                    # Remove the incomplete message
-                    if self.messages and self.messages[-1].role == "assistant":
-                        debug_log("Removing incomplete assistant message")
-                        self.messages.pop()
-                    await self.update_messages_ui()
-                    self.notify("Generation stopped by user", severity="warning", timeout=2)
-                    
-                except Exception as e:
-                    debug_log(f"Error in generation worker: {str(e)}")
-                    log.error(f"Error in generation worker: {str(e)}")
-                    self.notify(f"Generation error: {str(e)}", severity="error", timeout=5)
-                    # Add error message to UI
-                    if self.messages and self.messages[-1].role == "assistant":
-                        debug_log("Removing thinking message")
-                        self.messages.pop()  # Remove thinking message
-                    error_msg = f"Error: {str(e)}"
-                    debug_log(f"Adding error message: {error_msg}")
-                    self.messages.append(Message(role="assistant", content=error_msg))
-                    await self.update_messages_ui()
-                    
-                finally:
-                    # Always clean up state and UI
-                    debug_log("Generation worker completed, resetting state")
-                    log("Generation worker completed, resetting state")
-                    self.is_generating = False
-                    self.current_generation_task = None
-                    
-                    # Stop the animation task
-                    if self._loading_animation_task and not self._loading_animation_task.done():
-                        debug_log("Cancelling loading animation task")
-                        self._loading_animation_task.cancel()
-                    self._loading_animation_task = None
-                    
-                    loading = self.query_one("#loading-indicator")
-                    loading.add_class("hidden")
-                    self.refresh(layout=True)
-                    self.query_one("#message-input").focus()
-                    
-            # Start the worker and keep a reference to it
-            debug_log("Starting generation worker")
-            worker = run_generation_worker()
+            # --- Remove the inner run_generation_worker function ---
+
+            # Start the worker directly using the imported function
+            debug_log("Starting generate_streaming_response worker")
+            # Call the @work decorated function directly
+            worker = generate_streaming_response(
+                self,
+                api_messages,
+                model,
+                style,
+                client,
+                update_ui # Pass the callback function
+            )
             self.current_generation_task = worker
-            
+            # Worker completion will be handled by on_worker_state_changed
+
         except Exception as e:
-            debug_log(f"Error setting up generation: {str(e)}")
-            log.error(f"Error setting up generation: {str(e)}")
+            # This catches errors during the *setup* before the worker starts
+            debug_log(f"Error setting up generation worker: {str(e)}")
+            log.error(f"Error setting up generation worker: {str(e)}")
             self.notify(f"Error: {str(e)}", severity="error")
+            # Ensure cleanup if setup fails
+            self.is_generating = False # Reset state
+            self.current_generation_task = None
+            if self._loading_animation_task and not self._loading_animation_task.done():
+                self._loading_animation_task.cancel()
+            self._loading_animation_task = None
+            try:
+                loading = self.query_one("#loading-indicator")
+                loading.add_class("hidden")
+                self.query_one("#message-input").focus()
+            except Exception:
+                pass # Ignore UI errors during cleanup
+
+    # Rename this method slightly to avoid potential conflicts and clarify purpose
+    async def _handle_generation_result(self, worker: Worker[Optional[str]]) -> None:
+        """Handles the result of the generation worker (success, error, cancelled)."""
+        # Import debug_log again for safety within this callback context
+        try:
+            from app.main import debug_log
+        except ImportError:
+            debug_log = lambda msg: None
+
+        debug_log(f"Generation worker completed. State: {worker.state}")
+
+        try:
+            if worker.state == "cancelled":
+                debug_log("Generation worker was cancelled")
+                log.warning("Generation worker was cancelled")
+                # Remove the incomplete message
+                if self.messages and self.messages[-1].role == "assistant":
+                    debug_log("Removing incomplete assistant message")
+                    self.messages.pop()
+                await self.update_messages_ui()
+                self.notify("Generation stopped by user", severity="warning", timeout=2)
+
+            elif worker.state == "error":
+                error = worker.error
+                debug_log(f"Error in generation worker: {error}")
+                log.error(f"Error in generation worker: {error}")
+                self.notify(f"Generation error: {error}", severity="error", timeout=5)
+                # Add error message to UI
+                if self.messages and self.messages[-1].role == "assistant":
+                    debug_log("Removing thinking message")
+                    self.messages.pop()  # Remove thinking message
+                error_msg = f"Error: {error}"
+                debug_log(f"Adding error message: {error_msg}")
+                self.messages.append(Message(role="assistant", content=error_msg))
+                await self.update_messages_ui()
+
+            elif worker.state == "success":
+                full_response = worker.result
+                debug_log("Generation completed normally, saving to database")
+                log("Generation completed normally, saving to database")
+                # Save complete response to database (check if response is valid)
+                if full_response and isinstance(full_response, str):
+                    self.db.add_message(
+                        self.current_conversation.id,
+                        "assistant",
+                        full_response
+                    )
+                    # Update the final message object content (optional, UI should be up-to-date)
+                    if self.messages and self.messages[-1].role == "assistant":
+                        self.messages[-1].content = full_response
+                else:
+                    debug_log("Worker finished successfully but response was empty or invalid.")
+                    # Handle case where 'Thinking...' might still be the last message
+                    if self.messages and self.messages[-1].role == "assistant" and self.messages[-1].content == "Thinking...":
+                         self.messages.pop() # Remove 'Thinking...' if no content arrived
+                         await self.update_messages_ui()
+
+                # Final UI refresh might still be useful
+                self.refresh(layout=True)
+
+        except Exception as e:
+            # Catch any unexpected errors during the callback itself
+            debug_log(f"Error in on_generation_complete callback: {str(e)}")
+            log.error(f"Error in on_generation_complete callback: {str(e)}")
+            self.notify(f"Internal error handling response: {str(e)}", severity="error")
+
+        finally:
+            # Always clean up state and UI, regardless of worker outcome
+            debug_log("Cleaning up after generation worker")
             self.is_generating = False
-            loading = self.query_one("#loading-indicator")
-            loading.add_class("hidden")
-            self.query_one("#message-input").focus()
+            self.current_generation_task = None
+
+            # Stop the animation task
+            if self._loading_animation_task and not self._loading_animation_task.done():
+                debug_log("Cancelling loading animation task")
+                self._loading_animation_task.cancel()
+            self._loading_animation_task = None
+
+            try:
+                loading = self.query_one("#loading-indicator")
+                loading.add_class("hidden")
+                self.refresh(layout=True) # Refresh after hiding loading
+                self.query_one("#message-input").focus()
+            except Exception as ui_err:
+                debug_log(f"Error during final UI cleanup: {str(ui_err)}")
+                log.error(f"Error during final UI cleanup: {str(ui_err)}")
+
+    @on(Worker.StateChanged)
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Handle worker state changes."""
+        # Import debug_log again for safety within this callback context
+        try:
+            from app.main import debug_log
+        except ImportError:
+            debug_log = lambda msg: None
+
+        debug_log(f"Worker {event.worker.name} state changed to {event.state}")
+
+        # Check if this is the generation worker we are tracking
+        if event.worker is self.current_generation_task:
+            # Check if the worker has reached a final state by comparing against enum values
+            final_states = {WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED}
+            if event.state in final_states:
+                debug_log(f"Generation worker ({event.worker.name}) reached final state: {event.state}")
+                # Call the handler function
+                await self._handle_generation_result(event.worker)
+            else:
+                 debug_log(f"Generation worker ({event.worker.name}) is in intermediate state: {event.state}")
+        else:
+            debug_log(f"State change event from unrelated worker: {event.worker.name}")
+
 
     def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None: # Keep SimpleChatApp on_model_selector_model_selected
         """Handle model selection""" # Keep SimpleChatApp on_model_selector_model_selected docstring

@@ -4,13 +4,14 @@ import time
 import asyncio
 import subprocess
 import logging
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, TYPE_CHECKING, Callable, Awaitable
 from datetime import datetime
+from textual import work # Import work decorator
 from .config import CONFIG, save_config
 
 # Import SimpleChatApp for type hinting only if TYPE_CHECKING is True
 if TYPE_CHECKING:
-    from .main import SimpleChatApp
+    from .main import SimpleChatApp # Keep this for type hinting
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -86,11 +87,26 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     logger.error(f"Failed to generate title after multiple retries. Last error: {last_error}")
     return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
 
-# Modified signature to accept app instance
-async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict], model: str, style: str, client: Any, callback: Any) -> str:
-    """Generate a streaming response from the model"""
+# Make this the worker function directly
+@work(exit_on_error=True)
+async def generate_streaming_response(
+    app: 'SimpleChatApp',
+    messages: List[Dict],
+    model: str,
+    style: str,
+    client: Any,
+    callback: Callable[[str], Awaitable[None]] # More specific type hint for callback
+) -> Optional[str]: # Return Optional[str] as cancellation might return None implicitly or error
+    """Generate a streaming response from the model (as a Textual worker)"""
     # Import debug_log function from main
-    from app.main import debug_log
+    # Note: This import might be slightly less reliable inside a worker, but let's try
+    try:
+        from app.main import debug_log
+    except ImportError:
+        debug_log = lambda msg: None # Fallback
+
+    # Worker function needs to handle its own state and cleanup partially
+    # The main app will also need cleanup logic in generate_response
 
     logger.info(f"Starting streaming response with model: {model}")
     debug_log(f"Starting streaming response with model: '{model}', client type: {type(client).__name__}")
@@ -226,8 +242,20 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
                         debug_log(f"Error checking model loading state: {str(e)}")
                         logger.error(f"Error checking model loading state: {str(e)}")
                 
-                # Process the chunk
+                # Process the chunk - with careful type handling
                 if chunk:  # Only process non-empty chunks
+                    # Ensure chunk is a string - critical fix for providers returning other types
+                    if not isinstance(chunk, str):
+                        debug_log(f"WARNING: Received non-string chunk of type: {type(chunk).__name__}")
+                        try:
+                            # Try to convert to string if possible
+                            chunk = str(chunk)
+                            debug_log(f"Successfully converted chunk to string, length: {len(chunk)}")
+                        except Exception as e:
+                            debug_log(f"Error converting chunk to string: {str(e)}")
+                            # Skip this chunk since it can't be converted
+                            continue
+                    
                     debug_log(f"Received chunk of length: {len(chunk)}")
                     buffer.append(chunk)
                     current_time = time.time()
@@ -289,8 +317,21 @@ async def generate_streaming_response(app: 'SimpleChatApp', messages: List[Dict]
                 debug_log("Successfully cancelled client stream after error")
             except Exception as cancel_err:
                 debug_log(f"Error cancelling client stream after error: {str(cancel_err)}")
-        # Re-raise the exception for the caller to handle
+        # Re-raise the exception for the worker runner to handle
+        # The @work decorator might catch this depending on exit_on_error
         raise
+    finally:
+        # Basic cleanup within the worker itself (optional, main cleanup in app)
+        debug_log("generate_streaming_response worker finished or errored.")
+        # Return the full response if successful, otherwise error is raised or cancellation occurred
+        # Note: If cancelled, CancelledError is raised, and @work might handle it.
+        # If successful, return the response.
+        # If error, exception is raised.
+        # Let's explicitly return the response on success.
+        # If cancelled or error, this return might not be reached.
+        if 'full_response' in locals():
+             return full_response
+        return None # Indicate completion without full response (e.g., error before loop)
 
 def ensure_ollama_running() -> bool:
     """

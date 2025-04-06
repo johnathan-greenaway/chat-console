@@ -70,17 +70,48 @@ class AnthropicClient(BaseModelClient):
                             temperature: float = 0.7, 
                             max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming text completion using Claude"""
+        try:
+            from app.main import debug_log  # Import debug logging if available
+            debug_log(f"Anthropic: starting streaming generation with model: {model}")
+        except ImportError:
+            # If debug_log not available, create a no-op function
+            debug_log = lambda msg: None
+            
         processed_messages = self._prepare_messages(messages, style)
         
-        stream = await self.client.messages.stream(
-            model=model,
-            messages=processed_messages,
-            temperature=temperature,
-            max_tokens=max_tokens or 1024,
-        )
-        async for chunk in stream:
-            if chunk.type == "content_block":
-                yield chunk.text
+        try:
+            debug_log(f"Anthropic: requesting stream with {len(processed_messages)} messages")
+            # Remove await from this line - it returns the context manager, not an awaitable
+            stream = self.client.messages.stream( 
+                model=model,
+                messages=processed_messages,
+                temperature=temperature,
+                max_tokens=max_tokens or 1024,
+            )
+            
+            debug_log("Anthropic: stream created successfully, processing chunks using async with")
+            async with stream as stream_context: # Use async with
+                async for chunk in stream_context: # Iterate over the context
+                    try:
+                        if chunk.type == "content_block_delta": # Check for delta type
+                            # Ensure we always return a string
+                            if chunk.delta.text is None:
+                                debug_log("Anthropic: skipping empty text delta chunk")
+                                continue
+                                
+                            text = str(chunk.delta.text) # Get text from delta
+                            debug_log(f"Anthropic: yielding chunk of length: {len(text)}")
+                            yield text
+                        else:
+                            debug_log(f"Anthropic: skipping non-content_delta chunk of type: {chunk.type}")
+                    except Exception as chunk_error: # Restore the except block for chunk processing
+                        debug_log(f"Anthropic: error processing chunk: {str(chunk_error)}")
+                        # Skip problematic chunks but continue processing
+                        continue # This continue is now correctly inside the loop and except block
+                    
+        except Exception as e:
+            debug_log(f"Anthropic: error in generate_stream: {str(e)}")
+            raise Exception(f"Anthropic streaming error: {str(e)}")
     
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available Claude models"""
