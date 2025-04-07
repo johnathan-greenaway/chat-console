@@ -8,9 +8,9 @@ import logging
 from textual.app import ComposeResult
 from textual.containers import Container, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.widgets import Button, Input, Label, Static
+from textual.widgets import Button, Input, Label, Static # Removed RichLog from here
 from textual.widget import Widget
-from textual.widgets import RichLog
+# Removed RichLog import as MessageDisplay will inherit from Static
 from textual.message import Message
 from textual.binding import Binding
  
@@ -53,16 +53,18 @@ class SendButton(Button):
         self.styles.text_opacity = 100
         self.styles.text_style = "bold"
 
-class MessageDisplay(RichLog):
-    """Widget to display a single message"""
+class MessageDisplay(Static): # Inherit from Static instead of RichLog
+    """Widget to display a single message using Static"""
     
     DEFAULT_CSS = """
     MessageDisplay {
         width: 100%;
-        height: auto;
+        height: auto; /* Let height adjust automatically */
+        min-height: 1; /* Ensure minimum height */
         margin: 1 0;
-        overflow: auto;
+        /* overflow: auto; */ /* Removed overflow */
         padding: 1;
+        /* Ensure wrapping is enabled in __init__ */
     }
     
     MessageDisplay.user-message {
@@ -94,10 +96,12 @@ class MessageDisplay(RichLog):
             highlight=True,
             markup=True,
             wrap=True,
+            # Initialize Static with empty content initially, will be set in on_mount
+            # Static handles markup/wrapping via styles/defaults
             name=name
         )
         self.message = message
-        self.highlight_code = highlight_code
+        self.highlight_code = highlight_code # Keep this for potential future use or logic
         
     def on_mount(self) -> None:
         """Handle mount event"""
@@ -109,18 +113,20 @@ class MessageDisplay(RichLog):
         elif self.message.role == "system":
             self.add_class("system-message")
         
-        # Initial content
-        self.write(self._format_content(self.message.content))
+        # Initial content using Static's update method
+        self.update(self._format_content(self.message.content))
         
     async def update_content(self, content: str) -> None:
-        """Update the message content"""
+        """Update the message content using Static.update()"""
+        # Update Static widget with new formatted content
+        self.update(self._format_content(content))
+
+        # Update the stored message object content
         self.message.content = content
-        self.clear()
-        self.write(self._format_content(content))
-        # Force a refresh after writing
-        self.refresh(layout=True)
-        # Wait a moment for the layout to update
-        await asyncio.sleep(0.05)
+        
+        # Optional: Refresh less frequently or only scroll
+        # self.refresh() # Refresh without layout might be sufficient
+        # Consider scrolling logic adjustments in the parent ChatInterface
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp"""

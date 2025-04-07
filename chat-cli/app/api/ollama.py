@@ -373,17 +373,25 @@ class OllamaClient(BaseModelClient):
                             # Process the chunk
                             if line:
                                 chunk = line.decode().strip()
-                                try:
-                                    data = json.loads(chunk)
-                                    if isinstance(data, dict) and "response" in data:
-                                        chunk_length = len(data["response"]) if data["response"] else 0
-                                        debug_log(f"Yielding chunk of length: {chunk_length}")
-                                        yield data["response"]
-                                    else:
-                                        debug_log(f"Response key not in chunk data: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-                                except json.JSONDecodeError:
-                                    debug_log("JSON decode error in chunk")
-                                    continue
+                                chunk_str = line.decode().strip()
+                                # Check if it looks like JSON before trying to parse
+                                if chunk_str.startswith('{') and chunk_str.endswith('}'):
+                                    try:
+                                        data = json.loads(chunk_str)
+                                        if isinstance(data, dict) and "response" in data:
+                                            chunk_length = len(data["response"]) if data["response"] else 0
+                                            debug_log(f"Yielding chunk of length: {chunk_length}")
+                                            yield data["response"]
+                                        else:
+                                            debug_log(f"JSON chunk missing 'response' key: {chunk_str}")
+                                    except json.JSONDecodeError:
+                                        debug_log(f"JSON decode error for chunk: {chunk_str}")
+                                else:
+                                    # Log unexpected non-JSON lines but don't process them
+                                    if chunk_str: # Avoid logging empty lines
+                                        debug_log(f"Received unexpected non-JSON line: {chunk_str}")
+                                # Continue processing next line regardless of parsing success/failure of current line
+                                continue
                         except Exception as chunk_err:
                             debug_log(f"Error processing chunk: {str(chunk_err)}")
                             # Continue instead of breaking to try processing more chunks

@@ -916,11 +916,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                             debug_log("First content received, clearing 'Thinking...'")
                             assistant_message.content = ""
 
-                        # Update message with full content so far
+                        # Update the message object with the full content
                         assistant_message.content = content
-                        # Update UI with full content
+
+                        # Update UI with the full content (reverting to previous logic here)
                         await message_display.update_content(content)
-                        # Force a refresh and scroll
+
+                        # Force a refresh and scroll (keep this for now)
                         self.refresh(layout=True)
                         await asyncio.sleep(0.05)  # Longer delay for UI stability
                         messages_container.scroll_end(animate=False)
