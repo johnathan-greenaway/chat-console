@@ -7,6 +7,7 @@ from textual.widget import Widget
 from textual.message import Message
 
 from ..config import CONFIG
+from ..utils import resolve_model_id  # Import the resolve_model_id function
 from ..api.ollama import OllamaClient
 from .chat_interface import ChatInterface
 
@@ -58,7 +59,10 @@ class ModelSelector(Container):
     class ModelSelected(Message):
         """Event sent when a model is selected"""
         def __init__(self, model_id: str):
-            self.model_id = model_id
+            # Always resolve the model ID before sending it to the main app
+            # This ensures short names like "claude-3.7-sonnet" are converted to full IDs
+            self.model_id = resolve_model_id(model_id)
+            logger.info(f"ModelSelected: Original ID '{model_id}' resolved to '{self.model_id}'")
             super().__init__()
     
     def __init__(
@@ -68,7 +72,10 @@ class ModelSelector(Container):
         id: Optional[str] = None
     ):
         super().__init__(name=name, id=id)
-        self.selected_model = selected_model or CONFIG["default_model"]
+        # Resolve the model ID during initialization
+        original_id = selected_model or CONFIG["default_model"]
+        self.selected_model = resolve_model_id(original_id)
+        logger.info(f"ModelSelector.__init__: Original ID '{original_id}' resolved to '{self.selected_model}'")
         # Handle custom models not in CONFIG
         if self.selected_model in CONFIG["available_models"]:
             self.selected_provider = CONFIG["available_models"][self.selected_model]["provider"]
@@ -236,11 +243,15 @@ class ModelSelector(Container):
                         
                     # Set the model if we found one
                     if first_model and len(first_model) >= 2:
-                        self.selected_model = first_model[1]
-                        model_select.value = self.selected_model
+                        # Resolve the model ID before storing and sending
+                        original_id = first_model[1]
+                        resolved_id = resolve_model_id(original_id)
+                        logger.info(f"on_select_changed (provider): Original ID '{original_id}' resolved to '{resolved_id}'")
+                        self.selected_model = resolved_id
+                        model_select.value = resolved_id
                         model_select.remove_class("hide")
                         self.query_one("#custom-model-input").add_class("hide")
-                        self.post_message(self.ModelSelected(self.selected_model))
+                        self.post_message(self.ModelSelected(resolved_id))
                     else:
                         # Fall back to custom if no valid model found
                         self.selected_model = "custom"
@@ -273,28 +284,43 @@ class ModelSelector(Container):
                 custom_input = self.query_one("#custom-model-input")
                 model_select.remove_class("hide")
                 custom_input.add_class("hide")
-                self.selected_model = event.value
-                self.post_message(self.ModelSelected(event.value))
+                # Resolve the model ID before storing and sending
+                resolved_id = resolve_model_id(event.value)
+                logger.info(f"on_select_changed: Original ID '{event.value}' resolved to '{resolved_id}'")
+                self.selected_model = resolved_id
+                self.post_message(self.ModelSelected(resolved_id))
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle custom model input changes"""
         if event.input.id == "custom-model-input":
             value = event.value.strip()
             if value:  # Only update if there's actual content
-                self.selected_model = value
-                self.post_message(self.ModelSelected(value))
+                # Resolve the model ID before storing and sending
+                resolved_id = resolve_model_id(value)
+                logger.info(f"on_input_changed: Original ID '{value}' resolved to '{resolved_id}'")
+                self.selected_model = resolved_id
+                self.post_message(self.ModelSelected(resolved_id))
             
     def get_selected_model(self) -> str:
-        """Get the current selected model ID"""
-        return self.selected_model
+        """Get the current selected model ID, ensuring it's properly resolved"""
+        resolved_id = resolve_model_id(self.selected_model)
+        logger.info(f"get_selected_model: Original ID '{self.selected_model}' resolved to '{resolved_id}'")
+        return resolved_id
     
     def set_selected_model(self, model_id: str) -> None:
-        """Set the selected model"""
-        self.selected_model = model_id
-        if model_id in CONFIG["available_models"]:
+        """Set the selected model, ensuring it's properly resolved"""
+        # First resolve the model ID to ensure we're using the full ID
+        resolved_id = resolve_model_id(model_id)
+        logger.info(f"set_selected_model: Original ID '{model_id}' resolved to '{resolved_id}'")
+        
+        # Store the resolved ID
+        self.selected_model = resolved_id
+        
+        # Update the UI based on whether this is a known model or custom
+        if resolved_id in CONFIG["available_models"]:
             select = self.query_one("#model-select", Select)
             custom_input = self.query_one("#custom-model-input")
-            select.value = model_id
+            select.value = resolved_id
             select.remove_class("hide")
             custom_input.add_class("hide")
         else:
@@ -302,7 +328,7 @@ class ModelSelector(Container):
             custom_input = self.query_one("#custom-model-input")
             select.value = "custom"
             select.add_class("hide")
-            custom_input.value = model_id
+            custom_input.value = resolved_id
             custom_input.remove_class("hide")
 
 class StyleSelector(Container):

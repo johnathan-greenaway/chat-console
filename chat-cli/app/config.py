@@ -73,6 +73,11 @@ DEFAULT_CONFIG = {
             "max_tokens": 4096, # Note: Max tokens might differ per model version
             "display_name": "Claude 3.5 Sonnet" # Corrected display name
         },
+        "claude-3-7-sonnet-20250219": {
+            "provider": "anthropic",
+            "max_tokens": 4096, # Note: Max tokens might differ per model version
+            "display_name": "Claude 3.7 Sonnet"
+        },
         "llama2": {
             "provider": "ollama",
             "max_tokens": 4096,

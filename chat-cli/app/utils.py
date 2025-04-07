@@ -426,34 +426,103 @@ def save_settings_to_config(model: str, style: str) -> None:
 def resolve_model_id(model_id_or_name: str) -> str:
     """
     Resolves a potentially short model ID or display name to the full model ID
-    stored in the configuration.
+    stored in the configuration. Tries multiple matching strategies.
     """
     if not model_id_or_name:
         logger.warning("resolve_model_id called with empty input, returning empty string.")
         return ""
 
-    # Check if the input is already a valid full ID
-    if model_id_or_name in CONFIG["available_models"]:
-        logger.debug(f"Model ID '{model_id_or_name}' is already a full ID.")
-        return model_id_or_name
+    input_lower = model_id_or_name.lower().strip()
+    logger.info(f"Attempting to resolve model identifier: '{input_lower}'")
 
-    # Search for a match based on ID prefix or display name
-    for full_id, model_info in CONFIG["available_models"].items():
-        # Check if the input is a prefix of the full ID
-        if full_id.startswith(model_id_or_name):
-            logger.info(f"Resolved short ID '{model_id_or_name}' to full ID '{full_id}' (prefix match).")
-            return full_id
-        # Check if the input matches the display name (case-insensitive)
-        if model_info.get("display_name", "").lower() == model_id_or_name.lower():
-            logger.info(f"Resolved display name '{model_id_or_name}' to full ID '{full_id}'.")
-            return full_id
-        # Check if the input matches the short name derived from display name (e.g., "Claude 3.7 Sonnet" -> "claude-3.7-sonnet")
-        short_name_from_display = model_info.get("display_name", "").lower().replace(" ", "-")
-        if short_name_from_display == model_id_or_name.lower():
-             logger.info(f"Resolved derived short name '{model_id_or_name}' to full ID '{full_id}'.")
+    available_models = CONFIG.get("available_models", {})
+    if not available_models:
+         logger.warning("No available_models found in CONFIG to resolve against.")
+         return model_id_or_name # Return original if no models to check
+
+    # 1. Check if the input is already a valid full ID (must contain a date suffix)
+    # Full Claude IDs should have format like "claude-3-opus-20240229" with a date suffix
+    for full_id in available_models:
+        if full_id.lower() == input_lower:
+            # Only consider it a full ID if it contains a date suffix (like -20240229)
+            if "-202" in full_id:  # Check for date suffix
+                logger.info(f"Input '{model_id_or_name}' is already a full ID with date suffix: '{full_id}'.")
+                return full_id # Return the canonical full_id
+            else:
+                logger.warning(f"Input '{model_id_or_name}' matches a model ID but lacks date suffix.")
+                # Continue searching for a better match with date suffix
+
+    logger.debug(f"Input '{input_lower}' is not a direct full ID match. Checking other criteria...")
+    logger.debug(f"Available models for matching: {list(available_models.keys())}")
+
+    best_match = None
+    match_type = "None"
+
+    # 2. Iterate through available models for other matches
+    for full_id, model_info in available_models.items():
+        full_id_lower = full_id.lower()
+        display_name = model_info.get("display_name", "")
+        display_name_lower = display_name.lower()
+
+        logger.debug(f"Comparing '{input_lower}' against '{full_id_lower}' (Display: '{display_name}')")
+
+        # 2a. Exact match on display name (case-insensitive)
+        if display_name_lower == input_lower:
+            logger.info(f"Resolved '{model_id_or_name}' to '{full_id}' via exact display name match.")
+            return full_id # Exact display name match is high confidence
+
+        # 2b. Check if input is a known short alias (handle common cases explicitly)
+        # Special case for Claude 3.7 Sonnet which seems to be causing issues
+        if input_lower == "claude-3.7-sonnet":
+            # Hardcoded resolution for this specific model
+            claude_37_id = "claude-3-7-sonnet-20250219"
+            logger.warning(f"Special case: Directly mapping '{input_lower}' to '{claude_37_id}'")
+            # Check if this ID exists in available models
+            for model_id in available_models:
+                if model_id.lower() == claude_37_id.lower():
+                    logger.info(f"Found exact match for hardcoded ID: {model_id}")
+                    return model_id
+            # If not found in available models, return the hardcoded ID anyway
+            logger.warning(f"Hardcoded ID '{claude_37_id}' not found in available models, returning it anyway")
+            return claude_37_id
+            
+        # Map common short names to their expected full ID prefixes
+        short_aliases = {
+            "claude-3-opus": "claude-3-opus-",
+            "claude-3-sonnet": "claude-3-sonnet-",
+            "claude-3-haiku": "claude-3-haiku-",
+            "claude-3.5-sonnet": "claude-3-5-sonnet-", # Note the dot vs hyphen
+            "claude-3.7-sonnet": "claude-3-7-sonnet-"  # Added this specific case
+        }
+        if input_lower in short_aliases and full_id_lower.startswith(short_aliases[input_lower]):
+             logger.info(f"Resolved '{model_id_or_name}' to '{full_id}' via known short alias match.")
+             # This is also high confidence
              return full_id
 
+        # 2c. Check if input is a prefix of the full ID (more general, lower confidence)
+        if full_id_lower.startswith(input_lower):
+            logger.debug(f"Potential prefix match: '{input_lower}' vs '{full_id_lower}'")
+            # Don't return immediately, might find a better match (e.g., display name or alias)
+            if best_match is None: # Only take prefix if no other match found yet
+                 best_match = full_id
+                 match_type = "Prefix"
+                 logger.debug(f"Setting best_match to '{full_id}' based on prefix.")
 
-    # If no match found, return the original input but log a warning
-    logger.warning(f"Could not resolve model ID or name '{model_id_or_name}' to a known full ID. Returning original.")
-    return model_id_or_name
+        # 2d. Check derived short name from display name (less reliable, keep as lower priority)
+        # Normalize display name: lower, replace space and dot with hyphen
+        derived_short_name = display_name_lower.replace(" ", "-").replace(".", "-")
+        if derived_short_name == input_lower:
+             logger.debug(f"Potential derived short name match: '{input_lower}' vs derived '{derived_short_name}' from '{display_name}'")
+             # Prioritize this over a simple prefix match if found
+             if best_match is None or match_type == "Prefix":
+                  best_match = full_id
+                  match_type = "Derived Short Name"
+                  logger.debug(f"Updating best_match to '{full_id}' based on derived name.")
+
+    # 3. Return best match found or original input
+    if best_match:
+        logger.info(f"Returning best match found for '{model_id_or_name}': '{best_match}' (Type: {match_type})")
+        return best_match
+    else:
+        logger.warning(f"Could not resolve model ID or name '{model_id_or_name}' to any known full ID. Returning original.")
+        return model_id_or_name

@@ -1,7 +1,9 @@
 import anthropic
+import asyncio  # Add missing import
 from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
 from .base import BaseModelClient
 from ..config import ANTHROPIC_API_KEY
+from ..utils import resolve_model_id  # Import the resolve_model_id function
 
 class AnthropicClient(BaseModelClient):
     def __init__(self):
@@ -47,16 +49,26 @@ class AnthropicClient(BaseModelClient):
         
         return styles.get(style, "")
     
-    async def generate_completion(self, messages: List[Dict[str, str]], 
-                           model: str, 
-                           style: Optional[str] = None, 
-                           temperature: float = 0.7, 
+    async def generate_completion(self, messages: List[Dict[str, str]],
+                           model: str,
+                           style: Optional[str] = None,
+                           temperature: float = 0.7,
                            max_tokens: Optional[int] = None) -> str:
         """Generate a text completion using Claude"""
+        try:
+            from app.main import debug_log
+        except ImportError:
+            debug_log = lambda msg: None
+            
+        # Resolve the model ID right before making the API call
+        original_model = model
+        resolved_model = resolve_model_id(model)
+        debug_log(f"Anthropic: Original model ID '{original_model}' resolved to '{resolved_model}' in generate_completion")
+        
         processed_messages = self._prepare_messages(messages, style)
         
         response = await self.client.messages.create(
-            model=model,
+            model=resolved_model,  # Use the resolved model ID
             messages=processed_messages,
             temperature=temperature,
             max_tokens=max_tokens or 1024,
@@ -64,26 +76,31 @@ class AnthropicClient(BaseModelClient):
         
         return response.content[0].text
     
-    async def generate_stream(self, messages: List[Dict[str, str]], 
-                            model: str, 
+    async def generate_stream(self, messages: List[Dict[str, str]],
+                            model: str,
                             style: Optional[str] = None,
-                            temperature: float = 0.7, 
+                            temperature: float = 0.7,
                             max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """Generate a streaming text completion using Claude"""
         try:
             from app.main import debug_log  # Import debug logging if available
-            debug_log(f"Anthropic: starting streaming generation with model: {model}")
         except ImportError:
             # If debug_log not available, create a no-op function
             debug_log = lambda msg: None
+            
+        # Resolve the model ID right before making the API call
+        original_model = model
+        resolved_model = resolve_model_id(model)
+        debug_log(f"Anthropic: Original model ID '{original_model}' resolved to '{resolved_model}'")
+        debug_log(f"Anthropic: starting streaming generation with model: {resolved_model}")
             
         processed_messages = self._prepare_messages(messages, style)
         
         try:
             debug_log(f"Anthropic: requesting stream with {len(processed_messages)} messages")
             # Remove await from this line - it returns the context manager, not an awaitable
-            stream = self.client.messages.stream( 
-                model=model,
+            stream = self.client.messages.stream(
+                model=resolved_model,  # Use the resolved model ID
                 messages=processed_messages,
                 temperature=temperature,
                 max_tokens=max_tokens or 1024,
@@ -145,7 +162,10 @@ class AnthropicClient(BaseModelClient):
                           for model in models_data['data']
                           if model.get("id") # Ensure model has an ID
                       ]
-                      debug_log(f"Anthropic: Formatted models: {formatted_models}")
+                      # Log each model ID clearly for debugging
+                      debug_log(f"Anthropic: Available models from API:")
+                      for model in formatted_models:
+                          debug_log(f"  - ID: {model.get('id')}, Name: {model.get('name')}")
                       return formatted_models
                  else:
                       debug_log("Anthropic: Unexpected API response format for models.")
@@ -157,12 +177,18 @@ class AnthropicClient(BaseModelClient):
         except Exception as e:
             debug_log(f"Anthropic: Failed to fetch models from API: {str(e)}")
             # Fallback to a minimal hardcoded list in case of API error
-            return [
+            # Include Claude 3.7 Sonnet with the correct full ID
+            fallback_models = [
                 {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
                 {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
                 {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
                 {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
+                {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},  # Add Claude 3.7 Sonnet
             ]
+            debug_log("Anthropic: Using fallback model list:")
+            for model in fallback_models:
+                debug_log(f"  - ID: {model['id']}, Name: {model['name']}")
+            return fallback_models
 
     # Keep this synchronous for now, but make it call the async fetcher
     # Note: This is slightly awkward. Ideally, config loading would be async.
@@ -182,9 +208,15 @@ class AnthropicClient(BaseModelClient):
              except ImportError:
                  debug_log = lambda msg: None
              debug_log(f"Anthropic: Cannot run async model fetch synchronously ({e}). Falling back to hardcoded list.")
-             return [
+             # Use the same fallback list as in _fetch_models_from_api
+             fallback_models = [
                  {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
                  {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
                  {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
                  {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
+                 {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},  # Add Claude 3.7 Sonnet
              ]
+             debug_log("Anthropic: Using fallback model list in get_available_models:")
+             for model in fallback_models:
+                 debug_log(f"  - ID: {model['id']}, Name: {model['name']}")
+             return fallback_models
