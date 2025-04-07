@@ -45,7 +45,7 @@ from app.ui.model_selector import ModelSelector, StyleSelector
 from app.ui.chat_list import ChatList
 from app.ui.model_browser import ModelBrowser
 from app.api.base import BaseModelClient
-from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title # Import title function
+from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title, resolve_model_id # Import resolver
 # Import version here to avoid potential circular import issues at top level
 from app import __version__
 
@@ -346,7 +346,9 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         super().__init__() # Keep SimpleChatApp __init__
         self.db = ChatDatabase() # Keep SimpleChatApp __init__
         self.messages = [] # Keep SimpleChatApp __init__
-        self.selected_model = CONFIG["default_model"] # Keep SimpleChatApp __init__
+        # Resolve the default model ID on initialization
+        default_model_from_config = CONFIG["default_model"]
+        self.selected_model = resolve_model_id(default_model_from_config)
         self.selected_style = CONFIG["default_style"] # Keep SimpleChatApp __init__
         self.initial_text = initial_text # Keep SimpleChatApp __init__
         # Removed self.input_widget instance variable
@@ -783,7 +785,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
         try:
             # Get conversation parameters
-            model = self.selected_model
+            # Ensure the model ID is resolved before passing to the API client
+            unresolved_model = self.selected_model
+            model = resolve_model_id(unresolved_model)
+            log(f"Using model for generation: {model} (Resolved from: {unresolved_model})")
             style = self.selected_style
             
             debug_log(f"Using model: '{model}', style: '{style}'")
@@ -1160,8 +1165,23 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             await self.update_messages_ui() # Keep SimpleChatApp view_chat_history
 
             # Update model and style selectors # Keep SimpleChatApp view_chat_history
-            self.selected_model = self.current_conversation.model # Keep SimpleChatApp view_chat_history
+            # Resolve the model ID loaded from the conversation data
+            loaded_model_id = self.current_conversation.model
+            resolved_model_id = resolve_model_id(loaded_model_id)
+            log(f"Loaded model ID from history: {loaded_model_id}, Resolved to: {resolved_model_id}")
+
+            self.selected_model = resolved_model_id # Use the resolved ID
             self.selected_style = self.current_conversation.style # Keep SimpleChatApp view_chat_history
+
+            # Update settings panel selectors if they exist
+            try:
+                model_selector = self.query_one(ModelSelector)
+                model_selector.set_selected_model(self.selected_model) # Use resolved ID here too
+                style_selector = self.query_one(StyleSelector)
+                style_selector.set_selected_style(self.selected_style)
+            except Exception as e:
+                log(f"Error updating selectors after history load: {e}")
+
             self.update_app_info() # Update info bar after loading history
 
         self.push_screen(HistoryScreen(conversations, handle_selection)) # Keep SimpleChatApp view_chat_history

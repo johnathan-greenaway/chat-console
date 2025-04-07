@@ -52,25 +52,26 @@ DEFAULT_CONFIG = {
             "max_tokens": 8192,
             "display_name": "GPT-4"
         },
-        "claude-3-opus": {
+        # Use the corrected keys from anthropic.py
+        "claude-3-opus-20240229": {
             "provider": "anthropic",
-            "max_tokens": 4096,
+            "max_tokens": 4096, # Note: Max tokens might differ per model version
             "display_name": "Claude 3 Opus"
         },
-        "claude-3-sonnet": {
+        "claude-3-sonnet-20240229": {
             "provider": "anthropic",
-            "max_tokens": 4096,
+            "max_tokens": 4096, # Note: Max tokens might differ per model version
             "display_name": "Claude 3 Sonnet"
         },
-        "claude-3-haiku": {
+        "claude-3-haiku-20240307": {
             "provider": "anthropic",
             "max_tokens": 4096,
             "display_name": "Claude 3 Haiku"
         },
-        "claude-3.7-sonnet": {
+        "claude-3-5-sonnet-20240620": {
             "provider": "anthropic",
-            "max_tokens": 4096,
-            "display_name": "Claude 3.7 Sonnet"
+            "max_tokens": 4096, # Note: Max tokens might differ per model version
+            "display_name": "Claude 3.5 Sonnet" # Corrected display name
         },
         "llama2": {
             "provider": "ollama",
@@ -166,3 +167,43 @@ def save_config(config):
 
 # Current configuration
 CONFIG = load_config()
+
+# --- Dynamically update Anthropic models after initial load ---
+def update_anthropic_models(config):
+    """Fetch models from Anthropic API and update the config dict."""
+    if AVAILABLE_PROVIDERS["anthropic"]:
+        try:
+            from app.api.anthropic import AnthropicClient # Import here to avoid circular dependency at top level
+            client = AnthropicClient()
+            fetched_models = client.get_available_models() # This now fetches (or uses fallback)
+
+            if fetched_models:
+                # Remove old hardcoded anthropic models first
+                models_to_remove = [
+                    model_id for model_id, info in config["available_models"].items()
+                    if info.get("provider") == "anthropic"
+                ]
+                for model_id in models_to_remove:
+                    del config["available_models"][model_id]
+
+                # Add fetched models
+                for model in fetched_models:
+                    config["available_models"][model["id"]] = {
+                        "provider": "anthropic",
+                        "max_tokens": 4096, # Assign a default max_tokens
+                        "display_name": model["name"]
+                    }
+                print(f"Updated Anthropic models in config: {[m['id'] for m in fetched_models]}") # Add print statement
+            else:
+                 print("Could not fetch or find Anthropic models to update config.") # Add print statement
+
+        except Exception as e:
+            print(f"Error updating Anthropic models in config: {e}") # Add print statement
+            # Keep existing config if update fails
+
+    return config
+
+# Update the global CONFIG after loading it
+CONFIG = update_anthropic_models(CONFIG)
+# Optionally save the updated config back immediately (or rely on later saves)
+# save_config(CONFIG) # Uncomment if you want to persist the fetched models immediately

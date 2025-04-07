@@ -4,6 +4,7 @@ import time
 import asyncio
 import subprocess
 import logging
+import anthropic # Add missing import
 from typing import Optional, Dict, Any, List, TYPE_CHECKING, Callable, Awaitable
 from datetime import datetime
 from textual import work # Import work decorator
@@ -19,8 +20,34 @@ logger = logging.getLogger(__name__)
 
 async def generate_conversation_title(message: str, model: str, client: Any) -> str:
     """Generate a descriptive title for a conversation based on the first message"""
-    logger.info(f"Generating title for conversation using model: {model}")
-    
+    # --- Choose a specific, reliable model for title generation ---
+    # Prefer Haiku if Anthropic is available, otherwise fallback
+    title_model_id = None
+    if client and isinstance(client, anthropic.AsyncAnthropic): # Check if the passed client is Anthropic
+        # Check if Haiku is listed in the client's available models (more robust)
+        available_anthropic_models = client.get_available_models()
+        haiku_id = "claude-3-haiku-20240307"
+        if any(m["id"] == haiku_id for m in available_anthropic_models):
+             title_model_id = haiku_id
+             logger.info(f"Using Anthropic Haiku for title generation: {title_model_id}")
+        else:
+             # If Haiku not found, try Sonnet
+             sonnet_id = "claude-3-sonnet-20240229"
+             if any(m["id"] == sonnet_id for m in available_anthropic_models):
+                  title_model_id = sonnet_id
+                  logger.info(f"Using Anthropic Sonnet for title generation: {title_model_id}")
+             else:
+                  logger.warning(f"Neither Haiku nor Sonnet found in Anthropic client's list. Falling back.")
+
+    # Fallback logic if no specific Anthropic model was found or client is not Anthropic
+    if not title_model_id:
+        # Use the originally passed model (user's selected chat model) as the final fallback
+        title_model_id = model
+        logger.warning(f"Falling back to originally selected model for title generation: {title_model_id}")
+        # Consider adding fallbacks to OpenAI/Ollama here if needed based on config/availability
+
+    logger.info(f"Generating title for conversation using model: {title_model_id}")
+
     # Create a special prompt for title generation
     title_prompt = [
         {
@@ -44,7 +71,7 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
             if hasattr(client, 'generate_completion'):
                 title = await client.generate_completion(
                     messages=title_prompt,
-                    model=model,
+                    model=title_model_id, # Use the chosen title model
                     temperature=0.7,
                     max_tokens=60  # Titles should be short
                 )
@@ -55,7 +82,8 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
                  # Simplified adaptation: collect stream chunks
                  title_chunks = []
                  try:
-                     async for chunk in client.generate_stream(title_prompt, model, style=""): # Assuming style might not apply or needs default
+                     # Use the chosen title model here too
+                     async for chunk in client.generate_stream(title_prompt, title_model_id, style=""):
                          if chunk is not None:  # Ensure we only process non-None chunks
                              title_chunks.append(chunk)
                      title = "".join(title_chunks)
@@ -394,3 +422,38 @@ def save_settings_to_config(model: str, style: str) -> None:
     CONFIG["default_model"] = model
     CONFIG["default_style"] = style
     save_config(CONFIG)
+
+def resolve_model_id(model_id_or_name: str) -> str:
+    """
+    Resolves a potentially short model ID or display name to the full model ID
+    stored in the configuration.
+    """
+    if not model_id_or_name:
+        logger.warning("resolve_model_id called with empty input, returning empty string.")
+        return ""
+
+    # Check if the input is already a valid full ID
+    if model_id_or_name in CONFIG["available_models"]:
+        logger.debug(f"Model ID '{model_id_or_name}' is already a full ID.")
+        return model_id_or_name
+
+    # Search for a match based on ID prefix or display name
+    for full_id, model_info in CONFIG["available_models"].items():
+        # Check if the input is a prefix of the full ID
+        if full_id.startswith(model_id_or_name):
+            logger.info(f"Resolved short ID '{model_id_or_name}' to full ID '{full_id}' (prefix match).")
+            return full_id
+        # Check if the input matches the display name (case-insensitive)
+        if model_info.get("display_name", "").lower() == model_id_or_name.lower():
+            logger.info(f"Resolved display name '{model_id_or_name}' to full ID '{full_id}'.")
+            return full_id
+        # Check if the input matches the short name derived from display name (e.g., "Claude 3.7 Sonnet" -> "claude-3.7-sonnet")
+        short_name_from_display = model_info.get("display_name", "").lower().replace(" ", "-")
+        if short_name_from_display == model_id_or_name.lower():
+             logger.info(f"Resolved derived short name '{model_id_or_name}' to full ID '{full_id}'.")
+             return full_id
+
+
+    # If no match found, return the original input but log a warning
+    logger.warning(f"Could not resolve model ID or name '{model_id_or_name}' to a known full ID. Returning original.")
+    return model_id_or_name

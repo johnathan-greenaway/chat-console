@@ -112,12 +112,79 @@ class AnthropicClient(BaseModelClient):
         except Exception as e:
             debug_log(f"Anthropic: error in generate_stream: {str(e)}")
             raise Exception(f"Anthropic streaming error: {str(e)}")
-    
+
+    async def _fetch_models_from_api(self) -> List[Dict[str, Any]]:
+        """Fetch available models directly from the Anthropic API."""
+        try:
+            from app.main import debug_log
+        except ImportError:
+            debug_log = lambda msg: None
+
+        try:
+            debug_log("Anthropic: Fetching models from API...")
+            # The Anthropic Python SDK might not have a direct high-level method for listing models yet.
+            # We might need to use the underlying HTTP client or make a direct request.
+            # Let's assume for now the SDK client *does* have a way, like self.client.models.list()
+            # If this fails, we'd need to implement a direct HTTP GET request.
+            # response = await self.client.models.list() # Hypothetical SDK method
+
+            # --- Alternative: Direct HTTP Request using httpx (if client exposes it) ---
+            # Check if the client has an internal http_client we can use
+            if hasattr(self.client, '_client') and hasattr(self.client._client, 'get'):
+                 response = await self.client._client.get(
+                     "/v1/models",
+                     headers={"anthropic-version": "2023-06-01"} # Add required version header
+                 )
+                 response.raise_for_status() # Raise HTTP errors
+                 models_data = response.json()
+                 debug_log(f"Anthropic: API response received: {models_data}")
+                 if 'data' in models_data and isinstance(models_data['data'], list):
+                      # Format the response as expected: list of {"id": ..., "name": ...}
+                      formatted_models = [
+                          {"id": model.get("id"), "name": model.get("display_name", model.get("id"))}
+                          for model in models_data['data']
+                          if model.get("id") # Ensure model has an ID
+                      ]
+                      debug_log(f"Anthropic: Formatted models: {formatted_models}")
+                      return formatted_models
+                 else:
+                      debug_log("Anthropic: Unexpected API response format for models.")
+                      return []
+            else:
+                 debug_log("Anthropic: Client does not expose HTTP client for model listing. Returning empty list.")
+                 return [] # Cannot fetch dynamically
+
+        except Exception as e:
+            debug_log(f"Anthropic: Failed to fetch models from API: {str(e)}")
+            # Fallback to a minimal hardcoded list in case of API error
+            return [
+                {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
+                {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
+                {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
+                {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
+            ]
+
+    # Keep this synchronous for now, but make it call the async fetcher
+    # Note: This is slightly awkward. Ideally, config loading would be async.
+    # For now, we'll run the async fetcher within the sync method using asyncio.run()
+    # This is NOT ideal for performance but avoids larger refactoring of config loading.
     def get_available_models(self) -> List[Dict[str, Any]]:
-        """Get list of available Claude models"""
-        return [
-            {"id": "claude-3-opus", "name": "Claude 3 Opus"},
-            {"id": "claude-3-sonnet", "name": "Claude 3 Sonnet"},
-            {"id": "claude-3-haiku", "name": "Claude 3 Haiku"},
-            {"id": "claude-3.7-sonnet", "name": "Claude 3.7 Sonnet"},
-        ]
+        """Get list of available Claude models by fetching from API."""
+        try:
+            # Run the async fetcher method synchronously
+            models = asyncio.run(self._fetch_models_from_api())
+            return models
+        except RuntimeError as e:
+             # Handle cases where asyncio.run can't be called (e.g., already in an event loop)
+             # This might happen during app runtime if called again. Fallback needed.
+             try:
+                 from app.main import debug_log
+             except ImportError:
+                 debug_log = lambda msg: None
+             debug_log(f"Anthropic: Cannot run async model fetch synchronously ({e}). Falling back to hardcoded list.")
+             return [
+                 {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
+                 {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
+                 {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
+                 {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
+             ]
