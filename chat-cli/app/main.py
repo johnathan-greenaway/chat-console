@@ -161,6 +161,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     TITLE = "Chat Console"
     SUB_TITLE = "AI Chat Interface" # Keep SimpleChatApp SUB_TITLE
     DARK = True # Keep SimpleChatApp DARK
+    
+    # Add better terminal handling to fix UI glitches
+    SCREENS = {}
+    
+    # Force full screen mode and prevent background terminal showing through
+    FULL_SCREEN = True
+    
+    # Force capturing all mouse events for better stability
+    CAPTURE_MOUSE = True
 
     # Ensure the log directory exists in a standard cache location
     log_dir = os.path.expanduser("~/.cache/chat-cli")
@@ -581,20 +590,26 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         messages_container = self.query_one("#messages-container") # Keep SimpleChatApp update_messages_ui
         messages_container.remove_children() # Keep SimpleChatApp update_messages_ui
 
-        # Batch add all messages first without scrolling or refreshing between each mount
-        # This avoids unnecessary layout shifts while adding messages
-        for message in self.messages: # Keep SimpleChatApp update_messages_ui
-            display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp update_messages_ui
-            messages_container.mount(display) # Keep SimpleChatApp update_messages_ui
+        # Disable display updates while we're modifying the tree
+        # This prevents flickering as messages are added
+        self.screen.suspend_rendering()
         
-        # Perform a single refresh and scroll after mounting all messages
-        # This significantly reduces the visual bouncing effect
-        # A small delay before scrolling helps ensure stable layout
-        await asyncio.sleep(0.05)  # Single delay after all messages are mounted
-        messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
-        
-        # Use layout=False refresh if possible to further reduce bouncing
-        self.refresh(layout=False)
+        try:
+            # Batch add all messages first without any refresh/layout
+            for message in self.messages: # Keep SimpleChatApp update_messages_ui
+                display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp update_messages_ui
+                messages_container.mount(display) # Keep SimpleChatApp update_messages_ui
+            
+            # A small delay after mounting all messages helps with layout stability
+            await asyncio.sleep(0.05)
+            
+            # Scroll after all messages are added
+            messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
+        finally:
+            # Resume rendering with minimal layout recalculation
+            self.screen.resume_rendering()
+            # Single refresh for everything at once
+            self.refresh(layout=False)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None: # Keep SimpleChatApp on_input_submitted
         """Handle input submission (Enter key in the main input).""" # Keep SimpleChatApp on_input_submitted docstring
@@ -907,6 +922,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
             # Stream chunks to the UI with synchronization
             update_lock = asyncio.Lock()
+            last_refresh_time = time.time()  # Initialize refresh throttling timer
 
             async def update_ui(content: str):
                 # This function remains the same, called by the worker
@@ -914,6 +930,9 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     debug_log("update_ui called but is_generating is False, returning.")
                     return
 
+                # Make last_refresh_time accessible in inner scope
+                nonlocal last_refresh_time
+                
                 async with update_lock:
                     try:
                         # Clear thinking indicator on first content
@@ -927,20 +946,29 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         # Update UI with the content - this no longer triggers refresh itself
                         await message_display.update_content(content)
 
-                        # Throttle UI updates to reduce visual jitter and improve performance
-                        # Only refresh visually every ~5 tokens (estimated by content length changes)
+                        # Much more aggressive throttling of UI updates to eliminate visual jitter
+                        # By using a larger modulo value, we significantly reduce refresh frequency
+                        # This improves stability at the cost of slightly choppier animations
                         content_length = len(content)
+                        
+                        # Define some key refresh points
+                        new_paragraph = content.endswith("\n") and content.count("\n") > 0
                         do_refresh = (
-                            content_length < 20 or  # Always refresh for the first few tokens
-                            content_length % 16 == 0 or  # Then periodically
-                            content.endswith("\n")  # And on newlines
+                            content_length < 5 or  # Only first few tokens
+                            content_length % 64 == 0 or  # Very infrequent periodic updates
+                            new_paragraph  # Refresh on paragraph breaks
                         )
                         
-                        if do_refresh:
-                            # Only scroll without full layout recalculation
+                        # Check if it's been enough time since last refresh (250ms minimum)
+                        current_time = time.time()
+                        time_since_refresh = current_time - last_refresh_time
+                        
+                        if do_refresh and time_since_refresh > 0.25:
+                            # Store the time we did the refresh
+                            last_refresh_time = current_time
+                            # Skip layout updates completely during streaming
+                            # Just ensure content is still visible by scrolling
                             messages_container.scroll_end(animate=False)
-                            # Light refresh without full layout recalculation
-                            self.refresh(layout=False)
                     except Exception as e:
                         debug_log(f"Error updating UI: {str(e)}")
                         log.error(f"Error updating UI: {str(e)}")

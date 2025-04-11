@@ -121,7 +121,11 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         self.update(self._format_content(self.message.content))
         
     async def update_content(self, content: str) -> None:
-        """Update the message content using Static.update()"""
+        """Update the message content using Static.update() with optimizations for streaming"""
+        # Quick unchanged content check to avoid unnecessary updates
+        if self.message.content == content:
+            return
+            
         # Update the stored message object content first
         self.message.content = content
         
@@ -129,11 +133,12 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         # This avoids text reflowing as new tokens arrive
         formatted_content = self._format_content(content)
         
-        # Update Static widget with minimal refresh
-        self.update(formatted_content)
+        # Use minimal update that doesn't trigger a refresh
+        # This allows parent to control refresh timing and avoid flickering
+        self.update(formatted_content, refresh=False)
         
-        # Important: Don't call refresh() here - let the parent handle timing
-        # This prevents constant layout recalculation on each token
+        # No refresh or layout recalculation is performed here
+        # The parent container will handle refresh timing for better stability
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp"""
