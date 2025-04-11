@@ -66,9 +66,9 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         padding: 1;
         text-wrap: wrap; /* Explicitly enable text wrapping via CSS */
         content-align: left top; /* Anchor content to top-left */
-        overflow-y: visible; /* Allow content to expand */
+        overflow-y: auto; /* Changed from 'visible' to valid 'auto' value */
         box-sizing: border-box; /* Include padding in size calculations */
-        transitions: none; /* Disable any transitions that might cause animation */
+        transition: none; /* Fixed property name from 'transitions' to 'transition' */
     }
     
     MessageDisplay.user-message {
@@ -184,7 +184,7 @@ class ChatInterface(Container):
         padding: 0 1;
         content-align: left top; /* Keep content anchored at top */
         box-sizing: border-box;
-        scrollbar-size: 1 1; /* Smaller scrollbars for more stability */
+        scrollbar-gutter: stable; /* Better than scrollbar-size which isn't valid */
     }
     
     #input-area {
