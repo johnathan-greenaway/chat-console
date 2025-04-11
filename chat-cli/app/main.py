@@ -590,26 +590,22 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         messages_container = self.query_one("#messages-container") # Keep SimpleChatApp update_messages_ui
         messages_container.remove_children() # Keep SimpleChatApp update_messages_ui
 
-        # Disable display updates while we're modifying the tree
-        # This prevents flickering as messages are added
-        self.screen.suspend_rendering()
-        
-        try:
+        # Temporarily disable automatic refresh while mounting messages
+        # This avoids excessive layout calculations and reduces flickering
+        with self.batch_update():
             # Batch add all messages first without any refresh/layout
             for message in self.messages: # Keep SimpleChatApp update_messages_ui
                 display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp update_messages_ui
                 messages_container.mount(display) # Keep SimpleChatApp update_messages_ui
-            
-            # A small delay after mounting all messages helps with layout stability
-            await asyncio.sleep(0.05)
-            
-            # Scroll after all messages are added
-            messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
-        finally:
-            # Resume rendering with minimal layout recalculation
-            self.screen.resume_rendering()
-            # Single refresh for everything at once
-            self.refresh(layout=False)
+        
+        # A small delay after mounting all messages helps with layout stability
+        await asyncio.sleep(0.05)
+        
+        # Scroll after all messages are added without animation
+        messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
+        
+        # Minimal refresh without full layout recalculation
+        self.refresh(layout=False)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None: # Keep SimpleChatApp on_input_submitted
         """Handle input submission (Enter key in the main input).""" # Keep SimpleChatApp on_input_submitted docstring
