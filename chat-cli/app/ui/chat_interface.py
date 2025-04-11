@@ -62,9 +62,8 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         height: auto; /* Let height adjust automatically */
         min-height: 1; /* Ensure minimum height */
         margin: 1 0;
-        /* overflow: auto; */ /* Removed overflow */
         padding: 1;
-        /* Ensure wrapping is enabled in __init__ */
+        text-wrap: wrap; /* Explicitly enable text wrapping via CSS */
     }
     
     MessageDisplay.user-message {
@@ -92,14 +91,14 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         highlight_code: bool = True,
         name: Optional[str] = None
     ):
+        # Initialize Static with empty content and necessary parameters
+        # Static supports markup but handles wrap differently via styles
         super().__init__(
-            highlight=True,
+            "",  # Initialize with empty content initially
             markup=True,
-            wrap=True,
-            # Initialize Static with empty content initially, will be set in on_mount
-            # Static handles markup/wrapping via styles/defaults
             name=name
         )
+        # Enable text wrapping via CSS (already set in DEFAULT_CSS)
         self.message = message
         self.highlight_code = highlight_code # Keep this for potential future use or logic
         
