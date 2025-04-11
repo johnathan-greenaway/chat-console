@@ -61,9 +61,14 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         width: 100%;
         height: auto; /* Let height adjust automatically */
         min-height: 1; /* Ensure minimum height */
+        min-width: 60; /* Set a reasonable minimum width to avoid constant width adjustment */
         margin: 1 0;
         padding: 1;
         text-wrap: wrap; /* Explicitly enable text wrapping via CSS */
+        content-align: left top; /* Anchor content to top-left */
+        overflow-y: visible; /* Allow content to expand */
+        box-sizing: border-box; /* Include padding in size calculations */
+        transitions: none; /* Disable any transitions that might cause animation */
     }
     
     MessageDisplay.user-message {
@@ -117,15 +122,18 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         
     async def update_content(self, content: str) -> None:
         """Update the message content using Static.update()"""
-        # Update Static widget with new formatted content
-        self.update(self._format_content(content))
-
-        # Update the stored message object content
+        # Update the stored message object content first
         self.message.content = content
         
-        # Optional: Refresh less frequently or only scroll
-        # self.refresh() # Refresh without layout might be sufficient
-        # Consider scrolling logic adjustments in the parent ChatInterface
+        # Format with fixed-width placeholder to minimize layout shifts
+        # This avoids text reflowing as new tokens arrive
+        formatted_content = self._format_content(content)
+        
+        # Update Static widget with minimal refresh
+        self.update(formatted_content)
+        
+        # Important: Don't call refresh() here - let the parent handle timing
+        # This prevents constant layout recalculation on each token
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp"""
@@ -169,6 +177,9 @@ class ChatInterface(Container):
         border-bottom: solid $primary-darken-2;
         overflow: auto;
         padding: 0 1;
+        content-align: left top; /* Keep content anchored at top */
+        box-sizing: border-box;
+        scrollbar-size: 1 1; /* Smaller scrollbars for more stability */
     }
     
     #input-area {

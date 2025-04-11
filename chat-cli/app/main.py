@@ -576,20 +576,25 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             pass
 
     async def update_messages_ui(self) -> None: # Keep SimpleChatApp update_messages_ui
-        """Update the messages UI.""" # Keep SimpleChatApp update_messages_ui docstring
+        """Update the messages UI with improved stability.""" # Keep SimpleChatApp update_messages_ui docstring
         # Clear existing messages # Keep SimpleChatApp update_messages_ui
         messages_container = self.query_one("#messages-container") # Keep SimpleChatApp update_messages_ui
         messages_container.remove_children() # Keep SimpleChatApp update_messages_ui
 
-        # Add messages with a small delay between each # Keep SimpleChatApp update_messages_ui
+        # Batch add all messages first without scrolling or refreshing between each mount
+        # This avoids unnecessary layout shifts while adding messages
         for message in self.messages: # Keep SimpleChatApp update_messages_ui
             display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp update_messages_ui
             messages_container.mount(display) # Keep SimpleChatApp update_messages_ui
-            messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
-            await asyncio.sleep(0.01)  # Small delay to prevent UI freezing # Keep SimpleChatApp update_messages_ui
-
-        # Final scroll to bottom # Keep SimpleChatApp update_messages_ui
+        
+        # Perform a single refresh and scroll after mounting all messages
+        # This significantly reduces the visual bouncing effect
+        # A small delay before scrolling helps ensure stable layout
+        await asyncio.sleep(0.05)  # Single delay after all messages are mounted
         messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
+        
+        # Use layout=False refresh if possible to further reduce bouncing
+        self.refresh(layout=False)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None: # Keep SimpleChatApp on_input_submitted
         """Handle input submission (Enter key in the main input).""" # Keep SimpleChatApp on_input_submitted docstring
@@ -919,15 +924,23 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         # Update the message object with the full content
                         assistant_message.content = content
 
-                        # Update UI with the full content (reverting to previous logic here)
+                        # Update UI with the content - this no longer triggers refresh itself
                         await message_display.update_content(content)
 
-                        # Force a refresh and scroll (keep this for now)
-                        self.refresh(layout=True)
-                        await asyncio.sleep(0.05)  # Longer delay for UI stability
-                        messages_container.scroll_end(animate=False)
-                        # Force another refresh to ensure content is visible
-                        self.refresh(layout=True)
+                        # Throttle UI updates to reduce visual jitter and improve performance
+                        # Only refresh visually every ~5 tokens (estimated by content length changes)
+                        content_length = len(content)
+                        do_refresh = (
+                            content_length < 20 or  # Always refresh for the first few tokens
+                            content_length % 16 == 0 or  # Then periodically
+                            content.endswith("\n")  # And on newlines
+                        )
+                        
+                        if do_refresh:
+                            # Only scroll without full layout recalculation
+                            messages_container.scroll_end(animate=False)
+                            # Light refresh without full layout recalculation
+                            self.refresh(layout=False)
                     except Exception as e:
                         debug_log(f"Error updating UI: {str(e)}")
                         log.error(f"Error updating UI: {str(e)}")
@@ -1023,8 +1036,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                          self.messages.pop() # Remove 'Thinking...' if no content arrived
                          await self.update_messages_ui()
 
-                # Final UI refresh might still be useful
-                self.refresh(layout=True)
+                # Final UI refresh with minimal layout recalculation
+                # Use layout=False to prevent UI jumping at the end
+                self.refresh(layout=False)
+                await asyncio.sleep(0.1)  # Allow UI to stabilize
+                messages_container = self.query_one("#messages-container")
+                messages_container.scroll_end(animate=False)
 
         except Exception as e:
             # Catch any unexpected errors during the callback itself
