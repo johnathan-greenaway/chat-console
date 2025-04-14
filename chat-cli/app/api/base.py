@@ -120,8 +120,8 @@ class BaseModelClient(ABC):
         if provider == "ollama":
             return await OllamaClient.create()
         elif provider == "openai":
-            return OpenAIClient()
+            return await OpenAIClient.create()
         elif provider == "anthropic":
-            return AnthropicClient()
+            return await AnthropicClient.create()
         else:
             raise ValueError(f"Unknown provider: {provider}")

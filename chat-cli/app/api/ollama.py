@@ -369,6 +369,10 @@ class OllamaClient(BaseModelClient):
                     
                     # Use a simpler async iteration pattern that's less error-prone
                     debug_log("Starting to process response stream")
+                    
+                    # Set a flag to track if we've yielded any content
+                    has_yielded_content = False
+                    
                     async for line in response.content:
                         # Check cancellation periodically
                         if self._active_stream_session is None:
@@ -378,30 +382,37 @@ class OllamaClient(BaseModelClient):
                         try:
                             # Process the chunk
                             if line:
-                                chunk = line.decode().strip()
                                 chunk_str = line.decode().strip()
                                 # Check if it looks like JSON before trying to parse
                                 if chunk_str.startswith('{') and chunk_str.endswith('}'):
                                     try:
                                         data = json.loads(chunk_str)
                                         if isinstance(data, dict) and "response" in data:
-                                            chunk_length = len(data["response"]) if data["response"] else 0
-                                            debug_log(f"Yielding chunk of length: {chunk_length}")
-                                            yield data["response"]
+                                            response_text = data["response"]
+                                            if response_text:  # Only yield non-empty responses
+                                                has_yielded_content = True
+                                                chunk_length = len(response_text)
+                                                # Only log occasionally to reduce console spam
+                                                if chunk_length % 20 == 0:
+                                                    debug_log(f"Yielding chunk of length: {chunk_length}")
+                                                yield response_text
                                         else:
-                                            debug_log(f"JSON chunk missing 'response' key: {chunk_str}")
+                                            debug_log(f"JSON chunk missing 'response' key: {chunk_str[:100]}")
                                     except json.JSONDecodeError:
-                                        debug_log(f"JSON decode error for chunk: {chunk_str}")
+                                        debug_log(f"JSON decode error for chunk: {chunk_str[:100]}")
                                 else:
                                     # Log unexpected non-JSON lines but don't process them
-                                    if chunk_str: # Avoid logging empty lines
-                                        debug_log(f"Received unexpected non-JSON line: {chunk_str}")
-                                # Continue processing next line regardless of parsing success/failure of current line
-                                continue
+                                    if chunk_str and len(chunk_str) > 5:  # Avoid logging empty or tiny lines
+                                        debug_log(f"Received unexpected non-JSON line: {chunk_str[:100]}")
                         except Exception as chunk_err:
                             debug_log(f"Error processing chunk: {str(chunk_err)}")
                             # Continue instead of breaking to try processing more chunks
                             continue
+                    
+                    # If we didn't yield any content, yield a default message
+                    if not has_yielded_content:
+                        debug_log("No content was yielded from stream, providing fallback response")
+                        yield "I'm sorry, but I couldn't generate a response. Please try again or try a different model."
                     
                     logger.info("Streaming completed successfully")
                     debug_log("Streaming completed successfully")

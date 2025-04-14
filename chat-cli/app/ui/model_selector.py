@@ -243,12 +243,14 @@ class ModelSelector(Container):
                         
                     # Set the model if we found one
                     if first_model and len(first_model) >= 2:
-                        # Resolve the model ID before storing and sending
+                        # Get the original ID from the model option
                         original_id = first_model[1]
+                        # Resolve the model ID for internal use and messaging
                         resolved_id = resolve_model_id(original_id)
                         logger.info(f"on_select_changed (provider): Original ID '{original_id}' resolved to '{resolved_id}'")
                         self.selected_model = resolved_id
-                        model_select.value = resolved_id
+                        # Use the original ID for the select widget to avoid invalid value errors
+                        model_select.value = original_id
                         model_select.remove_class("hide")
                         self.query_one("#custom-model-input").add_class("hide")
                         self.post_message(self.ModelSelected(resolved_id))
@@ -310,24 +312,35 @@ class ModelSelector(Container):
     def set_selected_model(self, model_id: str) -> None:
         """Set the selected model, ensuring it's properly resolved"""
         # First resolve the model ID to ensure we're using the full ID
+        original_id = model_id
         resolved_id = resolve_model_id(model_id)
-        logger.info(f"set_selected_model: Original ID '{model_id}' resolved to '{resolved_id}'")
+        logger.info(f"set_selected_model: Original ID '{original_id}' resolved to '{resolved_id}'")
         
-        # Store the resolved ID
+        # Store the resolved ID internally
         self.selected_model = resolved_id
         
         # Update the UI based on whether this is a known model or custom
-        if resolved_id in CONFIG["available_models"]:
-            select = self.query_one("#model-select", Select)
+        # Check if the original ID is in the available options
+        model_select = self.query_one("#model-select", Select)
+        available_options = [opt[1] for opt in model_select.options]
+        
+        if original_id in available_options:
+            # Use the original ID for the select widget
             custom_input = self.query_one("#custom-model-input")
-            select.value = resolved_id
-            select.remove_class("hide")
+            model_select.value = original_id
+            model_select.remove_class("hide")
+            custom_input.add_class("hide")
+        elif resolved_id in available_options:
+            # If the resolved ID is in options, use that
+            custom_input = self.query_one("#custom-model-input")
+            model_select.value = resolved_id
+            model_select.remove_class("hide")
             custom_input.add_class("hide")
         else:
-            select = self.query_one("#model-select", Select)
+            # Use custom input for models not in the select options
             custom_input = self.query_one("#custom-model-input")
-            select.value = "custom"
-            select.add_class("hide")
+            model_select.value = "custom"
+            model_select.add_class("hide")
             custom_input.value = resolved_id
             custom_input.remove_class("hide")
 

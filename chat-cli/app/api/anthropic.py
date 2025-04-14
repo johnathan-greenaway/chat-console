@@ -144,86 +144,110 @@ class AnthropicClient(BaseModelClient):
         except ImportError:
             debug_log = lambda msg: None
 
+        # Always include a reliable fallback list in case API calls fail
+        fallback_models = [
+            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
+            {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
+            {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
+            {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
+            {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},
+        ]
+
+        # If no client is initialized, return fallback immediately
+        if not self.client:
+            debug_log("Anthropic: No client initialized, using fallback models")
+            return fallback_models
+
         try:
             debug_log("Anthropic: Fetching models from API...")
-            # The Anthropic Python SDK might not have a direct high-level method for listing models yet.
-            # We might need to use the underlying HTTP client or make a direct request.
-            # Let's assume for now the SDK client *does* have a way, like self.client.models.list()
-            # If this fails, we'd need to implement a direct HTTP GET request.
-            # response = await self.client.models.list() # Hypothetical SDK method
-
-            # --- Alternative: Direct HTTP Request using httpx (if client exposes it) ---
-            # Check if the client has an internal http_client we can use
+            
+            # Try using the models.list method if available in newer SDK versions
+            if hasattr(self.client, 'models') and hasattr(self.client.models, 'list'):
+                try:
+                    debug_log("Anthropic: Using client.models.list() method")
+                    models_response = await self.client.models.list()
+                    if hasattr(models_response, 'data') and isinstance(models_response.data, list):
+                        formatted_models = [
+                            {"id": model.id, "name": getattr(model, "name", model.id)}
+                            for model in models_response.data
+                        ]
+                        debug_log(f"Anthropic: Found {len(formatted_models)} models via SDK")
+                        return formatted_models
+                except Exception as sdk_err:
+                    debug_log(f"Anthropic: Error using models.list(): {str(sdk_err)}")
+                    # Continue to next method
+            
+            # Try direct HTTP request if client exposes the underlying HTTP client
             if hasattr(self.client, '_client') and hasattr(self.client._client, 'get'):
-                 response = await self.client._client.get(
-                     "/v1/models",
-                     headers={"anthropic-version": "2023-06-01"} # Add required version header
-                 )
-                 response.raise_for_status() # Raise HTTP errors
-                 models_data = response.json()
-                 debug_log(f"Anthropic: API response received: {models_data}")
-                 if 'data' in models_data and isinstance(models_data['data'], list):
-                      # Format the response as expected: list of {"id": ..., "name": ...}
-                      formatted_models = [
-                          {"id": model.get("id"), "name": model.get("display_name", model.get("id"))}
-                          for model in models_data['data']
-                          if model.get("id") # Ensure model has an ID
-                      ]
-                      # Log each model ID clearly for debugging
-                      debug_log(f"Anthropic: Available models from API:")
-                      for model in formatted_models:
-                          debug_log(f"  - ID: {model.get('id')}, Name: {model.get('name')}")
-                      return formatted_models
-                 else:
-                      debug_log("Anthropic: Unexpected API response format for models.")
-                      return []
-            else:
-                 debug_log("Anthropic: Client does not expose HTTP client for model listing. Returning empty list.")
-                 return [] # Cannot fetch dynamically
+                try:
+                    debug_log("Anthropic: Using direct HTTP request to /v1/models")
+                    response = await self.client._client.get(
+                        "/v1/models",
+                        headers={"anthropic-version": "2023-06-01"}
+                    )
+                    response.raise_for_status()
+                    models_data = response.json()
+                    
+                    if 'data' in models_data and isinstance(models_data['data'], list):
+                        formatted_models = [
+                            {"id": model.get("id"), "name": model.get("display_name", model.get("id"))}
+                            for model in models_data['data']
+                            if model.get("id")
+                        ]
+                        debug_log(f"Anthropic: Found {len(formatted_models)} models via HTTP request")
+                        return formatted_models
+                    else:
+                        debug_log("Anthropic: Unexpected API response format")
+                except Exception as http_err:
+                    debug_log(f"Anthropic: HTTP request error: {str(http_err)}")
+                    # Continue to fallback
+            
+            # If we reach here, both methods failed
+            debug_log("Anthropic: All API methods failed, using fallback models")
+            return fallback_models
 
         except Exception as e:
             debug_log(f"Anthropic: Failed to fetch models from API: {str(e)}")
-            # Fallback to a minimal hardcoded list in case of API error
-            # Include Claude 3.7 Sonnet with the correct full ID
-            fallback_models = [
-                {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
-                {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
-                {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
-                {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
-                {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},  # Add Claude 3.7 Sonnet
-            ]
-            debug_log("Anthropic: Using fallback model list:")
-            for model in fallback_models:
-                debug_log(f"  - ID: {model['id']}, Name: {model['name']}")
+            debug_log("Anthropic: Using fallback model list")
             return fallback_models
 
-    # Keep this synchronous for now, but make it call the async fetcher
-    # Note: This is slightly awkward. Ideally, config loading would be async.
-    # For now, we'll run the async fetcher within the sync method using asyncio.run()
-    # This is NOT ideal for performance but avoids larger refactoring of config loading.
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available Claude models by fetching from API."""
+        # Reliable fallback list that doesn't depend on async operations
+        fallback_models = [
+            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
+            {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
+            {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
+            {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
+            {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},
+        ]
+        
         try:
-            # Run the async fetcher method synchronously
-            models = asyncio.run(self._fetch_models_from_api())
-            return models
-        except RuntimeError as e:
-             # Handle cases where asyncio.run can't be called (e.g., already in an event loop)
-             # This might happen during app runtime if called again. Fallback needed.
-             try:
-                 from app.main import debug_log
-             except ImportError:
-                 debug_log = lambda msg: None
-             debug_log(f"Anthropic: Cannot run async model fetch synchronously ({e}). Falling back to hardcoded list.")
-             # Use the same fallback list as in _fetch_models_from_api
-             fallback_models = [
-                 {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
-                 {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
-                 {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
-                 {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
-                 {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},  # Add Claude 3.7 Sonnet
-             ]
-             debug_log("Anthropic: Using fallback model list in get_available_models:")
-             for model in fallback_models:
-                 debug_log(f"  - ID: {model['id']}, Name: {model['name']}")
-             return fallback_models
+            # Check if we're already in an event loop
+            try:
+                loop = asyncio.get_running_loop()
+                in_loop = True
+            except RuntimeError:
+                in_loop = False
+                
+            if in_loop:
+                # We're already in an event loop, create a future
+                try:
+                    from app.main import debug_log
+                except ImportError:
+                    debug_log = lambda msg: None
+                    
+                debug_log("Anthropic: Already in event loop, using fallback models")
+                return fallback_models
+            else:
+                # Not in an event loop, we can use asyncio.run
+                models = asyncio.run(self._fetch_models_from_api())
+                return models
+        except Exception as e:
+            try:
+                from app.main import debug_log
+            except ImportError:
+                debug_log = lambda msg: None
+                
+            debug_log(f"Anthropic: Error in get_available_models: {str(e)}")
+            return fallback_models

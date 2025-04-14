@@ -136,13 +136,52 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         # This allows parent to control refresh timing and avoid flickering
         self.update(formatted_content, refresh=False)
         
-        # No refresh or layout recalculation is performed here
-        # The parent container will handle refresh timing for better stability
+        # Always force a minimal refresh to ensure content is visible
+        # This is critical for streaming to work properly
+        self.refresh(layout=False)
+        
+        # For Ollama responses, we need more aggressive refresh
+        # Check if this is likely an Ollama response by looking at the parent app
+        try:
+            app = self.app
+            if app and hasattr(app, 'selected_model'):
+                model = app.selected_model
+                if model and ('llama' in model.lower() or 'mistral' in model.lower() or 
+                             'gemma' in model.lower() or 'phi' in model.lower() or
+                             'ollama' in model.lower()):
+                    # This is likely an Ollama model, force a more thorough refresh
+                    # Without doing a full layout recalculation
+                    self.refresh(layout=True)
+                    
+                    # Force parent container to scroll to end
+                    try:
+                        parent = self.parent
+                        if parent and hasattr(parent, 'scroll_end'):
+                            parent.scroll_end(animate=False)
+                    except Exception:
+                        pass
+        except Exception:
+            # Ignore any errors in this detection logic
+            pass
         
     def _format_content(self, content: str) -> str:
-        """Format message content with timestamp"""
+        """Format message content with timestamp and handle markdown links"""
         timestamp = datetime.now().strftime("%H:%M")
-        return f"[dim]{timestamp}[/dim] {content}"
+        
+        # Fix markdown-style links that cause markup errors
+        # Convert [text](url) to a safe format for Textual markup
+        content = re.sub(
+            r'\[([^\]]+)\]\(([^)]+)\)',
+            lambda m: f"{m.group(1)} ({m.group(2)})",
+            content
+        )
+        
+        # Escape any other potential markup characters
+        content = content.replace("[", "\\[").replace("]", "\\]")
+        # But keep our timestamp markup
+        timestamp_markup = f"[dim]{timestamp}[/dim]"
+        
+        return f"{timestamp_markup} {content}"
 
 class InputWithFocus(Input):
     """Enhanced Input that better handles focus and maintains cursor position"""

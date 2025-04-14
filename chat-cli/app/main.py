@@ -23,6 +23,8 @@ file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelnam
 debug_logger = logging.getLogger("chat-cli-debug")
 debug_logger.setLevel(logging.DEBUG)
 debug_logger.addHandler(file_handler)
+# Prevent propagation to the root logger (which would print to console)
+debug_logger.propagate = False
 
 # Add a convenience function to log to this file
 def debug_log(message):
@@ -942,30 +944,40 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
                         # Update UI with the content - this no longer triggers refresh itself
                         await message_display.update_content(content)
+                        
+                        # Force a refresh after each update to ensure content is visible
+                        # This is critical for streaming to work properly
+                        self.refresh(layout=False)
 
+                        # Scroll after each content update to ensure it's visible
+                        messages_container.scroll_end(animate=False)
+                        
                         # Much more aggressive throttling of UI updates to eliminate visual jitter
                         # By using a larger modulo value, we significantly reduce refresh frequency
                         # This improves stability at the cost of slightly choppier animations
                         content_length = len(content)
                         
-                        # Define some key refresh points
+                        # Define some key refresh points - more frequent than before
                         new_paragraph = content.endswith("\n") and content.count("\n") > 0
+                        code_block = "```" in content
                         do_refresh = (
-                            content_length < 5 or  # Only first few tokens
-                            content_length % 64 == 0 or  # Very infrequent periodic updates
-                            new_paragraph  # Refresh on paragraph breaks
+                            content_length < 10 or  # More frequent on first few tokens
+                            content_length % 32 == 0 or  # More frequent periodic updates (32 vs 64)
+                            new_paragraph or  # Refresh on paragraph breaks
+                            code_block  # Refresh when code blocks are detected
                         )
                         
-                        # Check if it's been enough time since last refresh (250ms minimum)
+                        # Check if it's been enough time since last refresh (reduced to 200ms from 250ms)
                         current_time = time.time()
                         time_since_refresh = current_time - last_refresh_time
                         
-                        if do_refresh and time_since_refresh > 0.25:
+                        if do_refresh and time_since_refresh > 0.2:
                             # Store the time we did the refresh
                             last_refresh_time = current_time
-                            # Skip layout updates completely during streaming
-                            # Just ensure content is still visible by scrolling
+                            # Ensure content is still visible by scrolling
                             messages_container.scroll_end(animate=False)
+                            # Force a more thorough refresh periodically
+                            self.refresh(layout=True)
                     except Exception as e:
                         debug_log(f"Error updating UI: {str(e)}")
                         log.error(f"Error updating UI: {str(e)}")
@@ -1054,6 +1066,21 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     # Update the final message object content (optional, UI should be up-to-date)
                     if self.messages and self.messages[-1].role == "assistant":
                         self.messages[-1].content = full_response
+                        
+                    # Force a UI refresh with the message display to ensure it's fully rendered
+                    try:
+                        # Get the message display for the assistant message
+                        messages_container = self.query_one("#messages-container")
+                        message_displays = messages_container.query("MessageDisplay")
+                        # Check if we found any message displays
+                        if message_displays and len(message_displays) > 0:
+                            # Get the last message display which should be our assistant message
+                            last_message_display = message_displays[-1]
+                            debug_log("Forcing final content update on message display")
+                            # Force a final content update
+                            await last_message_display.update_content(full_response)
+                    except Exception as disp_err:
+                        debug_log(f"Error updating final message display: {str(disp_err)}")
                 else:
                     debug_log("Worker finished successfully but response was empty or invalid.")
                     # Handle case where 'Thinking...' might still be the last message
@@ -1061,11 +1088,24 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                          self.messages.pop() # Remove 'Thinking...' if no content arrived
                          await self.update_messages_ui()
 
-                # Final UI refresh with minimal layout recalculation
-                # Use layout=False to prevent UI jumping at the end
-                self.refresh(layout=False)
-                await asyncio.sleep(0.1)  # Allow UI to stabilize
+                # Force a full UI refresh to ensure content is visible
                 messages_container = self.query_one("#messages-container")
+                
+                # Sequence of UI refreshes to ensure content is properly displayed
+                # 1. First do a lightweight refresh
+                self.refresh(layout=False)
+                
+                # 2. Short delay to allow the UI to process
+                await asyncio.sleep(0.1)  
+                
+                # 3. Ensure we're scrolled to the end
+                messages_container.scroll_end(animate=False)
+                
+                # 4. Full layout refresh
+                self.refresh(layout=True)
+                
+                # 5. Final delay and scroll to ensure everything is visible
+                await asyncio.sleep(0.1)
                 messages_container.scroll_end(animate=False)
 
         except Exception as e:

@@ -297,9 +297,24 @@ async def generate_streaming_response(
                         full_response += new_content
                         # Send content to UI
                         debug_log(f"Updating UI with content length: {len(full_response)}")
-                        await callback(full_response)
+                        try:
+                            await callback(full_response)
+                            debug_log("UI callback completed successfully")
+                        except Exception as callback_err:
+                            debug_log(f"Error in UI callback: {str(callback_err)}")
+                            logger.error(f"Error in UI callback: {str(callback_err)}")
                         buffer = []
                         last_update = current_time
+                        
+                        # Force UI refresh after each update for Ollama responses
+                        if is_ollama:
+                            debug_log("Forcing UI refresh for Ollama response")
+                            try:
+                                # Ensure the app refreshes the UI
+                                if hasattr(app, 'refresh'):
+                                    app.refresh(layout=False)
+                            except Exception as refresh_err:
+                                debug_log(f"Error forcing UI refresh: {str(refresh_err)}")
                         
                         # Small delay to let UI catch up
                         await asyncio.sleep(0.05)
@@ -316,7 +331,22 @@ async def generate_streaming_response(
             new_content = ''.join(buffer)
             full_response += new_content
             debug_log(f"Sending final content, total length: {len(full_response)}")
-            await callback(full_response)
+            try:
+                await callback(full_response)
+                debug_log("Final UI callback completed successfully")
+                
+                # Force final UI refresh for Ollama responses
+                if is_ollama:
+                    debug_log("Forcing final UI refresh for Ollama response")
+                    try:
+                        # Ensure the app refreshes the UI
+                        if hasattr(app, 'refresh'):
+                            app.refresh(layout=True)  # Use layout=True for final refresh
+                    except Exception as refresh_err:
+                        debug_log(f"Error forcing final UI refresh: {str(refresh_err)}")
+            except Exception as callback_err:
+                debug_log(f"Error in final UI callback: {str(callback_err)}")
+                logger.error(f"Error in final UI callback: {str(callback_err)}")
 
         debug_log(f"Streaming response completed successfully. Response length: {len(full_response)}")
         logger.info(f"Streaming response completed successfully. Response length: {len(full_response)}")
@@ -442,7 +472,27 @@ def resolve_model_id(model_id_or_name: str) -> str:
          logger.warning("No available_models found in CONFIG to resolve against.")
          return model_id_or_name # Return original if no models to check
 
-    # 1. Check if the input is already a valid full ID (must contain a date suffix)
+    # Special case for Ollama models with version format (model:version)
+    if ":" in input_lower and not input_lower.startswith("claude-"):
+        logger.info(f"Input '{input_lower}' appears to be an Ollama model with version, returning as-is")
+        return model_id_or_name
+
+    # Handle special cases for common model formats
+    # 1. Handle Ollama models with dot notation (e.g., phi3.latest, llama3.1)
+    if "." in input_lower and not input_lower.startswith("claude-"):
+        # This is likely an Ollama model with dot notation
+        logger.info(f"Input '{input_lower}' appears to be an Ollama model with dot notation")
+        # Convert dots to colons for Ollama format if needed
+        if ":" not in input_lower:
+            parts = input_lower.split(".")
+            if len(parts) == 2:
+                base_model, version = parts
+                ollama_format = f"{base_model}:{version}"
+                logger.info(f"Converting '{input_lower}' to Ollama format: '{ollama_format}'")
+                return ollama_format
+        return model_id_or_name
+
+    # 2. Check if the input is already a valid full ID (must contain a date suffix)
     # Full Claude IDs should have format like "claude-3-opus-20240229" with a date suffix
     for full_id in available_models:
         if full_id.lower() == input_lower:
@@ -460,7 +510,7 @@ def resolve_model_id(model_id_or_name: str) -> str:
     best_match = None
     match_type = "None"
 
-    # 2. Iterate through available models for other matches
+    # 3. Iterate through available models for other matches
     for full_id, model_info in available_models.items():
         full_id_lower = full_id.lower()
         display_name = model_info.get("display_name", "")
@@ -468,12 +518,12 @@ def resolve_model_id(model_id_or_name: str) -> str:
 
         logger.debug(f"Comparing '{input_lower}' against '{full_id_lower}' (Display: '{display_name}')")
 
-        # 2a. Exact match on display name (case-insensitive)
+        # 3a. Exact match on display name (case-insensitive)
         if display_name_lower == input_lower:
             logger.info(f"Resolved '{model_id_or_name}' to '{full_id}' via exact display name match.")
             return full_id # Exact display name match is high confidence
 
-        # 2b. Check if input is a known short alias (handle common cases explicitly)
+        # 3b. Check if input is a known short alias (handle common cases explicitly)
         # Special case for Claude 3.7 Sonnet which seems to be causing issues
         if input_lower == "claude-3.7-sonnet":
             # Hardcoded resolution for this specific model
@@ -501,7 +551,7 @@ def resolve_model_id(model_id_or_name: str) -> str:
              # This is also high confidence
              return full_id
 
-        # 2c. Check if input is a prefix of the full ID (more general, lower confidence)
+        # 3c. Check if input is a prefix of the full ID (more general, lower confidence)
         if full_id_lower.startswith(input_lower):
             logger.debug(f"Potential prefix match: '{input_lower}' vs '{full_id_lower}'")
             # Don't return immediately, might find a better match (e.g., display name or alias)
@@ -510,7 +560,7 @@ def resolve_model_id(model_id_or_name: str) -> str:
                  match_type = "Prefix"
                  logger.debug(f"Setting best_match to '{full_id}' based on prefix.")
 
-        # 2d. Check derived short name from display name (less reliable, keep as lower priority)
+        # 3d. Check derived short name from display name (less reliable, keep as lower priority)
         # Normalize display name: lower, replace space and dot with hyphen
         derived_short_name = display_name_lower.replace(" ", "-").replace(".", "-")
         if derived_short_name == input_lower:
@@ -521,7 +571,7 @@ def resolve_model_id(model_id_or_name: str) -> str:
                   match_type = "Derived Short Name"
                   logger.debug(f"Updating best_match to '{full_id}' based on derived name.")
 
-    # 3. Return best match found or original input
+    # 4. Return best match found or original input
     if best_match:
         logger.info(f"Returning best match found for '{model_id_or_name}': '{best_match}' (Type: {match_type})")
         return best_match
