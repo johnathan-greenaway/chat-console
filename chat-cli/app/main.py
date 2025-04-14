@@ -644,9 +644,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         await self.update_messages_ui()
 
         # If this is the first message and dynamic titles are enabled, generate one
-        if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True):
+        # Only attempt title generation if the message has sufficient content (at least 3 characters)
+        if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True) and len(content) >= 3:
             log("First message detected, generating title...")
-            debug_log("First message detected, attempting to generate conversation title")
+            debug_log(f"First message detected with length {len(content)}, generating conversation title")
             title_generation_in_progress = True # Use a local flag
             loading = self.query_one("#loading-indicator")
             loading.remove_class("hidden") # Show loading for title gen

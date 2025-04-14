@@ -291,8 +291,12 @@ async def generate_streaming_response(
                     buffer.append(chunk)
                     current_time = time.time()
                     
-                    # Update UI if enough time has passed or buffer is large
-                    if current_time - last_update >= update_interval or len(''.join(buffer)) > 100:
+                    # Update UI with every chunk for short messages, or throttle for longer ones
+                    # This is especially important for short messages like "hi" that might otherwise not trigger updates
+                    if (current_time - last_update >= update_interval or 
+                        len(''.join(buffer)) > 10 or  # Much more aggressive buffer flush threshold
+                        len(full_response) < 20):     # Always update for very short responses
+                        
                         new_content = ''.join(buffer)
                         full_response += new_content
                         # Send content to UI
