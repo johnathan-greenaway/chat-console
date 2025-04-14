@@ -3,7 +3,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
@@ -15,7 +14,6 @@ logger = logging.getLogger(__name__)
 class OllamaClient(BaseModelClient):
     def __init__(self):
         from ..config import OLLAMA_BASE_URL
-        from ..utils import ensure_ollama_running
         self.base_url = OLLAMA_BASE_URL.rstrip('/')
         logger.info(f"Initializing Ollama client with base URL: {self.base_url}")
         
@@ -27,10 +25,18 @@ class OllamaClient(BaseModelClient):
         
         # Path to the cached models file
         self.models_cache_path = Path(__file__).parent.parent / "data" / "ollama-models.json"
+
+    @classmethod
+    async def create(cls) -> 'OllamaClient':
+        """Factory method to create and initialize an OllamaClient instance"""
+        from ..utils import ensure_ollama_running
+        client = cls()
         
         # Try to start Ollama if not running
-        if not ensure_ollama_running():
+        if not await ensure_ollama_running():
             raise Exception(f"Failed to start Ollama server. Please ensure Ollama is installed and try again.")
+            
+        return client
         
     def _prepare_messages(self, messages: List[Dict[str, str]], style: Optional[str] = None) -> str:
         """Convert chat messages to Ollama format"""

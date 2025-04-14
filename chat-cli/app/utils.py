@@ -165,6 +165,9 @@ async def generate_streaming_response(
     
     debug_log(f"Messages validation complete: {len(messages)} total messages")
     
+    # Import time module within the worker function scope
+    import time
+    
     full_response = ""
     buffer = []
     last_update = time.time()
@@ -361,7 +364,7 @@ async def generate_streaming_response(
              return full_response
         return None # Indicate completion without full response (e.g., error before loop)
 
-def ensure_ollama_running() -> bool:
+async def ensure_ollama_running() -> bool:
     """
     Check if Ollama is running and try to start it if not.
     Returns True if Ollama is running after check/start attempt.
@@ -388,8 +391,7 @@ def ensure_ollama_running() -> bool:
             )
             
             # Wait a moment for it to start
-            import time
-            time.sleep(2)
+            await asyncio.sleep(2)  # Use asyncio.sleep instead of time.sleep
             
             # Check if process is still running
             if process.poll() is None:

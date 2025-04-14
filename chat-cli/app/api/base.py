@@ -71,7 +71,7 @@ class BaseModelClient(ABC):
             return None
             
     @staticmethod
-    def get_client_for_model(model_name: str) -> 'BaseModelClient':
+    async def get_client_for_model(model_name: str) -> 'BaseModelClient':
         """Factory method to get appropriate client for model"""
         from ..config import CONFIG, AVAILABLE_PROVIDERS
         from .anthropic import AnthropicClient
@@ -118,7 +118,7 @@ class BaseModelClient(ABC):
         
         # Return appropriate client
         if provider == "ollama":
-            return OllamaClient()
+            return await OllamaClient.create()
         elif provider == "openai":
             return OpenAIClient()
         elif provider == "anthropic":

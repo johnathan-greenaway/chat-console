@@ -5,7 +5,14 @@ from ..config import OPENAI_API_KEY
 
 class OpenAIClient(BaseModelClient):
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        self.client = None  # Initialize in create()
+
+    @classmethod
+    async def create(cls) -> 'OpenAIClient':
+        """Create a new instance with async initialization."""
+        instance = cls()
+        instance.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        return instance
     
     def _prepare_messages(self, messages: List[Dict[str, str]], style: Optional[str] = None) -> List[Dict[str, str]]:
         """Prepare messages for OpenAI API"""

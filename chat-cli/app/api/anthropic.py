@@ -7,7 +7,14 @@ from ..utils import resolve_model_id  # Import the resolve_model_id function
 
 class AnthropicClient(BaseModelClient):
     def __init__(self):
-        self.client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        self.client = None  # Initialize in create()
+
+    @classmethod
+    async def create(cls) -> 'AnthropicClient':
+        """Create a new instance with async initialization."""
+        instance = cls()
+        instance.client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        return instance
     
     def _prepare_messages(self, messages: List[Dict[str, str]], style: Optional[str] = None) -> List[Dict[str, str]]:
         """Prepare messages for Claude API"""

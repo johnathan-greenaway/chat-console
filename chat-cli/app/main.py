@@ -6,6 +6,7 @@ import os
 import asyncio
 import typer
 import logging
+import time
 from typing import List, Optional, Callable, Awaitable
 from datetime import datetime
 
@@ -433,7 +434,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             # Check for available models # Keep SimpleChatApp on_mount
             from app.api.ollama import OllamaClient # Keep SimpleChatApp on_mount
             try: # Keep SimpleChatApp on_mount
-                ollama = OllamaClient() # Keep SimpleChatApp on_mount
+                ollama = await OllamaClient.create() # Keep SimpleChatApp on_mount
                 models = await ollama.get_available_models() # Keep SimpleChatApp on_mount
                 if not models: # Keep SimpleChatApp on_mount
                     api_issues.append("- No Ollama models found") # Keep SimpleChatApp on_mount
@@ -520,7 +521,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # Get the client for the current model first and cancel the connection
                 try:
                     model = self.selected_model
-                    client = BaseModelClient.get_client_for_model(model)
+                    client = await BaseModelClient.get_client_for_model(model)
                     
                     # Call the client's cancel method if it's supported
                     if hasattr(client, 'cancel_stream'):
@@ -667,7 +668,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         # Last resort - check for a common Ollama model
                         try:
                             from app.api.ollama import OllamaClient
-                            ollama = OllamaClient()
+                            ollama = await OllamaClient.create()
                             models = await ollama.get_available_models()
                             if models and len(models) > 0:
                                 debug_log(f"Found {len(models)} Ollama models, using first one")
@@ -681,7 +682,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                             debug_log("Final fallback to llama3")
 
                 debug_log(f"Getting client for model: {model}")
-                client = BaseModelClient.get_client_for_model(model)
+                client = await BaseModelClient.get_client_for_model(model)
                 
                 if client is None:
                     debug_log(f"No client available for model: {model}, trying to initialize")
@@ -690,7 +691,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     if client_type:
                         debug_log(f"Found client type {client_type.__name__} for {model}, initializing")
                         try:
-                            client = client_type()
+                            client = await client_type.create()
                             debug_log("Client initialized successfully")
                         except Exception as init_err:
                             debug_log(f"Error initializing client: {str(init_err)}")
@@ -700,12 +701,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         # Try a different model as last resort
                         if OPENAI_API_KEY:
                             from app.api.openai import OpenAIClient
-                            client = OpenAIClient()
+                            client = await OpenAIClient.create()
                             model = "gpt-3.5-turbo"
                             debug_log("Falling back to OpenAI for title generation")
                         elif ANTHROPIC_API_KEY:
                             from app.api.anthropic import AnthropicClient
-                            client = AnthropicClient()
+                            client = await AnthropicClient.create()
                             model = "claude-instant-1.2"
                             debug_log("Falling back to Anthropic for title generation")
                         else:
@@ -822,7 +823,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 else:
                     # Check for a common Ollama model
                     try:
-                        ollama = OllamaClient()
+                        ollama = await OllamaClient.create()
                         models = await ollama.get_available_models()
                         if models and len(models) > 0:
                             debug_log(f"Found {len(models)} Ollama models, using first one")
@@ -867,7 +868,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             # Get appropriate client
             debug_log(f"Getting client for model: {model}")
             try:
-                client = BaseModelClient.get_client_for_model(model)
+                client = await BaseModelClient.get_client_for_model(model)
                 debug_log(f"Client: {client.__class__.__name__ if client else 'None'}")
                 
                 if client is None:
@@ -877,7 +878,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                     if client_type:
                         debug_log(f"Found client type {client_type.__name__} for {model}, initializing")
                         try:
-                            client = client_type()
+                            client = await client_type.create()
                             debug_log(f"Successfully initialized {client_type.__name__}")
                         except Exception as init_err:
                             debug_log(f"Error initializing client: {str(init_err)}")
@@ -887,12 +888,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         # Try a different model as last resort
                         if OPENAI_API_KEY:
                             from app.api.openai import OpenAIClient
-                            client = OpenAIClient()
+                            client = await OpenAIClient.create()
                             model = "gpt-3.5-turbo"
                             debug_log("Falling back to OpenAI client")
                         elif ANTHROPIC_API_KEY:
                             from app.api.anthropic import AnthropicClient
-                            client = AnthropicClient()
+                            client = await AnthropicClient.create()
                             model = "claude-instant-1.2"
                             debug_log("Falling back to Anthropic client")
                         else:
