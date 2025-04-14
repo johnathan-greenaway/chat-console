@@ -943,42 +943,53 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         # Update the message object with the full content
                         assistant_message.content = content
 
-                        # Update UI with the content - this no longer triggers refresh itself
+                        # Update UI with the content - the MessageDisplay will now handle its own refresh
+                        # This is a critical change that ensures content is immediately visible
                         await message_display.update_content(content)
                         
-                        # Force a refresh after each update to ensure content is visible
-                        # This is critical for streaming to work properly
-                        self.refresh(layout=False)
-
-                        # Scroll after each content update to ensure it's visible
+                        # CRITICAL: Force immediate UI refresh after EVERY update 
+                        # This ensures we don't need a second Enter press to see content
+                        self.refresh(layout=True)
+                        
+                        # Always scroll after each update to ensure visibility
                         messages_container.scroll_end(animate=False)
                         
-                        # Much more aggressive throttling of UI updates to eliminate visual jitter
-                        # By using a larger modulo value, we significantly reduce refresh frequency
-                        # This improves stability at the cost of slightly choppier animations
+                        # For longer responses, we can throttle the heavy refreshes
+                        # to reduce visual jitter, but still do light refreshes for every update
                         content_length = len(content)
                         
-                        # Define some key refresh points - more frequent than before
+                        # Define key refresh points that require more thorough updates
                         new_paragraph = content.endswith("\n") and content.count("\n") > 0
                         code_block = "```" in content
-                        do_refresh = (
-                            content_length < 10 or  # More frequent on first few tokens
-                            content_length % 32 == 0 or  # More frequent periodic updates (32 vs 64)
-                            new_paragraph or  # Refresh on paragraph breaks
-                            code_block  # Refresh when code blocks are detected
+                        needs_thorough_refresh = (
+                            content_length < 30 or       # Very aggressive for short responses
+                            content_length % 16 == 0 or  # More frequent periodic updates 
+                            new_paragraph or             # Refresh on paragraph breaks
+                            code_block                   # Refresh when code blocks are detected
                         )
                         
-                        # Check if it's been enough time since last refresh (reduced to 200ms from 250ms)
+                        # Check if it's been enough time since last heavy refresh
+                        # Reduced from 200ms to 100ms for more responsive UI
                         current_time = time.time()
                         time_since_refresh = current_time - last_refresh_time
                         
-                        if do_refresh and time_since_refresh > 0.2:
-                            # Store the time we did the refresh
+                        if needs_thorough_refresh and time_since_refresh > 0.1:
+                            # Store the time we did the heavy refresh
                             last_refresh_time = current_time
-                            # Ensure content is still visible by scrolling
+                            
+                            # Ensure content is visible with an aggressive, guaranteed update sequence
+                            # 1. Scroll to ensure visibility
                             messages_container.scroll_end(animate=False)
-                            # Force a more thorough refresh periodically
+                            
+                            # 2. Force a comprehensive refresh with layout recalculation
                             self.refresh(layout=True)
+                            
+                            # 3. Small delay for rendering
+                            await asyncio.sleep(0.01)
+                            
+                            # 4. Another scroll to account for any layout changes
+                            messages_container.scroll_end(animate=False)
+                            
                     except Exception as e:
                         debug_log(f"Error updating UI: {str(e)}")
                         log.error(f"Error updating UI: {str(e)}")

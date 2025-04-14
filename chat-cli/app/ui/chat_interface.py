@@ -132,34 +132,68 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         # This avoids text reflowing as new tokens arrive
         formatted_content = self._format_content(content)
         
-        # Use minimal update that doesn't trigger a refresh
-        # This allows parent to control refresh timing and avoid flickering
-        self.update(formatted_content, refresh=False)
+        # Use a direct update that forces refresh - critical fix for streaming
+        # This ensures content is immediately visible
+        self.update(formatted_content, refresh=True)
         
-        # Always force a minimal refresh to ensure content is visible
-        # This is critical for streaming to work properly
-        self.refresh(layout=False)
+        # Force app-level refresh and scroll to ensure visibility
+        try:
+            # Always force app refresh for every update
+            if self.app:
+                # First try non-layout refresh for performance
+                self.app.refresh(layout=False)
+                
+                # Find the messages container and scroll to end
+                containers = self.app.query("ScrollableContainer")
+                for container in containers:
+                    if hasattr(container, 'scroll_end'):
+                        container.scroll_end(animate=False)
+                
+                # For very short content or if first content update, use more aggressive refresh
+                content_length = len(content)
+                if content_length < 30 or "Thinking..." in content:
+                    self.app.refresh(layout=True)
+        except Exception:
+            # Fallback to local refresh if app-level refresh fails
+            self.refresh(layout=True)
+            
+        # Small delay to allow UI to update
+        await asyncio.sleep(0.01) 
         
-        # For Ollama responses, we need more aggressive refresh
-        # Check if this is likely an Ollama response by looking at the parent app
+        # Extra handling for different model types
         try:
             app = self.app
             if app and hasattr(app, 'selected_model'):
                 model = app.selected_model
-                if model and ('llama' in model.lower() or 'mistral' in model.lower() or 
-                             'gemma' in model.lower() or 'phi' in model.lower() or
-                             'ollama' in model.lower()):
-                    # This is likely an Ollama model, force a more thorough refresh
-                    # Without doing a full layout recalculation
-                    self.refresh(layout=True)
+                if model:
+                    # For OpenAI models, ensure minimal refresh
+                    if any(name in model.lower() for name in ['gpt', 'openai', 'turbo']):
+                        # For OpenAI, a small delay and simple refresh works well
+                        await asyncio.sleep(0.01)
+                        self.app.refresh(layout=False)
                     
-                    # Force parent container to scroll to end
-                    try:
-                        parent = self.parent
-                        if parent and hasattr(parent, 'scroll_end'):
-                            parent.scroll_end(animate=False)
-                    except Exception:
-                        pass
+                    # For Ollama/local models, more aggressive refresh needed
+                    elif any(name in model.lower() for name in 
+                             ['llama', 'mistral', 'gemma', 'phi', 'ollama']):
+                        # More thorough refresh for Ollama models
+                        self.refresh(layout=True)
+                        await asyncio.sleep(0.02)
+                        
+                        # Force parent container to scroll to end
+                        try:
+                            parent = self.parent
+                            if parent and hasattr(parent, 'scroll_end'):
+                                parent.scroll_end(animate=False)
+                                # Final app refresh after scroll
+                                self.app.refresh(layout=True)
+                        except Exception:
+                            pass
+                            
+                    # For Anthropic models
+                    elif any(name in model.lower() for name in ['claude', 'anthropic']):
+                        # For Claude, moderate refresh strategy
+                        await asyncio.sleep(0.01)
+                        self.app.refresh(layout=False)
         except Exception:
             # Ignore any errors in this detection logic
             pass

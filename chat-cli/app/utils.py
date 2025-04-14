@@ -339,19 +339,57 @@ async def generate_streaming_response(
                 await callback(full_response)
                 debug_log("Final UI callback completed successfully")
                 
-                # Force final UI refresh for Ollama responses
-                if is_ollama:
-                    debug_log("Forcing final UI refresh for Ollama response")
-                    try:
-                        # Ensure the app refreshes the UI
-                        if hasattr(app, 'refresh'):
-                            app.refresh(layout=True)  # Use layout=True for final refresh
-                    except Exception as refresh_err:
-                        debug_log(f"Error forcing final UI refresh: {str(refresh_err)}")
+                # Force final UI refresh for all responses
+                debug_log("Forcing final UI refresh sequence for all models")
+                try:
+                    # Ensure the app refreshes the UI with a comprehensive refresh sequence
+                    if hasattr(app, 'refresh'):
+                        # 1. First non-layout refresh to update content
+                        app.refresh(layout=False)
+                        await asyncio.sleep(0.02)
+                        
+                        # 2. Force scrolling to end to ensure visibility
+                        try:
+                            messages_container = app.query_one("#messages-container")
+                            if messages_container and hasattr(messages_container, 'scroll_end'):
+                                messages_container.scroll_end(animate=False)
+                        except Exception:
+                            pass
+                        
+                        # 3. Final full layout refresh
+                        app.refresh(layout=True)
+                        await asyncio.sleep(0.02)
+                        
+                        # 4. One more scroll to ensure final visibility
+                        try:
+                            messages_container = app.query_one("#messages-container") 
+                            if messages_container and hasattr(messages_container, 'scroll_end'):
+                                messages_container.scroll_end(animate=False)
+                        except Exception:
+                            pass
+                    
+                except Exception as refresh_err:
+                    debug_log(f"Error forcing final UI refresh: {str(refresh_err)}")
             except Exception as callback_err:
                 debug_log(f"Error in final UI callback: {str(callback_err)}")
                 logger.error(f"Error in final UI callback: {str(callback_err)}")
 
+        # Force one final callback with an empty string just to ensure the UI gets refreshed
+        # This is critical for resolving cases where the UI doesn't update until a second Enter press
+        try:
+            # Small delay to ensure all previous UI operations completed
+            await asyncio.sleep(0.05)
+            
+            # Force one final update with the same content to trigger UI refresh
+            debug_log("Sending one final callback to ensure UI refresh")
+            await callback(full_response)
+            
+            # Final app-level refresh
+            if hasattr(app, 'refresh'):
+                app.refresh(layout=True)
+        except Exception as final_err:
+            debug_log(f"Error in final extra callback: {str(final_err)}")
+            
         debug_log(f"Streaming response completed successfully. Response length: {len(full_response)}")
         logger.info(f"Streaming response completed successfully. Response length: {len(full_response)}")
         return full_response
