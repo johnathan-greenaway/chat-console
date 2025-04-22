@@ -647,14 +647,18 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         # Only attempt title generation if the message has sufficient content (at least 3 characters)
         if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True) and len(content) >= 3:
             log("First message detected, generating title...")
+            print(f"First message detected, generating conversation title for: {content[:30]}...")
             debug_log(f"First message detected with length {len(content)}, generating conversation title")
-            title_generation_in_progress = True # Use a local flag
+            
+            # Show loading indicator for title generation
             loading = self.query_one("#loading-indicator")
-            loading.remove_class("hidden") # Show loading for title gen
+            loading.remove_class("hidden")
+            loading.update("🔤 Generating title...")
 
             try:
                 # Get appropriate client
                 model = self.selected_model
+                print(f"Using model for title generation: {model}")
                 debug_log(f"Selected model for title generation: '{model}'")
                 
                 # Check if model is valid
@@ -665,24 +669,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         model = "gpt-3.5-turbo"
                         debug_log("Falling back to OpenAI gpt-3.5-turbo for title generation")
                     elif ANTHROPIC_API_KEY:
-                        model = "claude-instant-1.2"
-                        debug_log("Falling back to Anthropic claude-instant-1.2 for title generation")
+                        model = "claude-3-haiku-20240307"  # Updated to newer Claude model
+                        debug_log("Falling back to Anthropic Claude 3 Haiku for title generation")
                     else:
-                        # Last resort - check for a common Ollama model
-                        try:
-                            from app.api.ollama import OllamaClient
-                            ollama = await OllamaClient.create()
-                            models = await ollama.get_available_models()
-                            if models and len(models) > 0:
-                                debug_log(f"Found {len(models)} Ollama models, using first one")
-                                model = models[0].get("id", "llama3")
-                            else:
-                                model = "llama3"  # Common default
-                            debug_log(f"Falling back to Ollama model: {model}")
-                        except Exception as ollama_err:
-                            debug_log(f"Error getting Ollama models: {str(ollama_err)}")
-                            model = "llama3"  # Final fallback
-                            debug_log("Final fallback to llama3")
+                        # Last resort - use a common Ollama model
+                        model = "llama3"  # Common default
+                        debug_log("Falling back to Ollama model: llama3")
 
                 debug_log(f"Getting client for model: {model}")
                 client = await BaseModelClient.get_client_for_model(model)
@@ -710,17 +702,19 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         elif ANTHROPIC_API_KEY:
                             from app.api.anthropic import AnthropicClient
                             client = await AnthropicClient.create()
-                            model = "claude-instant-1.2"
+                            model = "claude-3-haiku-20240307"  # Updated to newer Claude model
                             debug_log("Falling back to Anthropic for title generation")
                         else:
                             raise Exception("No valid API clients available for title generation")
 
                 # Generate title
+                print(f"Calling generate_conversation_title with model: {model}")
                 log(f"Calling generate_conversation_title with model: {model}")
                 debug_log(f"Calling generate_conversation_title with model: {model}")
                 title = await generate_conversation_title(content, model, client)
                 debug_log(f"Generated title: {title}")
                 log(f"Generated title: {title}")
+                print(f"Generated title: {title}")
 
                 # Update conversation title in database
                 self.db.update_conversation(
@@ -746,11 +740,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             except Exception as e:
                 debug_log(f"Failed to generate title: {str(e)}")
                 log.error(f"Failed to generate title: {str(e)}")
+                print(f"Failed to generate title: {str(e)}")
                 self.notify(f"Failed to generate title: {str(e)}", severity="warning")
             finally:
-                title_generation_in_progress = False
                 # Hide loading indicator *only if* AI response generation isn't about to start
-                # This check might be redundant if generate_response always shows it anyway
                 if not self.is_generating:
                      loading.add_class("hidden")
                      
@@ -910,13 +903,17 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
             # Start streaming response
             debug_log("Creating assistant message with 'Thinking...'")
+            print("Creating assistant message with 'Thinking...'")
             assistant_message = Message(role="assistant", content="Thinking...")
             self.messages.append(assistant_message)
             messages_container = self.query_one("#messages-container")
             message_display = MessageDisplay(assistant_message, highlight_code=CONFIG["highlight_code"])
             messages_container.mount(message_display)
+            
+            # Force a layout refresh and scroll to end
+            self.refresh(layout=True)
             messages_container.scroll_end(animate=False)
-
+            
             # Add small delay to show thinking state
             await asyncio.sleep(0.5)
 
@@ -996,16 +993,18 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
             # --- Remove the inner run_generation_worker function ---
 
-            # Start the worker directly using the imported function
-            debug_log("Starting generate_streaming_response worker")
-            # Call the @work decorated function directly
-            worker = generate_streaming_response(
-                self,
-                api_messages,
-                model,
-                style,
-                client,
-                update_ui # Pass the callback function
+            # Start the worker using Textual's run_worker to ensure state tracking
+            debug_log("Starting generate_streaming_response worker with run_worker")
+            worker = self.run_worker(
+                generate_streaming_response(
+                    self,
+                    api_messages,
+                    model,
+                    style,
+                    client,
+                    update_ui  # Pass the callback function
+                ),
+                name="generate_response"
             )
             self.current_generation_task = worker
             # Worker completion will be handled by on_worker_state_changed

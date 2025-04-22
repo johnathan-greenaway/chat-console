@@ -116,82 +116,68 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
 
 # Make this the worker function directly
-@work(exit_on_error=True)
 async def generate_streaming_response(
     app: 'SimpleChatApp',
     messages: List[Dict],
     model: str,
     style: str,
     client: Any,
-    callback: Callable[[str], Awaitable[None]] # More specific type hint for callback
-) -> Optional[str]: # Return Optional[str] as cancellation might return None implicitly or error
-    """Generate a streaming response from the model (as a Textual worker)"""
-    # Import debug_log function from main
-    # Note: This import might be slightly less reliable inside a worker, but let's try
+    callback: Callable[[str], Awaitable[None]]
+) -> Optional[str]:
+    """
+    Generate a streaming response from the model (as a Textual worker).
+    Refactored to be a coroutine, not an async generator.
+    """
     try:
         from app.main import debug_log
     except ImportError:
-        debug_log = lambda msg: None # Fallback
-
-    # Worker function needs to handle its own state and cleanup partially
-    # The main app will also need cleanup logic in generate_response
+        debug_log = lambda msg: None
 
     logger.info(f"Starting streaming response with model: {model}")
     debug_log(f"Starting streaming response with model: '{model}', client type: {type(client).__name__}")
-    
-    # Very defensive check of messages format
+
     if not messages:
         debug_log("Error: messages list is empty")
         raise ValueError("Messages list cannot be empty")
-    
+
     for i, msg in enumerate(messages):
         try:
             debug_log(f"Message {i}: role={msg.get('role', 'missing')}, content_len={len(msg.get('content', ''))}")
-            # Ensure essential fields exist
             if 'role' not in msg:
                 debug_log(f"Adding missing 'role' to message {i}")
-                msg['role'] = 'user'  # Default to user
+                msg['role'] = 'user'
             if 'content' not in msg:
                 debug_log(f"Adding missing 'content' to message {i}")
-                msg['content'] = ''  # Default to empty string
+                msg['content'] = ''
         except Exception as e:
             debug_log(f"Error checking message {i}: {str(e)}")
-            # Try to repair the message
             messages[i] = {
                 'role': 'user',
                 'content': str(msg) if msg else ''
             }
             debug_log(f"Repaired message {i}")
-    
-    debug_log(f"Messages validation complete: {len(messages)} total messages")
-    
-    # Import time module within the worker function scope
+
     import time
-    
+
     full_response = ""
     buffer = []
     last_update = time.time()
-    update_interval = 0.1  # Update UI every 100ms
-    
+    update_interval = 0.05  # Reduced interval for more frequent updates
+
     try:
-        # Check that we have a valid client and model before proceeding
         if client is None:
             debug_log("Error: client is None, cannot proceed with streaming")
             raise ValueError("Model client is None, cannot proceed with streaming")
-            
-        # Check if the client has the required generate_stream method
+
         if not hasattr(client, 'generate_stream'):
             debug_log(f"Error: client {type(client).__name__} does not have generate_stream method")
             raise ValueError(f"Client {type(client).__name__} does not support streaming")
-            
-        # Set initial model loading state if using Ollama
-        # Always show the model loading indicator for Ollama until we confirm otherwise
+
         is_ollama = 'ollama' in str(type(client)).lower()
         debug_log(f"Is Ollama client: {is_ollama}")
-        
+
         if is_ollama and hasattr(app, 'query_one'):
             try:
-                # Show model loading indicator by default for Ollama
                 debug_log("Showing initial model loading indicator for Ollama")
                 logger.info("Showing initial model loading indicator for Ollama")
                 loading = app.query_one("#loading-indicator")
@@ -200,12 +186,10 @@ async def generate_streaming_response(
             except Exception as e:
                 debug_log(f"Error setting initial Ollama loading state: {str(e)}")
                 logger.error(f"Error setting initial Ollama loading state: {str(e)}")
-        
-        # Now proceed with streaming
+
         debug_log(f"Starting stream generation with messages length: {len(messages)}")
         logger.info(f"Starting stream generation for model: {model}")
-        
-        # Defensive approach - wrap the stream generation in a try-except
+
         try:
             debug_log("Calling client.generate_stream()")
             stream_generator = client.generate_stream(messages, model, style)
@@ -213,9 +197,8 @@ async def generate_streaming_response(
         except Exception as stream_init_error:
             debug_log(f"Error initializing stream generator: {str(stream_init_error)}")
             logger.error(f"Error initializing stream generator: {str(stream_init_error)}")
-            raise  # Re-raise to be handled in the main catch block
-        
-        # After getting the generator, check if we're NOT in model loading state
+            raise
+
         if hasattr(client, 'is_loading_model') and not client.is_loading_model() and hasattr(app, 'query_one'):
             try:
                 debug_log("Model is ready for generation, updating UI")
@@ -226,42 +209,31 @@ async def generate_streaming_response(
             except Exception as e:
                 debug_log(f"Error updating UI after stream init: {str(e)}")
                 logger.error(f"Error updating UI after stream init: {str(e)}")
-        
-        # Process the stream with careful error handling
+
         debug_log("Beginning to process stream chunks")
         try:
             async for chunk in stream_generator:
-                # Check for cancellation frequently
                 if asyncio.current_task().cancelled():
                     debug_log("Task cancellation detected during chunk processing")
                     logger.info("Task cancellation detected during chunk processing")
-                    # Close the client stream if possible
                     if hasattr(client, 'cancel_stream'):
                         debug_log("Calling client.cancel_stream() due to task cancellation")
                         await client.cancel_stream()
                     raise asyncio.CancelledError()
-                    
-                # Check if model loading state changed, but more safely
+
                 if hasattr(client, 'is_loading_model'):
                     try:
-                        # Get the model loading state
                         model_loading = client.is_loading_model()
                         debug_log(f"Model loading state: {model_loading}")
-                        
-                        # Safely update the UI elements if they exist
                         if hasattr(app, 'query_one'):
                             try:
                                 loading = app.query_one("#loading-indicator")
-                                
-                                # Check for class existence first
                                 if model_loading and hasattr(loading, 'has_class') and not loading.has_class("model-loading"):
-                                    # Model loading started
                                     debug_log("Model loading started during streaming")
                                     logger.info("Model loading started during streaming")
                                     loading.add_class("model-loading")
                                     loading.update("⚙️ Loading Ollama model...")
                                 elif not model_loading and hasattr(loading, 'has_class') and loading.has_class("model-loading"):
-                                    # Model loading finished
                                     debug_log("Model loading finished during streaming")
                                     logger.info("Model loading finished during streaming")
                                     loading.remove_class("model-loading")
@@ -272,56 +244,51 @@ async def generate_streaming_response(
                     except Exception as e:
                         debug_log(f"Error checking model loading state: {str(e)}")
                         logger.error(f"Error checking model loading state: {str(e)}")
-                
-                # Process the chunk - with careful type handling
-                if chunk:  # Only process non-empty chunks
-                    # Ensure chunk is a string - critical fix for providers returning other types
+
+                if chunk:
                     if not isinstance(chunk, str):
                         debug_log(f"WARNING: Received non-string chunk of type: {type(chunk).__name__}")
                         try:
-                            # Try to convert to string if possible
                             chunk = str(chunk)
                             debug_log(f"Successfully converted chunk to string, length: {len(chunk)}")
                         except Exception as e:
                             debug_log(f"Error converting chunk to string: {str(e)}")
-                            # Skip this chunk since it can't be converted
                             continue
-                    
+
                     debug_log(f"Received chunk of length: {len(chunk)}")
                     buffer.append(chunk)
                     current_time = time.time()
-                    
-                    # Update UI with every chunk for short messages, or throttle for longer ones
-                    # This is especially important for short messages like "hi" that might otherwise not trigger updates
-                    if (current_time - last_update >= update_interval or 
-                        len(''.join(buffer)) > 10 or  # Much more aggressive buffer flush threshold
-                        len(full_response) < 20):     # Always update for very short responses
-                        
+
+                    # Always update immediately for the first few chunks
+                    if (current_time - last_update >= update_interval or
+                        len(''.join(buffer)) > 5 or  # Reduced buffer size threshold
+                        len(full_response) < 50):    # More aggressive updates for early content
+
                         new_content = ''.join(buffer)
                         full_response += new_content
-                        # Send content to UI
                         debug_log(f"Updating UI with content length: {len(full_response)}")
+                        
+                        # Print to console for debugging
+                        print(f"Streaming update: +{len(new_content)} chars, total: {len(full_response)}")
+                        
                         try:
+                            # Call the UI callback with the full response so far
                             await callback(full_response)
                             debug_log("UI callback completed successfully")
+                            
+                            # Force app refresh after each update
+                            if hasattr(app, 'refresh'):
+                                app.refresh(layout=True)  # Force layout refresh for all models
                         except Exception as callback_err:
                             debug_log(f"Error in UI callback: {str(callback_err)}")
                             logger.error(f"Error in UI callback: {str(callback_err)}")
+                            print(f"Error updating UI: {str(callback_err)}")
+                            
                         buffer = []
                         last_update = current_time
                         
-                        # Force UI refresh after each update for Ollama responses
-                        if is_ollama:
-                            debug_log("Forcing UI refresh for Ollama response")
-                            try:
-                                # Ensure the app refreshes the UI
-                                if hasattr(app, 'refresh'):
-                                    app.refresh(layout=False)
-                            except Exception as refresh_err:
-                                debug_log(f"Error forcing UI refresh: {str(refresh_err)}")
-                        
-                        # Small delay to let UI catch up
-                        await asyncio.sleep(0.05)
+                        # Shorter sleep between updates for more responsive streaming
+                        await asyncio.sleep(0.02)
         except asyncio.CancelledError:
             debug_log("CancelledError in stream processing")
             raise
@@ -330,7 +297,6 @@ async def generate_streaming_response(
             logger.error(f"Error processing stream chunks: {str(chunk_error)}")
             raise
 
-        # Send any remaining content if the loop finished normally
         if buffer:
             new_content = ''.join(buffer)
             full_response += new_content
@@ -338,67 +304,48 @@ async def generate_streaming_response(
             try:
                 await callback(full_response)
                 debug_log("Final UI callback completed successfully")
-                
-                # Force final UI refresh for all responses
+
                 debug_log("Forcing final UI refresh sequence for all models")
                 try:
-                    # Ensure the app refreshes the UI with a comprehensive refresh sequence
                     if hasattr(app, 'refresh'):
-                        # 1. First non-layout refresh to update content
                         app.refresh(layout=False)
                         await asyncio.sleep(0.02)
-                        
-                        # 2. Force scrolling to end to ensure visibility
                         try:
                             messages_container = app.query_one("#messages-container")
                             if messages_container and hasattr(messages_container, 'scroll_end'):
                                 messages_container.scroll_end(animate=False)
                         except Exception:
                             pass
-                        
-                        # 3. Final full layout refresh
                         app.refresh(layout=True)
                         await asyncio.sleep(0.02)
-                        
-                        # 4. One more scroll to ensure final visibility
                         try:
-                            messages_container = app.query_one("#messages-container") 
+                            messages_container = app.query_one("#messages-container")
                             if messages_container and hasattr(messages_container, 'scroll_end'):
                                 messages_container.scroll_end(animate=False)
                         except Exception:
                             pass
-                    
                 except Exception as refresh_err:
                     debug_log(f"Error forcing final UI refresh: {str(refresh_err)}")
             except Exception as callback_err:
                 debug_log(f"Error in final UI callback: {str(callback_err)}")
                 logger.error(f"Error in final UI callback: {str(callback_err)}")
 
-        # Force one final callback with an empty string just to ensure the UI gets refreshed
-        # This is critical for resolving cases where the UI doesn't update until a second Enter press
         try:
-            # Small delay to ensure all previous UI operations completed
             await asyncio.sleep(0.05)
-            
-            # Force one final update with the same content to trigger UI refresh
             debug_log("Sending one final callback to ensure UI refresh")
             await callback(full_response)
-            
-            # Final app-level refresh
             if hasattr(app, 'refresh'):
                 app.refresh(layout=True)
         except Exception as final_err:
             debug_log(f"Error in final extra callback: {str(final_err)}")
-            
+
         debug_log(f"Streaming response completed successfully. Response length: {len(full_response)}")
         logger.info(f"Streaming response completed successfully. Response length: {len(full_response)}")
         return full_response
-        
+
     except asyncio.CancelledError:
-        # This is expected when the user cancels via Escape
         debug_log(f"Streaming response task cancelled. Partial response length: {len(full_response)}")
         logger.info(f"Streaming response task cancelled. Partial response length: {len(full_response)}")
-        # Ensure the client stream is closed
         if hasattr(client, 'cancel_stream'):
             debug_log("Calling client.cancel_stream() after cancellation")
             try:
@@ -406,13 +353,11 @@ async def generate_streaming_response(
                 debug_log("Successfully cancelled client stream")
             except Exception as cancel_err:
                 debug_log(f"Error cancelling client stream: {str(cancel_err)}")
-        # Return whatever was collected so far
         return full_response
-        
+
     except Exception as e:
         debug_log(f"Error during streaming response: {str(e)}")
         logger.error(f"Error during streaming response: {str(e)}")
-        # Close the client stream if possible
         if hasattr(client, 'cancel_stream'):
             debug_log("Attempting to cancel client stream after error")
             try:
@@ -420,21 +365,13 @@ async def generate_streaming_response(
                 debug_log("Successfully cancelled client stream after error")
             except Exception as cancel_err:
                 debug_log(f"Error cancelling client stream after error: {str(cancel_err)}")
-        # Re-raise the exception for the worker runner to handle
-        # The @work decorator might catch this depending on exit_on_error
         raise
+
     finally:
-        # Basic cleanup within the worker itself (optional, main cleanup in app)
         debug_log("generate_streaming_response worker finished or errored.")
-        # Return the full response if successful, otherwise error is raised or cancellation occurred
-        # Note: If cancelled, CancelledError is raised, and @work might handle it.
-        # If successful, return the response.
-        # If error, exception is raised.
-        # Let's explicitly return the response on success.
-        # If cancelled or error, this return might not be reached.
         if 'full_response' in locals():
-             return full_response
-        return None # Indicate completion without full response (e.g., error before loop)
+            return full_response
+        return None
 
 async def ensure_ollama_running() -> bool:
     """
@@ -501,6 +438,8 @@ def resolve_model_id(model_id_or_name: str) -> str:
     """
     Resolves a potentially short model ID or display name to the full model ID
     stored in the configuration. Tries multiple matching strategies.
+
+    Fix: Only apply dot-to-colon conversion for Ollama models, not for OpenAI/Anthropic/custom.
     """
     if not model_id_or_name:
         logger.warning("resolve_model_id called with empty input, returning empty string.")
@@ -514,17 +453,25 @@ def resolve_model_id(model_id_or_name: str) -> str:
          logger.warning("No available_models found in CONFIG to resolve against.")
          return model_id_or_name # Return original if no models to check
 
+    # Determine provider if possible
+    provider = None
+    if input_lower in available_models:
+        provider = available_models[input_lower].get("provider")
+    else:
+        # Try to find by display name
+        for model_info in available_models.values():
+            if model_info.get("display_name", "").lower() == input_lower:
+                provider = model_info.get("provider")
+                break
+
     # Special case for Ollama models with version format (model:version)
-    if ":" in input_lower and not input_lower.startswith("claude-"):
+    if provider == "ollama" and ":" in input_lower and not input_lower.startswith("claude-"):
         logger.info(f"Input '{input_lower}' appears to be an Ollama model with version, returning as-is")
         return model_id_or_name
 
-    # Handle special cases for common model formats
-    # 1. Handle Ollama models with dot notation (e.g., phi3.latest, llama3.1)
-    if "." in input_lower and not input_lower.startswith("claude-"):
-        # This is likely an Ollama model with dot notation
+    # Only apply dot-to-colon for Ollama models
+    if provider == "ollama" and "." in input_lower and not input_lower.startswith("claude-"):
         logger.info(f"Input '{input_lower}' appears to be an Ollama model with dot notation")
-        # Convert dots to colons for Ollama format if needed
         if ":" not in input_lower:
             parts = input_lower.split(".")
             if len(parts) == 2:

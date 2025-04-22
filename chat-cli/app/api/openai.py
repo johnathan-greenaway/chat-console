@@ -168,10 +168,20 @@ class OpenAIClient(BaseModelClient):
             yield f"Error: {str(e)}"
             raise Exception(f"OpenAI streaming error: {str(e)}")
     
-    def get_available_models(self) -> List[Dict[str, Any]]:
-        """Get list of available OpenAI models"""
-        return [
-            {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo"},
-            {"id": "gpt-4", "name": "GPT-4"},
-            {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"}
-        ]
+    async def get_available_models(self) -> List[Dict[str, Any]]:
+        """Fetch list of available OpenAI models from the /models endpoint"""
+        try:
+            models_response = await self.client.models.list()
+            # Each model has an 'id' and possibly other metadata
+            models = []
+            for model in models_response.data:
+                # Use 'id' as both id and name for now; can enhance with more info if needed
+                models.append({"id": model.id, "name": model.id})
+            return models
+        except Exception as e:
+            # Fallback to a static list if API call fails
+            return [
+                {"id": "gpt-3.5-turbo", "name": "gpt-3.5-turbo"},
+                {"id": "gpt-4", "name": "gpt-4"},
+                {"id": "gpt-4-turbo", "name": "gpt-4-turbo"}
+            ]

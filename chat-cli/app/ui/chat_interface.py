@@ -140,63 +140,21 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         try:
             # Always force app refresh for every update
             if self.app:
-                # First try non-layout refresh for performance
-                self.app.refresh(layout=False)
+                # Force a full layout refresh to ensure content is visible
+                self.app.refresh(layout=True)
                 
                 # Find the messages container and scroll to end
                 containers = self.app.query("ScrollableContainer")
                 for container in containers:
                     if hasattr(container, 'scroll_end'):
                         container.scroll_end(animate=False)
-                
-                # For very short content or if first content update, use more aggressive refresh
-                content_length = len(content)
-                if content_length < 30 or "Thinking..." in content:
-                    self.app.refresh(layout=True)
-        except Exception:
-            # Fallback to local refresh if app-level refresh fails
+        except Exception as e:
+            # Log the error and fallback to local refresh
+            print(f"Error refreshing app: {str(e)}")
             self.refresh(layout=True)
             
         # Small delay to allow UI to update
-        await asyncio.sleep(0.01) 
-        
-        # Extra handling for different model types
-        try:
-            app = self.app
-            if app and hasattr(app, 'selected_model'):
-                model = app.selected_model
-                if model:
-                    # For OpenAI models, ensure minimal refresh
-                    if any(name in model.lower() for name in ['gpt', 'openai', 'turbo']):
-                        # For OpenAI, a small delay and simple refresh works well
-                        await asyncio.sleep(0.01)
-                        self.app.refresh(layout=False)
-                    
-                    # For Ollama/local models, more aggressive refresh needed
-                    elif any(name in model.lower() for name in 
-                             ['llama', 'mistral', 'gemma', 'phi', 'ollama']):
-                        # More thorough refresh for Ollama models
-                        self.refresh(layout=True)
-                        await asyncio.sleep(0.02)
-                        
-                        # Force parent container to scroll to end
-                        try:
-                            parent = self.parent
-                            if parent and hasattr(parent, 'scroll_end'):
-                                parent.scroll_end(animate=False)
-                                # Final app refresh after scroll
-                                self.app.refresh(layout=True)
-                        except Exception:
-                            pass
-                            
-                    # For Anthropic models
-                    elif any(name in model.lower() for name in ['claude', 'anthropic']):
-                        # For Claude, moderate refresh strategy
-                        await asyncio.sleep(0.01)
-                        self.app.refresh(layout=False)
-        except Exception:
-            # Ignore any errors in this detection logic
-            pass
+        await asyncio.sleep(0.02)  # Increased delay for better rendering
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp and handle markdown links"""
@@ -214,6 +172,9 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         content = content.replace("[", "\\[").replace("]", "\\]")
         # But keep our timestamp markup
         timestamp_markup = f"[dim]{timestamp}[/dim]"
+        
+        # Debug print to verify content is being formatted
+        print(f"Formatting content: {len(content)} chars")
         
         return f"{timestamp_markup} {content}"
 

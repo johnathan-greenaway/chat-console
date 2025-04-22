@@ -162,14 +162,36 @@ class ModelSelector(Container):
         """Get model options for a specific provider"""
         logger = logging.getLogger(__name__)
         logger.info(f"Getting model options for provider: {provider}")
-        
+
+        options = []
+
+        if provider == "openai":
+            try:
+                from ..api.openai import OpenAIClient
+                client = await OpenAIClient.create()
+                models = await client.get_available_models()
+                logger.info(f"Found {len(models)} models from OpenAI API")
+                for model in models:
+                    options.append((model["name"], model["id"]))
+            except Exception as e:
+                logger.error(f"Error getting OpenAI models: {str(e)}")
+                # Fallback to static list
+                options = [
+                    ("gpt-3.5-turbo", "gpt-3.5-turbo"),
+                    ("gpt-4", "gpt-4"),
+                    ("gpt-4-turbo", "gpt-4-turbo"),
+                ]
+            # Do NOT add custom model option for OpenAI
+            return options
+
+        # Default: config-based models
         options = [
             (model_info["display_name"], model_id)
             for model_id, model_info in CONFIG["available_models"].items()
             if model_info["provider"] == provider
         ]
         logger.info(f"Found {len(options)} models in config for {provider}")
-        
+
         # Add available Ollama models
         if provider == "ollama":
             try:
@@ -214,7 +236,10 @@ class ModelSelector(Container):
                 ]
                 logger.info("Adding default Ollama models as fallback")
                 options.extend(default_models)
-                
+            options.append(("Custom Model...", "custom"))
+            return options
+
+        # For Anthropic and others, allow custom model
         options.append(("Custom Model...", "custom"))
         return options
         
