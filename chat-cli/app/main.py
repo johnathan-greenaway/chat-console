@@ -910,12 +910,16 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             message_display = MessageDisplay(assistant_message, highlight_code=CONFIG["highlight_code"])
             messages_container.mount(message_display)
             
-            # Force a layout refresh and scroll to end
+            # Force multiple layout refreshes and scroll to end to ensure visibility
+            self.refresh(layout=False)
+            await asyncio.sleep(0.01)
             self.refresh(layout=True)
             messages_container.scroll_end(animate=False)
+            await asyncio.sleep(0.01)
+            self.refresh(layout=True)
             
             # Add small delay to show thinking state
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
 
             # Stream chunks to the UI with synchronization
             update_lock = asyncio.Lock()

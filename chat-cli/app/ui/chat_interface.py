@@ -132,6 +132,9 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         # This avoids text reflowing as new tokens arrive
         formatted_content = self._format_content(content)
         
+        # Print debug info to console
+        print(f"MessageDisplay.update_content: Updating with {len(content)} chars")
+        
         # Use a direct update that forces refresh - critical fix for streaming
         # This ensures content is immediately visible
         self.update(formatted_content, refresh=True)
@@ -140,7 +143,11 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         try:
             # Always force app refresh for every update
             if self.app:
-                # Force a full layout refresh to ensure content is visible
+                # First do a quick refresh without layout recalculation
+                self.app.refresh(layout=False)
+                
+                # Then do a full layout refresh to ensure content is visible
+                await asyncio.sleep(0.01)
                 self.app.refresh(layout=True)
                 
                 # Find the messages container and scroll to end
@@ -148,13 +155,17 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
                 for container in containers:
                     if hasattr(container, 'scroll_end'):
                         container.scroll_end(animate=False)
+                        
+                # Force another refresh after scrolling
+                await asyncio.sleep(0.01)
+                self.app.refresh(layout=True)
         except Exception as e:
             # Log the error and fallback to local refresh
             print(f"Error refreshing app: {str(e)}")
             self.refresh(layout=True)
             
         # Small delay to allow UI to update
-        await asyncio.sleep(0.02)  # Increased delay for better rendering
+        await asyncio.sleep(0.03)  # Increased delay for better rendering
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp and handle markdown links"""

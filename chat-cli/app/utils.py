@@ -275,10 +275,23 @@ async def generate_streaming_response(
                             # Call the UI callback with the full response so far
                             await callback(full_response)
                             debug_log("UI callback completed successfully")
+                            print("UI callback completed successfully")
                             
-                            # Force app refresh after each update
+                            # Force app refresh after each update - CRITICAL for visibility
                             if hasattr(app, 'refresh'):
-                                app.refresh(layout=True)  # Force layout refresh for all models
+                                # First do a layout=False refresh which is faster
+                                app.refresh(layout=False)
+                                # Then do a full layout refresh to ensure content is visible
+                                await asyncio.sleep(0.01)
+                                app.refresh(layout=True)
+                                
+                                # Try to force scroll to end
+                                try:
+                                    messages_container = app.query_one("#messages-container")
+                                    if messages_container and hasattr(messages_container, 'scroll_end'):
+                                        messages_container.scroll_end(animate=False)
+                                except Exception as scroll_err:
+                                    debug_log(f"Error scrolling: {str(scroll_err)}")
                         except Exception as callback_err:
                             debug_log(f"Error in UI callback: {str(callback_err)}")
                             logger.error(f"Error in UI callback: {str(callback_err)}")
