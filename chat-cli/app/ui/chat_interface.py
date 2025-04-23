@@ -1,5 +1,4 @@
 from typing import List, Dict, Any, Optional, Callable, Awaitable
-import time
 import asyncio
 from datetime import datetime
 import re
@@ -8,9 +7,9 @@ import logging
 from textual.app import ComposeResult
 from textual.containers import Container, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.widgets import Button, Input, Label, Static
+from textual.widgets import Button, Input, Label, Static # Removed RichLog from here
 from textual.widget import Widget
-from textual.widgets import RichLog
+# Removed RichLog import as MessageDisplay will inherit from Static
 from textual.message import Message
 from textual.binding import Binding
  
@@ -53,16 +52,22 @@ class SendButton(Button):
         self.styles.text_opacity = 100
         self.styles.text_style = "bold"
 
-class MessageDisplay(RichLog):
-    """Widget to display a single message"""
+class MessageDisplay(Static): # Inherit from Static instead of RichLog
+    """Widget to display a single message using Static"""
     
     DEFAULT_CSS = """
     MessageDisplay {
         width: 100%;
-        height: auto;
+        height: auto; /* Let height adjust automatically */
+        min-height: 1; /* Ensure minimum height */
+        min-width: 60; /* Set a reasonable minimum width to avoid constant width adjustment */
         margin: 1 0;
-        overflow: auto;
         padding: 1;
+        text-wrap: wrap; /* Explicitly enable text wrapping via CSS */
+        content-align: left top; /* Anchor content to top-left */
+        overflow-y: auto; /* Changed from 'visible' to valid 'auto' value */
+        box-sizing: border-box; /* Include padding in size calculations */
+        transition: none; /* Fixed property name from 'transitions' to 'transition' */
     }
     
     MessageDisplay.user-message {
@@ -90,14 +95,16 @@ class MessageDisplay(RichLog):
         highlight_code: bool = True,
         name: Optional[str] = None
     ):
+        # Initialize Static with empty content and necessary parameters
+        # Static supports markup but handles wrap differently via styles
         super().__init__(
-            highlight=True,
+            "",  # Initialize with empty content initially
             markup=True,
-            wrap=True,
             name=name
         )
+        # Enable text wrapping via CSS (already set in DEFAULT_CSS)
         self.message = message
-        self.highlight_code = highlight_code
+        self.highlight_code = highlight_code # Keep this for potential future use or logic
         
     def on_mount(self) -> None:
         """Handle mount event"""
@@ -109,23 +116,64 @@ class MessageDisplay(RichLog):
         elif self.message.role == "system":
             self.add_class("system-message")
         
-        # Initial content
-        self.write(self._format_content(self.message.content))
+        # Initial content using Static's update method
+        self.update(self._format_content(self.message.content))
         
     async def update_content(self, content: str) -> None:
-        """Update the message content"""
+        """Update the message content using Static.update() with optimizations for streaming"""
+        # Quick unchanged content check to avoid unnecessary updates
+        if self.message.content == content:
+            return
+            
+        # Update the stored message object content first
         self.message.content = content
-        self.clear()
-        self.write(self._format_content(content))
-        # Force a refresh after writing
-        self.refresh(layout=True)
-        # Wait a moment for the layout to update
-        await asyncio.sleep(0.05)
+        
+        # Format with fixed-width placeholder to minimize layout shifts
+        # This avoids text reflowing as new tokens arrive
+        formatted_content = self._format_content(content)
+        
+        # Use a direct update that forces refresh - critical fix for streaming
+        # This ensures content is immediately visible
+        self.update(formatted_content, refresh=True)
+        
+        # Force app-level refresh and scroll to ensure visibility
+        try:
+            # Always force app refresh for every update
+            if self.app:
+                # Force a full layout refresh to ensure content is visible
+                self.app.refresh(layout=True)
+                
+                # Find the messages container and scroll to end
+                containers = self.app.query("ScrollableContainer")
+                for container in containers:
+                    if hasattr(container, 'scroll_end'):
+                        container.scroll_end(animate=False)
+        except Exception as e:
+            # Log the error and fallback to local refresh
+            print(f"Error refreshing app: {str(e)}")
+            self.refresh(layout=True)
         
     def _format_content(self, content: str) -> str:
-        """Format message content with timestamp"""
+        """Format message content with timestamp and handle markdown links"""
         timestamp = datetime.now().strftime("%H:%M")
-        return f"[dim]{timestamp}[/dim] {content}"
+        
+        # Fix markdown-style links that cause markup errors
+        # Convert [text](url) to a safe format for Textual markup
+        content = re.sub(
+            r'\[([^\]]+)\]\(([^)]+)\)',
+            lambda m: f"{m.group(1)} ({m.group(2)})",
+            content
+        )
+        
+        # Escape any other potential markup characters
+        content = content.replace("[", "\\[").replace("]", "\\]")
+        # But keep our timestamp markup
+        timestamp_markup = f"[dim]{timestamp}[/dim]"
+        
+        # Debug print to verify content is being formatted
+        print(f"Formatting content: {len(content)} chars")
+        
+        return f"{timestamp_markup} {content}"
 
 class InputWithFocus(Input):
     """Enhanced Input that better handles focus and maintains cursor position"""
@@ -164,6 +212,9 @@ class ChatInterface(Container):
         border-bottom: solid $primary-darken-2;
         overflow: auto;
         padding: 0 1;
+        content-align: left top; /* Keep content anchored at top */
+        box-sizing: border-box;
+        scrollbar-gutter: stable; /* Better than scrollbar-size which isn't valid */
     }
     
     #input-area {
@@ -204,6 +255,11 @@ class ChatInterface(Container):
         display: none;
         padding: 0 1;
     }
+    
+    #loading-indicator.model-loading {
+        background: $warning;
+        color: $text;
+    }
     """
     
     class MessageSent(Message):
@@ -238,7 +294,7 @@ class ChatInterface(Container):
                 yield MessageDisplay(message, highlight_code=CONFIG["highlight_code"])
         with Container(id="input-area"):
             yield Container(
-                Label("Generating response...", id="loading-text"),
+                Label("▪▪▪ Generating response...", id="loading-text", markup=False),
                 id="loading-indicator"
             )
             with Container(id="controls"):
@@ -328,16 +384,30 @@ class ChatInterface(Container):
         if input_widget.has_focus:
             input_widget.focus()
         
-    def start_loading(self) -> None:
-        """Show loading indicator"""
+    def start_loading(self, model_loading: bool = False) -> None:
+        """Show loading indicator
+        
+        Args:
+            model_loading: If True, indicates Ollama is loading a model
+        """
         self.is_loading = True
         loading = self.query_one("#loading-indicator")
+        loading_text = self.query_one("#loading-text")
+        
+        if model_loading:
+            loading.add_class("model-loading")
+            loading_text.update("⚙️ Loading Ollama model...")
+        else:
+            loading.remove_class("model-loading")
+            loading_text.update("▪▪▪ Generating response...")
+            
         loading.display = True
         
     def stop_loading(self) -> None:
         """Hide loading indicator"""
         self.is_loading = False
         loading = self.query_one("#loading-indicator")
+        loading.remove_class("model-loading")
         loading.display = False
         
     def clear_messages(self) -> None:
