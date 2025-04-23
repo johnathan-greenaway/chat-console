@@ -5,8 +5,30 @@ Simplified version of Chat CLI with AI functionality
 import os
 import asyncio
 import typer
+import logging
+import time
 from typing import List, Optional, Callable, Awaitable
 from datetime import datetime
+
+# Create a dedicated logger that definitely writes to a file
+log_dir = os.path.expanduser("~/.cache/chat-cli")
+os.makedirs(log_dir, exist_ok=True)
+debug_log_file = os.path.join(log_dir, "debug.log")
+
+# Configure the logger
+file_handler = logging.FileHandler(debug_log_file)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+# Get the logger and add the handler
+debug_logger = logging.getLogger("chat-cli-debug")
+debug_logger.setLevel(logging.DEBUG)
+debug_logger.addHandler(file_handler)
+# Prevent propagation to the root logger (which would print to console)
+debug_logger.propagate = False
+
+# Add a convenience function to log to this file
+def debug_log(message):
+    debug_logger.info(message)
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer, Center
@@ -14,6 +36,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Input, Label, Static, Header, Footer, ListView, ListItem
 from textual.binding import Binding
 from textual import work, log, on
+from textual.worker import Worker, WorkerState # Import Worker class and WorkerState enum
 from textual.screen import Screen
 from openai import OpenAI
 from app.models import Message, Conversation
@@ -25,7 +48,7 @@ from app.ui.model_selector import ModelSelector, StyleSelector
 from app.ui.chat_list import ChatList
 from app.ui.model_browser import ModelBrowser
 from app.api.base import BaseModelClient
-from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title # Import title function
+from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title, resolve_model_id # Import resolver
 # Import version here to avoid potential circular import issues at top level
 from app import __version__
 
@@ -141,6 +164,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     TITLE = "Chat Console"
     SUB_TITLE = "AI Chat Interface" # Keep SimpleChatApp SUB_TITLE
     DARK = True # Keep SimpleChatApp DARK
+    
+    # Add better terminal handling to fix UI glitches
+    SCREENS = {}
+    
+    # Force full screen mode and prevent background terminal showing through
+    FULL_SCREEN = True
+    
+    # Force capturing all mouse events for better stability
+    CAPTURE_MOUSE = True
 
     # Ensure the log directory exists in a standard cache location
     log_dir = os.path.expanduser("~/.cache/chat-cli")
@@ -211,10 +243,16 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         color: $text;
         content-align: center middle;
         text-align: center;
+        text-style: bold;
     }
 
     #loading-indicator.hidden { # Keep SimpleChatApp CSS
         display: none;
+    }
+    
+    #loading-indicator.model-loading {
+        background: $warning;
+        color: $text;
     }
 
     #input-area { # Keep SimpleChatApp CSS
@@ -313,12 +351,16 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
     is_generating = reactive(False) # Keep SimpleChatApp reactive var
     current_generation_task: Optional[asyncio.Task] = None # Add task reference
+    _loading_frame = 0 # Track animation frame
+    _loading_animation_task: Optional[asyncio.Task] = None # Animation task
 
     def __init__(self, initial_text: Optional[str] = None): # Keep SimpleChatApp __init__
         super().__init__() # Keep SimpleChatApp __init__
         self.db = ChatDatabase() # Keep SimpleChatApp __init__
         self.messages = [] # Keep SimpleChatApp __init__
-        self.selected_model = CONFIG["default_model"] # Keep SimpleChatApp __init__
+        # Resolve the default model ID on initialization
+        default_model_from_config = CONFIG["default_model"]
+        self.selected_model = resolve_model_id(default_model_from_config)
         self.selected_style = CONFIG["default_style"] # Keep SimpleChatApp __init__
         self.initial_text = initial_text # Keep SimpleChatApp __init__
         # Removed self.input_widget instance variable
@@ -347,7 +389,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 pass
 
             # Loading indicator
-            yield Static("Generating response...", id="loading-indicator", classes="hidden")
+            yield Static("▪▪▪ Generating response...", id="loading-indicator", classes="hidden", markup=False)
 
             # Input area
             with Container(id="input-area"):
@@ -394,7 +436,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             # Check for available models # Keep SimpleChatApp on_mount
             from app.api.ollama import OllamaClient # Keep SimpleChatApp on_mount
             try: # Keep SimpleChatApp on_mount
-                ollama = OllamaClient() # Keep SimpleChatApp on_mount
+                ollama = await OllamaClient.create() # Keep SimpleChatApp on_mount
                 models = await ollama.get_available_models() # Keep SimpleChatApp on_mount
                 if not models: # Keep SimpleChatApp on_mount
                     api_issues.append("- No Ollama models found") # Keep SimpleChatApp on_mount
@@ -481,7 +523,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # Get the client for the current model first and cancel the connection
                 try:
                     model = self.selected_model
-                    client = BaseModelClient.get_client_for_model(model)
+                    client = await BaseModelClient.get_client_for_model(model)
                     
                     # Call the client's cancel method if it's supported
                     if hasattr(client, 'cancel_stream'):
@@ -511,6 +553,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # This happens if is_generating is True, but no active task found to cancel
                 log("No active generation task found, but is_generating=True. Resetting state.")
                 self.is_generating = False
+                
+                # Make sure to cancel animation task too
+                if self._loading_animation_task and not self._loading_animation_task.done():
+                    try:
+                        self._loading_animation_task.cancel()
+                    except Exception as e:
+                        log.error(f"Error cancelling animation task: {str(e)}")
+                self._loading_animation_task = None
+                
                 loading = self.query_one("#loading-indicator")
                 loading.add_class("hidden")
         else:
@@ -537,20 +588,27 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             pass
 
     async def update_messages_ui(self) -> None: # Keep SimpleChatApp update_messages_ui
-        """Update the messages UI.""" # Keep SimpleChatApp update_messages_ui docstring
+        """Update the messages UI with improved stability.""" # Keep SimpleChatApp update_messages_ui docstring
         # Clear existing messages # Keep SimpleChatApp update_messages_ui
         messages_container = self.query_one("#messages-container") # Keep SimpleChatApp update_messages_ui
         messages_container.remove_children() # Keep SimpleChatApp update_messages_ui
 
-        # Add messages with a small delay between each # Keep SimpleChatApp update_messages_ui
-        for message in self.messages: # Keep SimpleChatApp update_messages_ui
-            display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp update_messages_ui
-            messages_container.mount(display) # Keep SimpleChatApp update_messages_ui
-            messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
-            await asyncio.sleep(0.01)  # Small delay to prevent UI freezing # Keep SimpleChatApp update_messages_ui
-
-        # Final scroll to bottom # Keep SimpleChatApp update_messages_ui
+        # Temporarily disable automatic refresh while mounting messages
+        # This avoids excessive layout calculations and reduces flickering
+        with self.batch_update():
+            # Batch add all messages first without any refresh/layout
+            for message in self.messages: # Keep SimpleChatApp update_messages_ui
+                display = MessageDisplay(message, highlight_code=CONFIG["highlight_code"]) # Keep SimpleChatApp update_messages_ui
+                messages_container.mount(display) # Keep SimpleChatApp update_messages_ui
+        
+        # A small delay after mounting all messages helps with layout stability
+        await asyncio.sleep(0.05)
+        
+        # Scroll after all messages are added without animation
         messages_container.scroll_end(animate=False) # Keep SimpleChatApp update_messages_ui
+        
+        # Minimal refresh without full layout recalculation
+        self.refresh(layout=False)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None: # Keep SimpleChatApp on_input_submitted
         """Handle input submission (Enter key in the main input).""" # Keep SimpleChatApp on_input_submitted docstring
@@ -586,23 +644,77 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         await self.update_messages_ui()
 
         # If this is the first message and dynamic titles are enabled, generate one
-        if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True):
+        # Only attempt title generation if the message has sufficient content (at least 3 characters)
+        if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True) and len(content) >= 3:
             log("First message detected, generating title...")
-            title_generation_in_progress = True # Use a local flag
+            print(f"First message detected, generating conversation title for: {content[:30]}...")
+            debug_log(f"First message detected with length {len(content)}, generating conversation title")
+            
+            # Show loading indicator for title generation
             loading = self.query_one("#loading-indicator")
-            loading.remove_class("hidden") # Show loading for title gen
+            loading.remove_class("hidden")
+            loading.update("🔤 Generating title...")
 
             try:
                 # Get appropriate client
                 model = self.selected_model
-                client = BaseModelClient.get_client_for_model(model)
+                print(f"Using model for title generation: {model}")
+                debug_log(f"Selected model for title generation: '{model}'")
+                
+                # Check if model is valid
+                if not model:
+                    debug_log("Model is empty, falling back to default")
+                    # Fallback to a safe default model - preferring OpenAI if key exists
+                    if OPENAI_API_KEY:
+                        model = "gpt-3.5-turbo"
+                        debug_log("Falling back to OpenAI gpt-3.5-turbo for title generation")
+                    elif ANTHROPIC_API_KEY:
+                        model = "claude-3-haiku-20240307"  # Updated to newer Claude model
+                        debug_log("Falling back to Anthropic Claude 3 Haiku for title generation")
+                    else:
+                        # Last resort - use a common Ollama model
+                        model = "llama3"  # Common default
+                        debug_log("Falling back to Ollama model: llama3")
+
+                debug_log(f"Getting client for model: {model}")
+                client = await BaseModelClient.get_client_for_model(model)
+                
                 if client is None:
-                    raise Exception(f"No client available for model: {model}")
+                    debug_log(f"No client available for model: {model}, trying to initialize")
+                    # Try to determine client type and initialize manually
+                    client_type = BaseModelClient.get_client_type_for_model(model)
+                    if client_type:
+                        debug_log(f"Found client type {client_type.__name__} for {model}, initializing")
+                        try:
+                            client = await client_type.create()
+                            debug_log("Client initialized successfully")
+                        except Exception as init_err:
+                            debug_log(f"Error initializing client: {str(init_err)}")
+                    
+                    if client is None:
+                        debug_log("Could not initialize client, falling back to safer model")
+                        # Try a different model as last resort
+                        if OPENAI_API_KEY:
+                            from app.api.openai import OpenAIClient
+                            client = await OpenAIClient.create()
+                            model = "gpt-3.5-turbo"
+                            debug_log("Falling back to OpenAI for title generation")
+                        elif ANTHROPIC_API_KEY:
+                            from app.api.anthropic import AnthropicClient
+                            client = await AnthropicClient.create()
+                            model = "claude-3-haiku-20240307"  # Updated to newer Claude model
+                            debug_log("Falling back to Anthropic for title generation")
+                        else:
+                            raise Exception("No valid API clients available for title generation")
 
                 # Generate title
+                print(f"Calling generate_conversation_title with model: {model}")
                 log(f"Calling generate_conversation_title with model: {model}")
+                debug_log(f"Calling generate_conversation_title with model: {model}")
                 title = await generate_conversation_title(content, model, client)
+                debug_log(f"Generated title: {title}")
                 log(f"Generated title: {title}")
+                print(f"Generated title: {title}")
 
                 # Update conversation title in database
                 self.db.update_conversation(
@@ -616,19 +728,31 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
                 # Update conversation object
                 self.current_conversation.title = title
+                
+                # IMPORTANT: Save the successful model for consistency
+                # If the title was generated with a different model than initially selected,
+                # update the selected_model to match so the response uses the same model
+                debug_log(f"Using same model for chat response: '{model}'")
+                self.selected_model = model
 
                 self.notify(f"Conversation title set to: {title}", severity="information", timeout=3)
 
             except Exception as e:
+                debug_log(f"Failed to generate title: {str(e)}")
                 log.error(f"Failed to generate title: {str(e)}")
+                print(f"Failed to generate title: {str(e)}")
                 self.notify(f"Failed to generate title: {str(e)}", severity="warning")
             finally:
-                title_generation_in_progress = False
                 # Hide loading indicator *only if* AI response generation isn't about to start
-                # This check might be redundant if generate_response always shows it anyway
                 if not self.is_generating:
                      loading.add_class("hidden")
-
+                     
+                # Small delay to ensure state is updated
+                await asyncio.sleep(0.1)
+                
+        # Log just before generate_response call
+        debug_log(f"About to call generate_response with model: '{self.selected_model}'")
+                
         # Generate AI response (will set self.is_generating and handle loading indicator)
         await self.generate_response()
 
@@ -637,141 +761,378 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
     async def generate_response(self) -> None:
         """Generate an AI response using a non-blocking worker."""
+        # Import debug_log function from main
+        debug_log(f"Entering generate_response method")
+        
         if not self.current_conversation or not self.messages:
+            debug_log("No current conversation or messages, returning")
             return
 
         self.is_generating = True
         log("Setting is_generating to True")
+        debug_log("Setting is_generating to True")
         loading = self.query_one("#loading-indicator")
         loading.remove_class("hidden")
+        
+        # For Ollama models, show the loading indicator immediately
+        from app.api.ollama import OllamaClient
+        debug_log(f"Current selected model: '{self.selected_model}'")
+        client_type = BaseModelClient.get_client_type_for_model(self.selected_model)
+        debug_log(f"Client type: {client_type.__name__ if client_type else 'None'}")
+        
+        if self.selected_model and client_type == OllamaClient:
+            log("Ollama model detected, showing immediate loading indicator")
+            debug_log("Ollama model detected, showing immediate loading indicator")
+            loading.add_class("model-loading")
+            # Update the loading indicator text directly
+            loading.update("⚙️ Preparing Ollama model...")
+        else:
+            loading.remove_class("model-loading")
+            # Start with a simple animation pattern that won't cause markup issues
+            self._loading_frame = 0
+            # Stop any existing animation task
+            if self._loading_animation_task and not self._loading_animation_task.done():
+                self._loading_animation_task.cancel()
+            # Start the animation
+            self._loading_animation_task = asyncio.create_task(self._animate_loading_task(loading))
 
         try:
             # Get conversation parameters
-            model = self.selected_model
+            # Ensure the model ID is resolved before passing to the API client
+            unresolved_model = self.selected_model
+            model = resolve_model_id(unresolved_model)
+            log(f"Using model for generation: {model} (Resolved from: {unresolved_model})")
             style = self.selected_style
+            
+            debug_log(f"Using model: '{model}', style: '{style}'")
 
-            # Convert messages to API format
+            # Ensure we have a valid model
+            if not model:
+                debug_log("Model is empty, selecting a default model")
+                # Same fallback logic as in autotitling - this ensures consistency
+                if OPENAI_API_KEY:
+                    model = "gpt-3.5-turbo"
+                    debug_log("Falling back to OpenAI gpt-3.5-turbo")
+                elif ANTHROPIC_API_KEY:
+                    model = "claude-instant-1.2"
+                    debug_log("Falling back to Anthropic claude-instant-1.2")
+                else:
+                    # Check for a common Ollama model
+                    try:
+                        ollama = await OllamaClient.create()
+                        models = await ollama.get_available_models()
+                        if models and len(models) > 0:
+                            debug_log(f"Found {len(models)} Ollama models, using first one")
+                            model = models[0].get("id", "llama3")
+                        else:
+                            model = "llama3"  # Common default
+                        debug_log(f"Falling back to Ollama model: {model}")
+                    except Exception as ollama_err:
+                        debug_log(f"Error getting Ollama models: {str(ollama_err)}")
+                        model = "llama3"  # Final fallback
+                        debug_log("Final fallback to llama3")
+
+            # Convert messages to API format with enhanced error checking
             api_messages = []
-            for msg in self.messages:
-                api_messages.append({
-                    "role": msg.role,
-                    "content": msg.content
-                })
+            debug_log(f"Converting {len(self.messages)} messages to API format")
+            
+            for i, msg in enumerate(self.messages):
+                try:
+                    debug_log(f"Processing message {i}: type={type(msg).__name__}, dir={dir(msg)}")
+                    debug_log(f"Adding message to API format: role={msg.role}, content_len={len(msg.content)}")
+                    
+                    # Create a fully validated message dict
+                    message_dict = {
+                        "role": msg.role if hasattr(msg, 'role') and msg.role else "user",
+                        "content": msg.content if hasattr(msg, 'content') and msg.content else ""
+                    }
+                    
+                    api_messages.append(message_dict)
+                    debug_log(f"Successfully added message {i}")
+                except Exception as e:
+                    debug_log(f"Error adding message {i} to API format: {str(e)}")
+                    # Create a safe fallback message
+                    fallback_msg = {
+                        "role": "user",
+                        "content": str(msg) if msg is not None else "Error retrieving message content"
+                    }
+                    api_messages.append(fallback_msg)
+                    debug_log(f"Added fallback message for {i}")
+            
+            debug_log(f"Prepared {len(api_messages)} messages for API")
 
             # Get appropriate client
+            debug_log(f"Getting client for model: {model}")
             try:
-                client = BaseModelClient.get_client_for_model(model)
+                client = await BaseModelClient.get_client_for_model(model)
+                debug_log(f"Client: {client.__class__.__name__ if client else 'None'}")
+                
                 if client is None:
-                    raise Exception(f"No client available for model: {model}")
+                    debug_log(f"No client available for model: {model}, trying to initialize")
+                    # Try to determine client type and initialize manually
+                    client_type = BaseModelClient.get_client_type_for_model(model)
+                    if client_type:
+                        debug_log(f"Found client type {client_type.__name__} for {model}, initializing")
+                        try:
+                            client = await client_type.create()
+                            debug_log(f"Successfully initialized {client_type.__name__}")
+                        except Exception as init_err:
+                            debug_log(f"Error initializing client: {str(init_err)}")
+                    
+                    if client is None:
+                        debug_log("Could not initialize client, falling back to safer model")
+                        # Try a different model as last resort
+                        if OPENAI_API_KEY:
+                            from app.api.openai import OpenAIClient
+                            client = await OpenAIClient.create()
+                            model = "gpt-3.5-turbo"
+                            debug_log("Falling back to OpenAI client")
+                        elif ANTHROPIC_API_KEY:
+                            from app.api.anthropic import AnthropicClient
+                            client = await AnthropicClient.create()
+                            model = "claude-instant-1.2"
+                            debug_log("Falling back to Anthropic client")
+                        else:
+                            raise Exception("No valid API clients available")
             except Exception as e:
+                debug_log(f"Failed to initialize model client: {str(e)}")
                 self.notify(f"Failed to initialize model client: {str(e)}", severity="error")
                 self.is_generating = False
                 loading.add_class("hidden")
                 return
 
             # Start streaming response
+            debug_log("Creating assistant message with 'Thinking...'")
+            print("Creating assistant message with 'Thinking...'")
             assistant_message = Message(role="assistant", content="Thinking...")
             self.messages.append(assistant_message)
             messages_container = self.query_one("#messages-container")
             message_display = MessageDisplay(assistant_message, highlight_code=CONFIG["highlight_code"])
             messages_container.mount(message_display)
+            
+            # Force multiple layout refreshes and scroll to end to ensure visibility
+            self.refresh(layout=False)
+            await asyncio.sleep(0.01)
+            self.refresh(layout=True)
             messages_container.scroll_end(animate=False)
-
+            await asyncio.sleep(0.01)
+            self.refresh(layout=True)
+            
             # Add small delay to show thinking state
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
 
             # Stream chunks to the UI with synchronization
             update_lock = asyncio.Lock()
+            last_refresh_time = time.time()  # Initialize refresh throttling timer
 
             async def update_ui(content: str):
+                # This function remains the same, called by the worker
                 if not self.is_generating:
-                    log("update_ui called but is_generating is False, returning.")
+                    debug_log("update_ui called but is_generating is False, returning.")
                     return
-
+                
                 async with update_lock:
                     try:
                         # Clear thinking indicator on first content
                         if assistant_message.content == "Thinking...":
+                            debug_log("First content received, clearing 'Thinking...'")
+                            print("First content received, clearing 'Thinking...'")
                             assistant_message.content = ""
 
-                        # Update message with full content so far
+                        # Update the message object with the full content
                         assistant_message.content = content
-                        # Update UI with full content
-                        await message_display.update_content(content)
-                        # Force a refresh and scroll
-                        self.refresh(layout=True)
-                        await asyncio.sleep(0.05)  # Longer delay for UI stability
-                        messages_container.scroll_end(animate=False)
-                        # Force another refresh to ensure content is visible
-                        self.refresh(layout=True)
-                    except Exception as e:
-                        log.error(f"Error updating UI: {str(e)}")
 
-            # Define worker for background processing
-            @work(exit_on_error=True)
-            async def run_generation_worker():
-                try:
-                    # Generate the response in background
-                    full_response = await generate_streaming_response(
-                        self,
-                        api_messages,
-                        model,
-                        style,
-                        client,
-                        update_ui
-                    )
-                    
-                    # Save complete response to database
-                    if self.is_generating and full_response:
-                        log("Generation completed normally, saving to database")
-                        self.db.add_message(
-                            self.current_conversation.id,
-                            "assistant",
-                            full_response
-                        )
-                    
-                    # Final UI refresh
-                    self.refresh(layout=True)
-                    
-                except asyncio.CancelledError:
-                    log.warning("Generation worker was cancelled")
-                    # Remove the incomplete message
-                    if self.messages and self.messages[-1].role == "assistant":
-                        self.messages.pop()
-                    await self.update_messages_ui()
-                    self.notify("Generation stopped by user", severity="warning", timeout=2)
-                    
-                except Exception as e:
-                    log.error(f"Error in generation worker: {str(e)}")
-                    self.notify(f"Generation error: {str(e)}", severity="error", timeout=5)
-                    # Add error message to UI
-                    if self.messages and self.messages[-1].role == "assistant":
-                        self.messages.pop()  # Remove thinking message
-                    error_msg = f"Error: {str(e)}"
-                    self.messages.append(Message(role="assistant", content=error_msg))
-                    await self.update_messages_ui()
-                    
-                finally:
-                    # Always clean up state and UI
-                    log("Generation worker completed, resetting state")
-                    self.is_generating = False
-                    self.current_generation_task = None
-                    loading = self.query_one("#loading-indicator")
-                    loading.add_class("hidden")
-                    self.refresh(layout=True)
-                    self.query_one("#message-input").focus()
-                    
-            # Start the worker and keep a reference to it
-            worker = run_generation_worker()
+                        # Update UI with the content
+                        await message_display.update_content(content)
+                        
+                        # Simple refresh approach - just force a layout refresh
+                        self.refresh(layout=True)
+                        messages_container.scroll_end(animate=False)
+                        
+                    except Exception as e:
+                        debug_log(f"Error updating UI: {str(e)}")
+                        log.error(f"Error updating UI: {str(e)}")
+                        print(f"Error updating UI: {str(e)}")
+
+            # --- Remove the inner run_generation_worker function ---
+
+            # Start the worker using Textual's run_worker to ensure state tracking
+            debug_log("Starting generate_streaming_response worker with run_worker")
+            worker = self.run_worker(
+                generate_streaming_response(
+                    self,
+                    api_messages,
+                    model,
+                    style,
+                    client,
+                    update_ui  # Pass the callback function
+                ),
+                name="generate_response"
+            )
             self.current_generation_task = worker
-            
+            # Worker completion will be handled by on_worker_state_changed
+
         except Exception as e:
-            log.error(f"Error setting up generation: {str(e)}")
+            # This catches errors during the *setup* before the worker starts
+            debug_log(f"Error setting up generation worker: {str(e)}")
+            log.error(f"Error setting up generation worker: {str(e)}")
             self.notify(f"Error: {str(e)}", severity="error")
+            # Ensure cleanup if setup fails
+            self.is_generating = False # Reset state
+            self.current_generation_task = None
+            if self._loading_animation_task and not self._loading_animation_task.done():
+                self._loading_animation_task.cancel()
+            self._loading_animation_task = None
+            try:
+                loading = self.query_one("#loading-indicator")
+                loading.add_class("hidden")
+                self.query_one("#message-input").focus()
+            except Exception:
+                pass # Ignore UI errors during cleanup
+
+    # Rename this method slightly to avoid potential conflicts and clarify purpose
+    async def _handle_generation_result(self, worker: Worker[Optional[str]]) -> None:
+        """Handles the result of the generation worker (success, error, cancelled)."""
+        # Import debug_log again for safety within this callback context
+        try:
+            from app.main import debug_log
+        except ImportError:
+            debug_log = lambda msg: None
+
+        debug_log(f"Generation worker completed. State: {worker.state}")
+
+        try:
+            if worker.state == "cancelled":
+                debug_log("Generation worker was cancelled")
+                log.warning("Generation worker was cancelled")
+                # Remove the incomplete message
+                if self.messages and self.messages[-1].role == "assistant":
+                    debug_log("Removing incomplete assistant message")
+                    self.messages.pop()
+                await self.update_messages_ui()
+                self.notify("Generation stopped by user", severity="warning", timeout=2)
+
+            elif worker.state == "error":
+                error = worker.error
+                debug_log(f"Error in generation worker: {error}")
+                log.error(f"Error in generation worker: {error}")
+                self.notify(f"Generation error: {error}", severity="error", timeout=5)
+                # Add error message to UI
+                if self.messages and self.messages[-1].role == "assistant":
+                    debug_log("Removing thinking message")
+                    self.messages.pop()  # Remove thinking message
+                error_msg = f"Error: {error}"
+                debug_log(f"Adding error message: {error_msg}")
+                self.messages.append(Message(role="assistant", content=error_msg))
+                await self.update_messages_ui()
+
+            elif worker.state == "success":
+                full_response = worker.result
+                debug_log("Generation completed normally, saving to database")
+                log("Generation completed normally, saving to database")
+                # Save complete response to database (check if response is valid)
+                if full_response and isinstance(full_response, str):
+                    self.db.add_message(
+                        self.current_conversation.id,
+                        "assistant",
+                        full_response
+                    )
+                    # Update the final message object content (optional, UI should be up-to-date)
+                    if self.messages and self.messages[-1].role == "assistant":
+                        self.messages[-1].content = full_response
+                        
+                    # Force a UI refresh with the message display to ensure it's fully rendered
+                    try:
+                        # Get the message display for the assistant message
+                        messages_container = self.query_one("#messages-container")
+                        message_displays = messages_container.query("MessageDisplay")
+                        # Check if we found any message displays
+                        if message_displays and len(message_displays) > 0:
+                            # Get the last message display which should be our assistant message
+                            last_message_display = message_displays[-1]
+                            debug_log("Forcing final content update on message display")
+                            # Force a final content update
+                            await last_message_display.update_content(full_response)
+                    except Exception as disp_err:
+                        debug_log(f"Error updating final message display: {str(disp_err)}")
+                else:
+                    debug_log("Worker finished successfully but response was empty or invalid.")
+                    # Handle case where 'Thinking...' might still be the last message
+                    if self.messages and self.messages[-1].role == "assistant" and self.messages[-1].content == "Thinking...":
+                         self.messages.pop() # Remove 'Thinking...' if no content arrived
+                         await self.update_messages_ui()
+
+                # Force a full UI refresh to ensure content is visible
+                messages_container = self.query_one("#messages-container")
+                
+                # Sequence of UI refreshes to ensure content is properly displayed
+                # 1. First do a lightweight refresh
+                self.refresh(layout=False)
+                
+                # 2. Short delay to allow the UI to process
+                await asyncio.sleep(0.1)  
+                
+                # 3. Ensure we're scrolled to the end
+                messages_container.scroll_end(animate=False)
+                
+                # 4. Full layout refresh
+                self.refresh(layout=True)
+                
+                # 5. Final delay and scroll to ensure everything is visible
+                await asyncio.sleep(0.1)
+                messages_container.scroll_end(animate=False)
+
+        except Exception as e:
+            # Catch any unexpected errors during the callback itself
+            debug_log(f"Error in on_generation_complete callback: {str(e)}")
+            log.error(f"Error in on_generation_complete callback: {str(e)}")
+            self.notify(f"Internal error handling response: {str(e)}", severity="error")
+
+        finally:
+            # Always clean up state and UI, regardless of worker outcome
+            debug_log("Cleaning up after generation worker")
             self.is_generating = False
-            loading = self.query_one("#loading-indicator")
-            loading.add_class("hidden")
-            self.query_one("#message-input").focus()
+            self.current_generation_task = None
+
+            # Stop the animation task
+            if self._loading_animation_task and not self._loading_animation_task.done():
+                debug_log("Cancelling loading animation task")
+                self._loading_animation_task.cancel()
+            self._loading_animation_task = None
+
+            try:
+                loading = self.query_one("#loading-indicator")
+                loading.add_class("hidden")
+                self.refresh(layout=True) # Refresh after hiding loading
+                self.query_one("#message-input").focus()
+            except Exception as ui_err:
+                debug_log(f"Error during final UI cleanup: {str(ui_err)}")
+                log.error(f"Error during final UI cleanup: {str(ui_err)}")
+
+    @on(Worker.StateChanged)
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Handle worker state changes."""
+        # Import debug_log again for safety within this callback context
+        try:
+            from app.main import debug_log
+        except ImportError:
+            debug_log = lambda msg: None
+
+        debug_log(f"Worker {event.worker.name} state changed to {event.state}")
+
+        # Check if this is the generation worker we are tracking
+        if event.worker is self.current_generation_task:
+            # Check if the worker has reached a final state by comparing against enum values
+            final_states = {WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED}
+            if event.state in final_states:
+                debug_log(f"Generation worker ({event.worker.name}) reached final state: {event.state}")
+                # Call the handler function
+                await self._handle_generation_result(event.worker)
+            else:
+                 debug_log(f"Generation worker ({event.worker.name}) is in intermediate state: {event.state}")
+        else:
+            debug_log(f"State change event from unrelated worker: {event.worker.name}")
+
 
     def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None: # Keep SimpleChatApp on_model_selector_model_selected
         """Handle model selection""" # Keep SimpleChatApp on_model_selector_model_selected docstring
@@ -862,8 +1223,23 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             await self.update_messages_ui() # Keep SimpleChatApp view_chat_history
 
             # Update model and style selectors # Keep SimpleChatApp view_chat_history
-            self.selected_model = self.current_conversation.model # Keep SimpleChatApp view_chat_history
+            # Resolve the model ID loaded from the conversation data
+            loaded_model_id = self.current_conversation.model
+            resolved_model_id = resolve_model_id(loaded_model_id)
+            log(f"Loaded model ID from history: {loaded_model_id}, Resolved to: {resolved_model_id}")
+
+            self.selected_model = resolved_model_id # Use the resolved ID
             self.selected_style = self.current_conversation.style # Keep SimpleChatApp view_chat_history
+
+            # Update settings panel selectors if they exist
+            try:
+                model_selector = self.query_one(ModelSelector)
+                model_selector.set_selected_model(self.selected_model) # Use resolved ID here too
+                style_selector = self.query_one(StyleSelector)
+                style_selector.set_selected_style(self.selected_style)
+            except Exception as e:
+                log(f"Error updating selectors after history load: {e}")
+
             self.update_app_info() # Update info bar after loading history
 
         self.push_screen(HistoryScreen(conversations, handle_selection)) # Keep SimpleChatApp view_chat_history
@@ -879,6 +1255,53 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         """Open the Ollama model browser screen."""
         # Always trigger regardless of focus
         self.push_screen(ModelBrowserScreen())
+        
+    async def _animate_loading_task(self, loading_widget: Static) -> None:
+        """Animate the loading indicator with a simple text animation"""
+        try:
+            # Animation frames (simple text animation)
+            frames = [
+                "▪▫▫ Generating response...",
+                "▪▪▫ Generating response...",
+                "▪▪▪ Generating response...",
+                "▫▪▪ Generating response...",
+                "▫▫▪ Generating response...",
+                "▫▫▫ Generating response..."
+            ]
+            
+            while self.is_generating:
+                try:
+                    # Update the loading text with safety checks
+                    if frames and len(frames) > 0:
+                        frame_idx = self._loading_frame % len(frames)
+                        loading_widget.update(frames[frame_idx])
+                    else:
+                        # Fallback if frames is empty
+                        loading_widget.update("▪▪▪ Generating response...")
+                    
+                    self._loading_frame += 1
+                    # Small delay between frames
+                    await asyncio.sleep(0.3)
+                except Exception as e:
+                    # If any error occurs, use a simple fallback and continue
+                    log.error(f"Animation frame error: {str(e)}")
+                    try:
+                        loading_widget.update("▪▪▪ Generating response...")
+                    except:
+                        pass
+                    await asyncio.sleep(0.3)
+                
+        except asyncio.CancelledError:
+            # Normal cancellation
+            pass
+        except Exception as e:
+            # Log any errors but don't crash
+            log.error(f"Error in loading animation: {str(e)}")
+            # Reset to basic text
+            try:
+                loading_widget.update("▪▪▪ Generating response...")
+            except:
+                pass
 
     def action_settings(self) -> None: # Modify SimpleChatApp action_settings
         """Action to open/close settings panel via key binding."""
@@ -907,6 +1330,10 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         if not self.current_conversation:
             self.notify("No active conversation", severity="warning")
             return
+            
+        # Create and mount the title input modal
+        modal = TitleInputModal(self.current_conversation.title)
+        await self.mount(modal)
 
         # --- Define the Modal Class ---
         class ConfirmDialog(Static):
@@ -982,10 +1409,6 @@ class TitleInputModal(Static):
     async def on_mount(self) -> None:
         """Focus the input when the modal appears."""
         self.query_one("#title-input", Input).focus()
-
-        # --- Show the modal ---
-        modal = TitleInputModal(self.current_conversation.title)
-        await self.mount(modal) # Use await for mounting
 
     async def run_modal(self, modal_type: str, *args, **kwargs) -> bool:
         """Run a modal dialog and return the result."""
