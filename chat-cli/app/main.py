@@ -930,70 +930,29 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 if not self.is_generating:
                     debug_log("update_ui called but is_generating is False, returning.")
                     return
-
-                # Make last_refresh_time accessible in inner scope
-                nonlocal last_refresh_time
                 
                 async with update_lock:
                     try:
                         # Clear thinking indicator on first content
                         if assistant_message.content == "Thinking...":
                             debug_log("First content received, clearing 'Thinking...'")
+                            print("First content received, clearing 'Thinking...'")
                             assistant_message.content = ""
 
                         # Update the message object with the full content
                         assistant_message.content = content
 
-                        # Update UI with the content - the MessageDisplay will now handle its own refresh
-                        # This is a critical change that ensures content is immediately visible
+                        # Update UI with the content
                         await message_display.update_content(content)
                         
-                        # CRITICAL: Force immediate UI refresh after EVERY update 
-                        # This ensures we don't need a second Enter press to see content
+                        # Simple refresh approach - just force a layout refresh
                         self.refresh(layout=True)
-                        
-                        # Always scroll after each update to ensure visibility
                         messages_container.scroll_end(animate=False)
                         
-                        # For longer responses, we can throttle the heavy refreshes
-                        # to reduce visual jitter, but still do light refreshes for every update
-                        content_length = len(content)
-                        
-                        # Define key refresh points that require more thorough updates
-                        new_paragraph = content.endswith("\n") and content.count("\n") > 0
-                        code_block = "```" in content
-                        needs_thorough_refresh = (
-                            content_length < 30 or       # Very aggressive for short responses
-                            content_length % 16 == 0 or  # More frequent periodic updates 
-                            new_paragraph or             # Refresh on paragraph breaks
-                            code_block                   # Refresh when code blocks are detected
-                        )
-                        
-                        # Check if it's been enough time since last heavy refresh
-                        # Reduced from 200ms to 100ms for more responsive UI
-                        current_time = time.time()
-                        time_since_refresh = current_time - last_refresh_time
-                        
-                        if needs_thorough_refresh and time_since_refresh > 0.1:
-                            # Store the time we did the heavy refresh
-                            last_refresh_time = current_time
-                            
-                            # Ensure content is visible with an aggressive, guaranteed update sequence
-                            # 1. Scroll to ensure visibility
-                            messages_container.scroll_end(animate=False)
-                            
-                            # 2. Force a comprehensive refresh with layout recalculation
-                            self.refresh(layout=True)
-                            
-                            # 3. Small delay for rendering
-                            await asyncio.sleep(0.01)
-                            
-                            # 4. Another scroll to account for any layout changes
-                            messages_container.scroll_end(animate=False)
-                            
                     except Exception as e:
                         debug_log(f"Error updating UI: {str(e)}")
                         log.error(f"Error updating UI: {str(e)}")
+                        print(f"Error updating UI: {str(e)}")
 
             # --- Remove the inner run_generation_worker function ---
 
