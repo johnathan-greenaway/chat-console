@@ -707,10 +707,18 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         else:
                             raise Exception("No valid API clients available for title generation")
 
-                # Generate title
+                # Generate title - make sure we're using the right client for the model
                 print(f"Calling generate_conversation_title with model: {model}")
                 log(f"Calling generate_conversation_title with model: {model}")
-                debug_log(f"Calling generate_conversation_title with model: {model}")
+                debug_log(f"Calling generate_conversation_title with model: {model}, client type: {type(client).__name__}")
+                
+                # Double-check that we're using the right client for this model
+                expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                if expected_client_type and not isinstance(client, expected_client_type):
+                    debug_log(f"Warning: Client type mismatch. Expected {expected_client_type.__name__}, got {type(client).__name__}")
+                    debug_log("Creating new client with correct type")
+                    client = await BaseModelClient.get_client_for_model(model)
+                
                 title = await generate_conversation_title(content, model, client)
                 debug_log(f"Generated title: {title}")
                 log(f"Generated title: {title}")
@@ -729,11 +737,9 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # Update conversation object
                 self.current_conversation.title = title
                 
-                # IMPORTANT: Save the successful model for consistency
-                # If the title was generated with a different model than initially selected,
-                # update the selected_model to match so the response uses the same model
-                debug_log(f"Using same model for chat response: '{model}'")
-                self.selected_model = model
+                # DO NOT update the selected model here - keep the user's original selection
+                # This was causing issues with model mixing
+                debug_log(f"Keeping original selected model: '{self.selected_model}'")
 
                 self.notify(f"Conversation title set to: {title}", severity="information", timeout=3)
 
@@ -805,17 +811,23 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             style = self.selected_style
             
             debug_log(f"Using model: '{model}', style: '{style}'")
+            
+            # Determine the expected client type for this model
+            expected_client_type = BaseModelClient.get_client_type_for_model(model)
+            debug_log(f"Expected client type for {model}: {expected_client_type.__name__ if expected_client_type else 'None'}")
 
             # Ensure we have a valid model
             if not model:
                 debug_log("Model is empty, selecting a default model")
-                # Same fallback logic as in autotitling - this ensures consistency
+                # Check which providers are available and select an appropriate default
                 if OPENAI_API_KEY:
                     model = "gpt-3.5-turbo"
-                    debug_log("Falling back to OpenAI gpt-3.5-turbo")
+                    expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                    debug_log(f"Falling back to OpenAI gpt-3.5-turbo with client type {expected_client_type.__name__ if expected_client_type else 'None'}")
                 elif ANTHROPIC_API_KEY:
-                    model = "claude-instant-1.2"
-                    debug_log("Falling back to Anthropic claude-instant-1.2")
+                    model = "claude-3-haiku-20240307"  # Updated to newer Claude model
+                    expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                    debug_log(f"Falling back to Anthropic Claude 3 Haiku with client type {expected_client_type.__name__ if expected_client_type else 'None'}")
                 else:
                     # Check for a common Ollama model
                     try:
@@ -826,11 +838,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                             model = models[0].get("id", "llama3")
                         else:
                             model = "llama3"  # Common default
-                        debug_log(f"Falling back to Ollama model: {model}")
+                        expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                        debug_log(f"Falling back to Ollama model: {model} with client type {expected_client_type.__name__ if expected_client_type else 'None'}")
                     except Exception as ollama_err:
                         debug_log(f"Error getting Ollama models: {str(ollama_err)}")
                         model = "llama3"  # Final fallback
-                        debug_log("Final fallback to llama3")
+                        expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                        debug_log(f"Final fallback to llama3 with client type {expected_client_type.__name__ if expected_client_type else 'None'}")
 
             # Convert messages to API format with enhanced error checking
             api_messages = []
