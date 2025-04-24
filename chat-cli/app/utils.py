@@ -63,17 +63,62 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
 
     # Check if client is OpenAI
     is_openai = 'openai' in str(type(client)).lower()
-    if is_openai and not title_model_id:
+    if is_openai:
         debug_log("Using OpenAI client for title generation")
         # Use GPT-3.5 for title generation (fast and cost-effective)
         title_model_id = "gpt-3.5-turbo"
         debug_log(f"Using OpenAI model for title generation: {title_model_id}")
+        # For OpenAI, we'll always use their model, not fall back to the passed model
+        # This prevents trying to use Ollama models with OpenAI client
+    
+    # Check if client is Ollama
+    is_ollama = 'ollama' in str(type(client)).lower()
+    if is_ollama and not title_model_id:
+        debug_log("Using Ollama client for title generation")
+        # For Ollama, check if the model exists before using it
+        try:
+            # Try a quick test request to check if model exists
+            debug_log(f"Testing if Ollama model exists: {model}")
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                try:
+                    base_url = "http://localhost:11434"
+                    async with session.post(
+                        f"{base_url}/api/generate",
+                        json={"model": model, "prompt": "test", "stream": False},
+                        timeout=2
+                    ) as response:
+                        if response.status == 200:
+                            # Model exists, use it
+                            title_model_id = model
+                            debug_log(f"Ollama model {model} exists, using it for title generation")
+                        else:
+                            debug_log(f"Ollama model {model} returned status {response.status}, falling back to default")
+                            # Fall back to a common model
+                            title_model_id = "llama3"
+                except Exception as e:
+                    debug_log(f"Error testing Ollama model: {str(e)}, falling back to default")
+                    # Fall back to a common model
+                    title_model_id = "llama3"
+        except Exception as e:
+            debug_log(f"Error checking Ollama model: {str(e)}")
+            # Fall back to a common model
+            title_model_id = "llama3"
     
     # Fallback logic if no specific model was found
     if not title_model_id:
-        # Use the originally passed model as the final fallback
-        title_model_id = model
-        debug_log(f"Falling back to originally selected model for title generation: {title_model_id}")
+        # Use a safe default based on client type
+        if is_openai:
+            title_model_id = "gpt-3.5-turbo"
+        elif is_anthropic:
+            title_model_id = "claude-3-haiku-20240307"
+        elif is_ollama:
+            title_model_id = "llama3"  # Common default
+        else:
+            # Last resort - use the originally passed model
+            title_model_id = model
+        
+        debug_log(f"No specific model found, using fallback model for title generation: {title_model_id}")
     
     logger.info(f"Generating title for conversation using model: {title_model_id}")
     debug_log(f"Final model selected for title generation: {title_model_id}")
@@ -325,25 +370,26 @@ async def generate_streaming_response(
                         full_response += new_content
                         debug_log(f"Updating UI with content length: {len(full_response)}")
                         
-                        # Only print to console for debugging if not OpenAI
-                        # This prevents Ollama debug output from appearing in OpenAI responses
-                        if not is_openai:
-                            print(f"Streaming update: +{len(new_content)} chars, total: {len(full_response)}")
+                        # Enhanced debug logging
+                        print(f"STREAM DEBUG: +{len(new_content)} chars, total: {len(full_response)}")
+                        # Print first few characters of content for debugging
+                        if len(full_response) < 100:
+                            print(f"STREAM CONTENT: '{full_response}'")
                         
                         try:
                             # Call the UI callback with the full response so far
+                            debug_log("Calling UI callback with content")
                             await callback(full_response)
                             debug_log("UI callback completed successfully")
                             
                             # Force app refresh after each update
                             if hasattr(app, 'refresh'):
+                                debug_log("Forcing app refresh")
                                 app.refresh(layout=True)  # Force layout refresh
                         except Exception as callback_err:
                             debug_log(f"Error in UI callback: {str(callback_err)}")
                             logger.error(f"Error in UI callback: {str(callback_err)}")
-                            # Only print error to console if not OpenAI
-                            if not is_openai:
-                                print(f"Error updating UI: {str(callback_err)}")
+                            print(f"STREAM ERROR: Error updating UI: {str(callback_err)}")
                             
                         buffer = []
                         last_update = current_time

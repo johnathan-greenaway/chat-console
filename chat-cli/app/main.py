@@ -940,27 +940,39 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             last_refresh_time = time.time()  # Initialize refresh throttling timer
 
             async def update_ui(content: str):
-                # This function remains the same, called by the worker
+                # This function is called by the worker with each content update
                 if not self.is_generating:
                     debug_log("update_ui called but is_generating is False, returning.")
                     return
                 
                 async with update_lock:
                     try:
+                        # Add more verbose logging
+                        debug_log(f"update_ui called with content length: {len(content)}")
+                        print(f"update_ui: Updating with content length {len(content)}")
+                        
                         # Clear thinking indicator on first content
                         if assistant_message.content == "Thinking...":
                             debug_log("First content received, clearing 'Thinking...'")
                             print("First content received, clearing 'Thinking...'")
-                            assistant_message.content = ""
-
+                            # We'll let the MessageDisplay.update_content handle this special case
+                        
                         # Update the message object with the full content
                         assistant_message.content = content
 
-                        # Update UI with the content
+                        # Update UI with the content - this now has special handling for "Thinking..."
+                        debug_log("Calling message_display.update_content")
                         await message_display.update_content(content)
                         
-                        # Simple refresh approach - just force a layout refresh
+                        # More aggressive UI refresh sequence
+                        debug_log("Performing UI refresh sequence")
+                        # First do a lightweight refresh
+                        self.refresh(layout=False)
+                        # Then scroll to end
+                        messages_container.scroll_end(animate=False)
+                        # Then do a full layout refresh
                         self.refresh(layout=True)
+                        # Final scroll to ensure visibility
                         messages_container.scroll_end(animate=False)
                         
                     except Exception as e:
@@ -1030,14 +1042,32 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 error = worker.error
                 debug_log(f"Error in generation worker: {error}")
                 log.error(f"Error in generation worker: {error}")
-                self.notify(f"Generation error: {error}", severity="error", timeout=5)
+                
+                # Sanitize error message for UI display
+                error_str = str(error)
+                
+                # Check if this is an Ollama error
+                is_ollama_error = "ollama" in error_str.lower() or "404" in error_str
+                
+                # Create a user-friendly error message
+                if is_ollama_error:
+                    # For Ollama errors, provide a more user-friendly message
+                    user_error = "Unable to generate response. The selected model may not be available."
+                    debug_log(f"Sanitizing Ollama error to user-friendly message: {user_error}")
+                    # Show technical details only in notification, not in chat
+                    self.notify(f"Model error: {error_str}", severity="error", timeout=5)
+                else:
+                    # For other errors, show a generic message
+                    user_error = f"Error generating response: {error_str}"
+                    self.notify(f"Generation error: {error_str}", severity="error", timeout=5)
+                
                 # Add error message to UI
                 if self.messages and self.messages[-1].role == "assistant":
                     debug_log("Removing thinking message")
                     self.messages.pop()  # Remove thinking message
-                error_msg = f"Error: {error}"
-                debug_log(f"Adding error message: {error_msg}")
-                self.messages.append(Message(role="assistant", content=error_msg))
+                
+                debug_log(f"Adding error message: {user_error}")
+                self.messages.append(Message(role="assistant", content=user_error))
                 await self.update_messages_ui()
 
             elif worker.state == "success":

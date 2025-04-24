@@ -121,11 +121,23 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         
     async def update_content(self, content: str) -> None:
         """Update the message content using Static.update() with optimizations for streaming"""
+        # Debug print to verify method is being called with content
+        print(f"MessageDisplay.update_content called with content length: {len(content)}")
+        
         # Quick unchanged content check to avoid unnecessary updates
         if self.message.content == content:
+            print("Content unchanged, skipping update")
             return
             
-        # Update the stored message object content first
+        # Special handling for "Thinking..." to ensure it gets replaced
+        if self.message.content == "Thinking..." and content:
+            print("Replacing 'Thinking...' with actual content")
+            # Force a complete replacement rather than an append
+            self.message.content = ""
+            # Add a debug print to confirm this branch is executed
+            print("CRITICAL FIX: Replacing 'Thinking...' placeholder with actual content")
+            
+        # Update the stored message object content
         self.message.content = content
         
         # Format with fixed-width placeholder to minimize layout shifts
@@ -134,6 +146,7 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         
         # Use a direct update that forces refresh - critical fix for streaming
         # This ensures content is immediately visible
+        print(f"Updating widget with formatted content length: {len(formatted_content)}")
         self.update(formatted_content, refresh=True)
         
         # Force app-level refresh and scroll to ensure visibility
@@ -148,6 +161,9 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
                 for container in containers:
                     if hasattr(container, 'scroll_end'):
                         container.scroll_end(animate=False)
+                        
+                # Add an additional refresh after scrolling
+                self.app.refresh(layout=True)
         except Exception as e:
             # Log the error and fallback to local refresh
             print(f"Error refreshing app: {str(e)}")
@@ -157,6 +173,11 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         """Format message content with timestamp and handle markdown links"""
         timestamp = datetime.now().strftime("%H:%M")
         
+        # Special handling for "Thinking..." to make it visually distinct
+        if content == "Thinking...":
+            # Use italic style for the thinking indicator
+            return f"[dim]{timestamp}[/dim] [italic]{content}[/italic]"
+            
         # Fix markdown-style links that cause markup errors
         # Convert [text](url) to a safe format for Textual markup
         content = re.sub(
