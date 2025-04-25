@@ -121,11 +121,50 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         
     async def update_content(self, content: str) -> None:
         """Update the message content using Static.update() with optimizations for streaming"""
+        # Use proper logging instead of print statements
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"MessageDisplay.update_content called with content length: {len(content)}")
+        
         # Quick unchanged content check to avoid unnecessary updates
         if self.message.content == content:
+            logger.debug("Content unchanged, skipping update")
             return
             
-        # Update the stored message object content first
+        # Special handling for "Thinking..." to ensure it gets replaced
+        if self.message.content == "Thinking..." and content:
+            logger.debug("Replacing 'Thinking...' with actual content")
+            # Force a complete replacement rather than an append
+            self.message.content = ""
+            
+            # Update the stored message object content
+            self.message.content = content
+            
+            # Format with fixed-width placeholder to minimize layout shifts
+            formatted_content = self._format_content(content)
+            
+            # Use a direct update that forces refresh - critical fix for streaming
+            self.update(formatted_content, refresh=True)
+            
+            # Force app-level refresh and scroll to ensure visibility
+            try:
+                if self.app:
+                    # Force a full layout refresh to ensure content is visible
+                    self.app.refresh(layout=True)
+                    
+                    # Find the messages container and scroll to end
+                    containers = self.app.query("ScrollableContainer")
+                    for container in containers:
+                        if hasattr(container, 'scroll_end'):
+                            container.scroll_end(animate=False)
+            except Exception as e:
+                logger.error(f"Error refreshing app: {str(e)}")
+                self.refresh(layout=True)
+            
+            # Return early to avoid duplicate updates
+            return
+            
+        # Update the stored message object content
         self.message.content = content
         
         # Format with fixed-width placeholder to minimize layout shifts
@@ -134,6 +173,7 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         
         # Use a direct update that forces refresh - critical fix for streaming
         # This ensures content is immediately visible
+        logger.debug(f"Updating widget with formatted content length: {len(formatted_content)}")
         self.update(formatted_content, refresh=True)
         
         # Force app-level refresh and scroll to ensure visibility
@@ -150,13 +190,18 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
                         container.scroll_end(animate=False)
         except Exception as e:
             # Log the error and fallback to local refresh
-            print(f"Error refreshing app: {str(e)}")
+            logger.error(f"Error refreshing app: {str(e)}")
             self.refresh(layout=True)
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp and handle markdown links"""
         timestamp = datetime.now().strftime("%H:%M")
         
+        # Special handling for "Thinking..." to make it visually distinct
+        if content == "Thinking...":
+            # Use italic style for the thinking indicator
+            return f"[dim]{timestamp}[/dim] [italic]{content}[/italic]"
+            
         # Fix markdown-style links that cause markup errors
         # Convert [text](url) to a safe format for Textual markup
         content = re.sub(
@@ -170,8 +215,8 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         # But keep our timestamp markup
         timestamp_markup = f"[dim]{timestamp}[/dim]"
         
-        # Debug print to verify content is being formatted
-        print(f"Formatting content: {len(content)} chars")
+        # Use proper logging instead of print
+        logger.debug(f"Formatting content: {len(content)} chars")
         
         return f"{timestamp_markup} {content}"
 

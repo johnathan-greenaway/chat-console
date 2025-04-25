@@ -20,33 +20,108 @@ logger = logging.getLogger(__name__)
 
 async def generate_conversation_title(message: str, model: str, client: Any) -> str:
     """Generate a descriptive title for a conversation based on the first message"""
+    try:
+        from app.main import debug_log
+    except ImportError:
+        debug_log = lambda msg: None
+    
+    debug_log(f"Starting title generation with model: {model}, client type: {type(client).__name__}")
+    
     # --- Choose a specific, reliable model for title generation ---
-    # Prefer Haiku if Anthropic is available, otherwise fallback
+    # First, determine if we have a valid client
+    if client is None:
+        debug_log("Client is None, will use default title")
+        return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+    
+    # Determine the best model to use for title generation
     title_model_id = None
-    if client and isinstance(client, anthropic.AsyncAnthropic): # Check if the passed client is Anthropic
-        # Check if Haiku is listed in the client's available models (more robust)
-        available_anthropic_models = client.get_available_models()
-        haiku_id = "claude-3-haiku-20240307"
-        if any(m["id"] == haiku_id for m in available_anthropic_models):
-             title_model_id = haiku_id
-             logger.info(f"Using Anthropic Haiku for title generation: {title_model_id}")
-        else:
-             # If Haiku not found, try Sonnet
-             sonnet_id = "claude-3-sonnet-20240229"
-             if any(m["id"] == sonnet_id for m in available_anthropic_models):
-                  title_model_id = sonnet_id
-                  logger.info(f"Using Anthropic Sonnet for title generation: {title_model_id}")
-             else:
-                  logger.warning(f"Neither Haiku nor Sonnet found in Anthropic client's list. Falling back.")
+    
+    # Check if client is Anthropic
+    is_anthropic = 'anthropic' in str(type(client)).lower()
+    if is_anthropic:
+        debug_log("Using Anthropic client for title generation")
+        # Try to get available models safely
+        try:
+            available_anthropic_models = client.get_available_models()
+            debug_log(f"Found {len(available_anthropic_models)} Anthropic models")
+            
+            # Try Claude 3 Haiku first (fastest)
+            haiku_id = "claude-3-haiku-20240307"
+            if any(m.get("id") == haiku_id for m in available_anthropic_models):
+                title_model_id = haiku_id
+                debug_log(f"Using Anthropic Haiku for title generation: {title_model_id}")
+            else:
+                # If Haiku not found, try Sonnet
+                sonnet_id = "claude-3-sonnet-20240229"
+                if any(m.get("id") == sonnet_id for m in available_anthropic_models):
+                    title_model_id = sonnet_id
+                    debug_log(f"Using Anthropic Sonnet for title generation: {title_model_id}")
+                else:
+                    debug_log("Neither Haiku nor Sonnet found in Anthropic models list")
+        except Exception as e:
+            debug_log(f"Error getting Anthropic models: {str(e)}")
 
-    # Fallback logic if no specific Anthropic model was found or client is not Anthropic
+    # Check if client is OpenAI
+    is_openai = 'openai' in str(type(client)).lower()
+    if is_openai:
+        debug_log("Using OpenAI client for title generation")
+        # Use GPT-3.5 for title generation (fast and cost-effective)
+        title_model_id = "gpt-3.5-turbo"
+        debug_log(f"Using OpenAI model for title generation: {title_model_id}")
+        # For OpenAI, we'll always use their model, not fall back to the passed model
+        # This prevents trying to use Ollama models with OpenAI client
+    
+    # Check if client is Ollama
+    is_ollama = 'ollama' in str(type(client)).lower()
+    if is_ollama and not title_model_id:
+        debug_log("Using Ollama client for title generation")
+        # For Ollama, check if the model exists before using it
+        try:
+            # Try a quick test request to check if model exists
+            debug_log(f"Testing if Ollama model exists: {model}")
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                try:
+                    base_url = "http://localhost:11434"
+                    async with session.post(
+                        f"{base_url}/api/generate",
+                        json={"model": model, "prompt": "test", "stream": False},
+                        timeout=2
+                    ) as response:
+                        if response.status == 200:
+                            # Model exists, use it
+                            title_model_id = model
+                            debug_log(f"Ollama model {model} exists, using it for title generation")
+                        else:
+                            debug_log(f"Ollama model {model} returned status {response.status}, falling back to default")
+                            # Fall back to a common model
+                            title_model_id = "llama3"
+                except Exception as e:
+                    debug_log(f"Error testing Ollama model: {str(e)}, falling back to default")
+                    # Fall back to a common model
+                    title_model_id = "llama3"
+        except Exception as e:
+            debug_log(f"Error checking Ollama model: {str(e)}")
+            # Fall back to a common model
+            title_model_id = "llama3"
+    
+    # Fallback logic if no specific model was found
     if not title_model_id:
-        # Use the originally passed model (user's selected chat model) as the final fallback
-        title_model_id = model
-        logger.warning(f"Falling back to originally selected model for title generation: {title_model_id}")
-        # Consider adding fallbacks to OpenAI/Ollama here if needed based on config/availability
-
+        # Use a safe default based on client type
+        if is_openai:
+            title_model_id = "gpt-3.5-turbo"
+        elif is_anthropic:
+            title_model_id = "claude-3-haiku-20240307"
+        elif is_ollama:
+            title_model_id = "llama3"  # Common default
+        else:
+            # Last resort - use the originally passed model
+            title_model_id = model
+        
+        debug_log(f"No specific model found, using fallback model for title generation: {title_model_id}")
+    
     logger.info(f"Generating title for conversation using model: {title_model_id}")
+    debug_log(f"Final model selected for title generation: {title_model_id}")
 
     # Create a special prompt for title generation
     title_prompt = [
@@ -65,36 +140,44 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     
     while tries > 0:
         try:
-            # Generate a title using the same model but with a separate request
-            # Assuming client has a method like generate_completion or similar
-            # Adjust the method call based on the actual client implementation
+            debug_log(f"Attempt {3-tries} to generate title")
+            # First try generate_completion if available
             if hasattr(client, 'generate_completion'):
-                title = await client.generate_completion(
-                    messages=title_prompt,
-                    model=title_model_id, # Use the chosen title model
-                    temperature=0.7,
-                    max_tokens=60  # Titles should be short
-                )
-            elif hasattr(client, 'generate_stream'): # Fallback or alternative method?
-                 # If generate_completion isn't available, maybe adapt generate_stream?
-                 # This part needs clarification based on the client's capabilities.
-                 # For now, let's assume a hypothetical non-streaming call or adapt stream
-                 # Simplified adaptation: collect stream chunks
-                 title_chunks = []
-                 try:
-                     # Use the chosen title model here too
-                     async for chunk in client.generate_stream(title_prompt, title_model_id, style=""):
-                         if chunk is not None:  # Ensure we only process non-None chunks
-                             title_chunks.append(chunk)
-                     title = "".join(title_chunks)
-                     # If we didn't get any content, use a default
-                     if not title.strip():
-                         title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
-                 except Exception as stream_error:
-                     logger.error(f"Error during title stream processing: {str(stream_error)}")
-                     title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                debug_log("Using generate_completion method")
+                try:
+                    title = await client.generate_completion(
+                        messages=title_prompt,
+                        model=title_model_id,
+                        temperature=0.7,
+                        max_tokens=60  # Titles should be short
+                    )
+                    debug_log(f"Title generated successfully: {title}")
+                except Exception as completion_error:
+                    debug_log(f"Error in generate_completion: {str(completion_error)}")
+                    raise  # Re-raise to be caught by outer try/except
+            # Fall back to generate_stream if completion not available
+            elif hasattr(client, 'generate_stream'):
+                debug_log("Using generate_stream method")
+                title_chunks = []
+                try:
+                    async for chunk in client.generate_stream(title_prompt, title_model_id, style=""):
+                        if chunk is not None:
+                            title_chunks.append(chunk)
+                            debug_log(f"Received chunk of length: {len(chunk)}")
+                    
+                    title = "".join(title_chunks)
+                    debug_log(f"Combined title from chunks: {title}")
+                    
+                    # If we didn't get any content, use a default
+                    if not title.strip():
+                        debug_log("Empty title received, using default")
+                        title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                except Exception as stream_error:
+                    debug_log(f"Error during title stream processing: {str(stream_error)}")
+                    raise  # Re-raise to be caught by outer try/except
             else:
-                 raise NotImplementedError("Client does not support a suitable method for title generation.")
+                debug_log("Client does not support any title generation method")
+                raise NotImplementedError("Client does not support a suitable method for title generation.")
 
             # Sanitize and limit the title
             title = title.strip().strip('"\'').strip()
@@ -102,20 +185,23 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
                 title = title[:37] + "..."
                 
             logger.info(f"Generated title: {title}")
-            return title # Return successful title
+            debug_log(f"Final sanitized title: {title}")
+            return title  # Return successful title
             
         except Exception as e:
             last_error = str(e)
-            logger.error(f"Error generating title (tries left: {tries - 1}): {last_error}")
+            debug_log(f"Error generating title (tries left: {tries-1}): {last_error}")
+            logger.error(f"Error generating title (tries left: {tries-1}): {last_error}")
             tries -= 1
-            if tries > 0: # Only sleep if there are more retries
+            if tries > 0:  # Only sleep if there are more retries
                 await asyncio.sleep(1)  # Small delay before retry
     
-    # If all retries fail, log the last error and return a default title
+    # If all retries fail, log the error and return a default title
+    debug_log(f"Failed to generate title after multiple retries. Using default title.")
     logger.error(f"Failed to generate title after multiple retries. Last error: {last_error}")
     return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
 
-# Make this the worker function directly
+# Worker function for streaming response generation
 async def generate_streaming_response(
     app: 'SimpleChatApp',
     messages: List[Dict],
@@ -136,10 +222,12 @@ async def generate_streaming_response(
     logger.info(f"Starting streaming response with model: {model}")
     debug_log(f"Starting streaming response with model: '{model}', client type: {type(client).__name__}")
 
+    # Validate messages
     if not messages:
         debug_log("Error: messages list is empty")
         raise ValueError("Messages list cannot be empty")
 
+    # Ensure all messages have required fields
     for i, msg in enumerate(messages):
         try:
             debug_log(f"Message {i}: role={msg.get('role', 'missing')}, content_len={len(msg.get('content', ''))}")
@@ -157,14 +245,14 @@ async def generate_streaming_response(
             }
             debug_log(f"Repaired message {i}")
 
-    import time
-
+    # Initialize variables for response tracking
     full_response = ""
     buffer = []
     last_update = time.time()
     update_interval = 0.05  # Reduced interval for more frequent updates
 
     try:
+        # Validate client
         if client is None:
             debug_log("Error: client is None, cannot proceed with streaming")
             raise ValueError("Model client is None, cannot proceed with streaming")
@@ -173,9 +261,15 @@ async def generate_streaming_response(
             debug_log(f"Error: client {type(client).__name__} does not have generate_stream method")
             raise ValueError(f"Client {type(client).__name__} does not support streaming")
 
+        # Determine client type
         is_ollama = 'ollama' in str(type(client)).lower()
-        debug_log(f"Is Ollama client: {is_ollama}")
+        is_openai = 'openai' in str(type(client)).lower()
+        is_anthropic = 'anthropic' in str(type(client)).lower()
+        
+        debug_log(f"Client types - Ollama: {is_ollama}, OpenAI: {is_openai}, Anthropic: {is_anthropic}")
 
+        # Only show loading indicator for Ollama (which may need to load models)
+        # This prevents Ollama-specific UI elements from showing when using other providers
         if is_ollama and hasattr(app, 'query_one'):
             try:
                 debug_log("Showing initial model loading indicator for Ollama")
@@ -190,6 +284,7 @@ async def generate_streaming_response(
         debug_log(f"Starting stream generation with messages length: {len(messages)}")
         logger.info(f"Starting stream generation for model: {model}")
 
+        # Initialize stream generator
         try:
             debug_log("Calling client.generate_stream()")
             stream_generator = client.generate_stream(messages, model, style)
@@ -199,10 +294,12 @@ async def generate_streaming_response(
             logger.error(f"Error initializing stream generator: {str(stream_init_error)}")
             raise
 
-        if hasattr(client, 'is_loading_model') and not client.is_loading_model() and hasattr(app, 'query_one'):
+        # Update UI if model is ready (Ollama specific)
+        # Only check is_loading_model for Ollama clients to prevent errors with other providers
+        if is_ollama and hasattr(client, 'is_loading_model') and not client.is_loading_model() and hasattr(app, 'query_one'):
             try:
-                debug_log("Model is ready for generation, updating UI")
-                logger.info("Model is ready for generation, updating UI")
+                debug_log("Ollama model is ready for generation, updating UI")
+                logger.info("Ollama model is ready for generation, updating UI")
                 loading = app.query_one("#loading-indicator")
                 loading.remove_class("model-loading")
                 loading.update("▪▪▪ Generating response...")
@@ -210,9 +307,11 @@ async def generate_streaming_response(
                 debug_log(f"Error updating UI after stream init: {str(e)}")
                 logger.error(f"Error updating UI after stream init: {str(e)}")
 
+        # Process stream chunks
         debug_log("Beginning to process stream chunks")
         try:
             async for chunk in stream_generator:
+                # Check for task cancellation
                 if asyncio.current_task().cancelled():
                     debug_log("Task cancellation detected during chunk processing")
                     logger.info("Task cancellation detected during chunk processing")
@@ -221,30 +320,32 @@ async def generate_streaming_response(
                         await client.cancel_stream()
                     raise asyncio.CancelledError()
 
-                if hasattr(client, 'is_loading_model'):
+                # Handle Ollama model loading state changes - only for Ollama clients
+                if is_ollama and hasattr(client, 'is_loading_model'):
                     try:
                         model_loading = client.is_loading_model()
-                        debug_log(f"Model loading state: {model_loading}")
+                        debug_log(f"Ollama model loading state: {model_loading}")
                         if hasattr(app, 'query_one'):
                             try:
                                 loading = app.query_one("#loading-indicator")
                                 if model_loading and hasattr(loading, 'has_class') and not loading.has_class("model-loading"):
-                                    debug_log("Model loading started during streaming")
-                                    logger.info("Model loading started during streaming")
+                                    debug_log("Ollama model loading started during streaming")
+                                    logger.info("Ollama model loading started during streaming")
                                     loading.add_class("model-loading")
                                     loading.update("⚙️ Loading Ollama model...")
                                 elif not model_loading and hasattr(loading, 'has_class') and loading.has_class("model-loading"):
-                                    debug_log("Model loading finished during streaming")
-                                    logger.info("Model loading finished during streaming")
+                                    debug_log("Ollama model loading finished during streaming")
+                                    logger.info("Ollama model loading finished during streaming")
                                     loading.remove_class("model-loading")
                                     loading.update("▪▪▪ Generating response...")
                             except Exception as ui_e:
                                 debug_log(f"Error updating UI elements: {str(ui_e)}")
                                 logger.error(f"Error updating UI elements: {str(ui_e)}")
                     except Exception as e:
-                        debug_log(f"Error checking model loading state: {str(e)}")
-                        logger.error(f"Error checking model loading state: {str(e)}")
+                        debug_log(f"Error checking Ollama model loading state: {str(e)}")
+                        logger.error(f"Error checking Ollama model loading state: {str(e)}")
 
+                # Process chunk content
                 if chunk:
                     if not isinstance(chunk, str):
                         debug_log(f"WARNING: Received non-string chunk of type: {type(chunk).__name__}")
@@ -259,7 +360,8 @@ async def generate_streaming_response(
                     buffer.append(chunk)
                     current_time = time.time()
 
-                    # Always update immediately for the first few chunks
+                    # Update UI with new content
+                    # Always update immediately for the first few chunks for better responsiveness
                     if (current_time - last_update >= update_interval or
                         len(''.join(buffer)) > 5 or  # Reduced buffer size threshold
                         len(full_response) < 50):    # More aggressive updates for early content
@@ -268,25 +370,26 @@ async def generate_streaming_response(
                         full_response += new_content
                         debug_log(f"Updating UI with content length: {len(full_response)}")
                         
-                        # Print to console for debugging
-                        print(f"Streaming update: +{len(new_content)} chars, total: {len(full_response)}")
+                        # Enhanced debug logging
+                        print(f"STREAM DEBUG: +{len(new_content)} chars, total: {len(full_response)}")
+                        # Print first few characters of content for debugging
+                        if len(full_response) < 100:
+                            print(f"STREAM CONTENT: '{full_response}'")
                         
                         try:
                             # Call the UI callback with the full response so far
+                            debug_log("Calling UI callback with content")
                             await callback(full_response)
                             debug_log("UI callback completed successfully")
                             
                             # Force app refresh after each update
                             if hasattr(app, 'refresh'):
+                                debug_log("Forcing app refresh")
                                 app.refresh(layout=True)  # Force layout refresh
                         except Exception as callback_err:
                             debug_log(f"Error in UI callback: {str(callback_err)}")
                             logger.error(f"Error in UI callback: {str(callback_err)}")
-                            print(f"Error updating UI: {str(callback_err)}")
-                        except Exception as callback_err:
-                            debug_log(f"Error in UI callback: {str(callback_err)}")
-                            logger.error(f"Error in UI callback: {str(callback_err)}")
-                            print(f"Error updating UI: {str(callback_err)}")
+                            print(f"STREAM ERROR: Error updating UI: {str(callback_err)}")
                             
                         buffer = []
                         last_update = current_time
@@ -442,8 +545,8 @@ def resolve_model_id(model_id_or_name: str) -> str:
     """
     Resolves a potentially short model ID or display name to the full model ID
     stored in the configuration. Tries multiple matching strategies.
-
-    Fix: Only apply dot-to-colon conversion for Ollama models, not for OpenAI/Anthropic/custom.
+    
+    This function is critical for ensuring models are correctly identified by provider.
     """
     if not model_id_or_name:
         logger.warning("resolve_model_id called with empty input, returning empty string.")
@@ -451,6 +554,33 @@ def resolve_model_id(model_id_or_name: str) -> str:
 
     input_lower = model_id_or_name.lower().strip()
     logger.info(f"Attempting to resolve model identifier: '{input_lower}'")
+    
+    # Special case handling for common typos and model name variations
+    typo_corrections = {
+        "o4-mini": "04-mini",
+        "o1": "01",
+        "o1-mini": "01-mini",
+        "o1-preview": "01-preview",
+        "o4": "04",
+        "o4-preview": "04-preview",
+        "o4-vision": "04-vision"
+    }
+    
+    if input_lower in typo_corrections:
+        corrected = typo_corrections[input_lower]
+        logger.info(f"Converting '{input_lower}' to '{corrected}' (letter 'o' to zero '0')")
+        input_lower = corrected
+        model_id_or_name = corrected
+    
+    # First, check if this is an OpenAI model - if so, return as-is to ensure correct provider
+    if any(name in input_lower for name in ["gpt", "text-", "davinci"]):
+        logger.info(f"Input '{input_lower}' appears to be an OpenAI model, returning as-is")
+        return model_id_or_name
+        
+    # Next, check if this is an Anthropic model - if so, return as-is to ensure correct provider
+    if any(name in input_lower for name in ["claude", "anthropic"]):
+        logger.info(f"Input '{input_lower}' appears to be an Anthropic model, returning as-is")
+        return model_id_or_name
 
     available_models = CONFIG.get("available_models", {})
     if not available_models:
@@ -461,20 +591,22 @@ def resolve_model_id(model_id_or_name: str) -> str:
     provider = None
     if input_lower in available_models:
         provider = available_models[input_lower].get("provider")
+        logger.info(f"Found model in available_models with provider: {provider}")
     else:
         # Try to find by display name
         for model_info in available_models.values():
             if model_info.get("display_name", "").lower() == input_lower:
                 provider = model_info.get("provider")
+                logger.info(f"Found model by display name with provider: {provider}")
                 break
 
     # Special case for Ollama models with version format (model:version)
-    if provider == "ollama" and ":" in input_lower and not input_lower.startswith("claude-"):
+    if (provider == "ollama" or any(name in input_lower for name in ["llama", "mistral", "codellama", "gemma"])) and ":" in input_lower and not input_lower.startswith("claude-"):
         logger.info(f"Input '{input_lower}' appears to be an Ollama model with version, returning as-is")
         return model_id_or_name
 
     # Only apply dot-to-colon for Ollama models
-    if provider == "ollama" and "." in input_lower and not input_lower.startswith("claude-"):
+    if (provider == "ollama" or any(name in input_lower for name in ["llama", "mistral", "codellama", "gemma"])) and "." in input_lower and not input_lower.startswith("claude-"):
         logger.info(f"Input '{input_lower}' appears to be an Ollama model with dot notation")
         if ":" not in input_lower:
             parts = input_lower.split(".")
