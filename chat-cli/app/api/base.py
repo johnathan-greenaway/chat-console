@@ -23,6 +23,11 @@ class BaseModelClient(ABC):
         yield ""  # Placeholder implementation
     
     @abstractmethod
+    async def cancel_stream(self) -> None:
+        """Cancel any active streaming request"""
+        pass
+    
+    @abstractmethod
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available models from this provider"""
         pass

@@ -555,6 +555,23 @@ def resolve_model_id(model_id_or_name: str) -> str:
     input_lower = model_id_or_name.lower().strip()
     logger.info(f"Attempting to resolve model identifier: '{input_lower}'")
     
+    # Special case handling for common typos and model name variations
+    typo_corrections = {
+        "o4-mini": "04-mini",
+        "o1": "01",
+        "o1-mini": "01-mini",
+        "o1-preview": "01-preview",
+        "o4": "04",
+        "o4-preview": "04-preview",
+        "o4-vision": "04-vision"
+    }
+    
+    if input_lower in typo_corrections:
+        corrected = typo_corrections[input_lower]
+        logger.info(f"Converting '{input_lower}' to '{corrected}' (letter 'o' to zero '0')")
+        input_lower = corrected
+        model_id_or_name = corrected
+    
     # First, check if this is an OpenAI model - if so, return as-is to ensure correct provider
     if any(name in input_lower for name in ["gpt", "text-", "davinci"]):
         logger.info(f"Input '{input_lower}' appears to be an OpenAI model, returning as-is")

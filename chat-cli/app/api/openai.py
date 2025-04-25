@@ -3,10 +3,15 @@ import asyncio
 from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
 from .base import BaseModelClient
 from ..config import OPENAI_API_KEY
+import logging
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class OpenAIClient(BaseModelClient):
     def __init__(self):
         self.client = None  # Initialize in create()
+        self._active_stream = None  # Track active stream for cancellation
 
     @classmethod
     async def create(cls) -> 'OpenAIClient':
@@ -115,6 +120,10 @@ class OpenAIClient(BaseModelClient):
                         max_tokens=max_tokens,
                         stream=True,
                     )
+                    
+                    # Store the stream for potential cancellation
+                    self._active_stream = stream
+                    
                     debug_log("OpenAI: stream created successfully")
                     
                     # Yield a small padding token at the beginning for very short prompts
@@ -128,6 +137,11 @@ class OpenAIClient(BaseModelClient):
                     debug_log("OpenAI: starting to process chunks")
                     
                     async for chunk in stream:
+                        # Check if stream has been cancelled
+                        if self._active_stream is None:
+                            debug_log("OpenAI: stream was cancelled, stopping generation")
+                            break
+                            
                         chunk_count += 1
                         try:
                             if chunk.choices and hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
@@ -148,6 +162,9 @@ class OpenAIClient(BaseModelClient):
                     
                     debug_log(f"OpenAI: stream completed successfully with {chunk_count} chunks")
                     
+                    # Clear the active stream reference when done
+                    self._active_stream = None
+                    
                     # If we reach this point, we've successfully processed the stream
                     break
                     
@@ -167,6 +184,20 @@ class OpenAIClient(BaseModelClient):
             # Yield a simple error message as a last resort to ensure UI updates
             yield f"Error: {str(e)}"
             raise Exception(f"OpenAI streaming error: {str(e)}")
+    
+    async def cancel_stream(self) -> None:
+        """Cancel any active streaming request"""
+        logger.info("Cancelling active OpenAI stream")
+        try:
+            from app.main import debug_log
+            debug_log("OpenAI: cancelling active stream")
+        except ImportError:
+            pass
+            
+        # Simply set the active stream to None
+        # This will cause the generate_stream method to stop processing chunks
+        self._active_stream = None
+        logger.info("OpenAI stream cancelled successfully")
     
     async def get_available_models(self) -> List[Dict[str, Any]]:
         """Fetch list of available OpenAI models from the /models endpoint"""
