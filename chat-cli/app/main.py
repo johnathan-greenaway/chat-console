@@ -1010,11 +1010,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 self._loading_animation_task.cancel()
             self._loading_animation_task = None
             try:
+                # Explicitly hide loading indicator
                 loading = self.query_one("#loading-indicator")
                 loading.add_class("hidden")
+                loading.remove_class("model-loading")  # Also remove model-loading class if present
+                self.refresh(layout=True)  # Force a refresh to ensure UI updates
                 self.query_one("#message-input").focus()
-            except Exception:
-                pass # Ignore UI errors during cleanup
+            except Exception as ui_err:
+                debug_log(f"Error hiding loading indicator: {str(ui_err)}")
+                log.error(f"Error hiding loading indicator: {str(ui_err)}")
 
     # Rename this method slightly to avoid potential conflicts and clarify purpose
     async def _handle_generation_result(self, worker: Worker[Optional[str]]) -> None:
@@ -1043,6 +1047,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 debug_log(f"Error in generation worker: {error}")
                 log.error(f"Error in generation worker: {error}")
                 
+                # Explicitly hide loading indicator
+                try:
+                    loading = self.query_one("#loading-indicator")
+                    loading.add_class("hidden")
+                    loading.remove_class("model-loading")  # Also remove model-loading class if present
+                except Exception as ui_err:
+                    debug_log(f"Error hiding loading indicator: {str(ui_err)}")
+                    log.error(f"Error hiding loading indicator: {str(ui_err)}")
+                
                 # Sanitize error message for UI display
                 error_str = str(error)
                 
@@ -1069,6 +1082,9 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 debug_log(f"Adding error message: {user_error}")
                 self.messages.append(Message(role="assistant", content=user_error))
                 await self.update_messages_ui()
+                
+                # Force a refresh to ensure UI updates
+                self.refresh(layout=True)
 
             elif worker.state == "success":
                 full_response = worker.result
