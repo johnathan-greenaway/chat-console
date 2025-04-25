@@ -11,6 +11,14 @@ from .base import BaseModelClient
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Custom exception for Ollama API errors
+class OllamaApiError(Exception):
+    """Exception raised for errors in the Ollama API."""
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
+
 class OllamaClient(BaseModelClient):
     def __init__(self):
         from ..config import OLLAMA_BASE_URL
@@ -280,13 +288,11 @@ class OllamaClient(BaseModelClient):
                     break
                     
             if not model_exists:
-                debug_log(f"Model '{model}' not found in available models")
-                # Instead of failing, yield a helpful error message
-                yield f"Model '{model}' not found. Available models include: {', '.join(available_model_names[:5])}"
+                error_msg = f"Model '{model}' not found in available models. Available models include: {', '.join(available_model_names[:5])}"
                 if len(available_model_names) > 5:
-                    yield f" and {len(available_model_names) - 5} more."
-                yield "\n\nPlease try a different model or check your spelling."
-                return
+                    error_msg += f" and {len(available_model_names) - 5} more."
+                logger.error(error_msg)
+                raise OllamaApiError(error_msg)
         except Exception as e:
             debug_log(f"Error checking model availability: {str(e)}")
             # Continue anyway, the main request will handle errors
@@ -330,9 +336,9 @@ class OllamaClient(BaseModelClient):
                                     error_text = await response.text()
                                     debug_log(f"404 error details: {error_text}")
                                     # This is likely a model not found error
-                                    yield f"Error: Model '{model}' not found on the Ollama server."
-                                    yield "\nPlease check if the model name is correct or try pulling it first."
-                                    return
+                                    error_msg = f"Error: Model '{model}' not found on the Ollama server. Please check if the model name is correct or try pulling it first."
+                                    logger.error(error_msg)
+                                    raise OllamaApiError(error_msg, status_code=404)
                                     
                                 raise aiohttp.ClientError("Model not ready")
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
@@ -367,9 +373,9 @@ class OllamaClient(BaseModelClient):
                                     error_text = await pull_response.text()
                                     debug_log(f"404 error details: {error_text}")
                                     # This is likely a model not found in registry
-                                    yield f"Error: Model '{model}' not found in the Ollama registry."
-                                    yield "\nPlease check if the model name is correct or try a different model."
-                                    return
+                                    error_msg = f"Error: Model '{model}' not found in the Ollama registry. Please check if the model name is correct or try a different model."
+                                    logger.error(error_msg)
+                                    raise OllamaApiError(error_msg, status_code=404)
                                     
                                 raise Exception("Failed to pull model")
                             logger.info("Model pulled successfully")

@@ -20,10 +20,10 @@ file_handler = logging.FileHandler(debug_log_file)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
 # Get the logger and add the handler
-debug_logger = logging.getLogger("chat-cli-debug")
+debug_logger = logging.getLogger()  # Root logger
 debug_logger.setLevel(logging.DEBUG)
 debug_logger.addHandler(file_handler)
-# Prevent propagation to the root logger (which would print to console)
+# CRITICAL: Force all output to the file, not stdout
 debug_logger.propagate = False
 
 # Add a convenience function to log to this file
