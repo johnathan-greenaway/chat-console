@@ -201,6 +201,502 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     logger.error(f"Failed to generate title after multiple retries. Last error: {last_error}")
     return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
 
+# Helper function for OpenAI streaming
+async def _generate_openai_stream(
+    app: 'SimpleChatApp',
+    messages: List[Dict],
+    model: str,
+    style: str,
+    client: Any,
+    callback: Callable[[str], Awaitable[None]],
+    update_lock: asyncio.Lock
+) -> Optional[str]:
+    """Generate streaming response using OpenAI provider."""
+    try:
+        from app.main import debug_log
+    except ImportError:
+        debug_log = lambda msg: None
+    
+    debug_log(f"Using OpenAI-specific streaming for model: {model}")
+    
+    # Initialize variables for response tracking
+    full_response = ""
+    buffer = []
+    last_update = time.time()
+    update_interval = 0.03  # Responsive updates for OpenAI
+    
+    try:
+        # Initialize stream generator
+        debug_log("Initializing OpenAI stream generator")
+        stream_generator = client.generate_stream(messages, model, style)
+        
+        # Process stream chunks
+        debug_log("Beginning to process OpenAI stream chunks")
+        async for chunk in stream_generator:
+            # Check for task cancellation
+            if asyncio.current_task().cancelled():
+                debug_log("Task cancellation detected during OpenAI chunk processing")
+                if hasattr(client, 'cancel_stream'):
+                    await client.cancel_stream()
+                raise asyncio.CancelledError()
+                
+            # Process chunk content
+            if chunk:
+                if not isinstance(chunk, str):
+                    try:
+                        chunk = str(chunk)
+                    except Exception:
+                        continue
+                        
+                buffer.append(chunk)
+                current_time = time.time()
+                
+                # Update UI with new content
+                if (current_time - last_update >= update_interval or
+                    len(''.join(buffer)) > 5 or
+                    len(full_response) < 50):
+                    
+                    new_content = ''.join(buffer)
+                    full_response += new_content
+                    
+                    try:
+                        async with update_lock:
+                            await callback(full_response)
+                            if hasattr(app, 'refresh'):
+                                app.refresh(layout=True)
+                    except Exception as callback_err:
+                        logger.error(f"Error in OpenAI UI callback: {str(callback_err)}")
+                        
+                    buffer = []
+                    last_update = current_time
+                    await asyncio.sleep(0.02)
+                    
+        # Process any remaining buffer content
+        if buffer:
+            new_content = ''.join(buffer)
+            full_response += new_content
+            
+            try:
+                async with update_lock:
+                    await callback(full_response)
+                    if hasattr(app, 'refresh'):
+                        app.refresh(layout=True)
+                        await asyncio.sleep(0.02)
+                        try:
+                            messages_container = app.query_one("#messages-container")
+                            if messages_container:
+                                messages_container.scroll_end(animate=False)
+                        except Exception:
+                            pass
+            except Exception as callback_err:
+                logger.error(f"Error in final OpenAI UI callback: {str(callback_err)}")
+                
+        # Final refresh to ensure everything is displayed correctly
+        try:
+            await asyncio.sleep(0.05)
+            async with update_lock:
+                await callback(full_response)
+                if hasattr(app, 'refresh'):
+                    app.refresh(layout=True)
+        except Exception:
+            pass
+            
+        return full_response
+        
+    except asyncio.CancelledError:
+        logger.info(f"OpenAI streaming cancelled. Partial response length: {len(full_response)}")
+        if hasattr(client, 'cancel_stream'):
+            await client.cancel_stream()
+        return full_response
+        
+    except Exception as e:
+        logger.error(f"Error during OpenAI streaming: {str(e)}")
+        if hasattr(client, 'cancel_stream'):
+            await client.cancel_stream()
+        raise
+
+# Helper function for Anthropic streaming
+async def _generate_anthropic_stream(
+    app: 'SimpleChatApp',
+    messages: List[Dict],
+    model: str,
+    style: str,
+    client: Any,
+    callback: Callable[[str], Awaitable[None]],
+    update_lock: asyncio.Lock
+) -> Optional[str]:
+    """Generate streaming response using Anthropic provider."""
+    try:
+        from app.main import debug_log
+    except ImportError:
+        debug_log = lambda msg: None
+    
+    debug_log(f"Using Anthropic-specific streaming for model: {model}")
+    
+    # Initialize variables for response tracking
+    full_response = ""
+    buffer = []
+    last_update = time.time()
+    update_interval = 0.03  # Responsive updates for Anthropic
+    
+    try:
+        # Initialize stream generator
+        debug_log("Initializing Anthropic stream generator")
+        stream_generator = client.generate_stream(messages, model, style)
+        
+        # Process stream chunks
+        debug_log("Beginning to process Anthropic stream chunks")
+        async for chunk in stream_generator:
+            # Check for task cancellation
+            if asyncio.current_task().cancelled():
+                debug_log("Task cancellation detected during Anthropic chunk processing")
+                if hasattr(client, 'cancel_stream'):
+                    await client.cancel_stream()
+                raise asyncio.CancelledError()
+                
+            # Process chunk content
+            if chunk:
+                if not isinstance(chunk, str):
+                    try:
+                        chunk = str(chunk)
+                    except Exception:
+                        continue
+                        
+                buffer.append(chunk)
+                current_time = time.time()
+                
+                # Update UI with new content
+                if (current_time - last_update >= update_interval or
+                    len(''.join(buffer)) > 5 or
+                    len(full_response) < 50):
+                    
+                    new_content = ''.join(buffer)
+                    full_response += new_content
+                    
+                    try:
+                        async with update_lock:
+                            await callback(full_response)
+                            if hasattr(app, 'refresh'):
+                                app.refresh(layout=True)
+                    except Exception as callback_err:
+                        logger.error(f"Error in Anthropic UI callback: {str(callback_err)}")
+                        
+                    buffer = []
+                    last_update = current_time
+                    await asyncio.sleep(0.02)
+                    
+        # Process any remaining buffer content
+        if buffer:
+            new_content = ''.join(buffer)
+            full_response += new_content
+            
+            try:
+                async with update_lock:
+                    await callback(full_response)
+                    if hasattr(app, 'refresh'):
+                        app.refresh(layout=True)
+                        await asyncio.sleep(0.02)
+                        try:
+                            messages_container = app.query_one("#messages-container")
+                            if messages_container:
+                                messages_container.scroll_end(animate=False)
+                        except Exception:
+                            pass
+            except Exception as callback_err:
+                logger.error(f"Error in final Anthropic UI callback: {str(callback_err)}")
+                
+        # Final refresh to ensure everything is displayed correctly
+        try:
+            await asyncio.sleep(0.05)
+            async with update_lock:
+                await callback(full_response)
+                if hasattr(app, 'refresh'):
+                    app.refresh(layout=True)
+        except Exception:
+            pass
+            
+        return full_response
+        
+    except asyncio.CancelledError:
+        logger.info(f"Anthropic streaming cancelled. Partial response length: {len(full_response)}")
+        if hasattr(client, 'cancel_stream'):
+            await client.cancel_stream()
+        return full_response
+        
+    except Exception as e:
+        logger.error(f"Error during Anthropic streaming: {str(e)}")
+        if hasattr(client, 'cancel_stream'):
+            await client.cancel_stream()
+        raise
+
+# Helper function for Ollama streaming
+async def _generate_ollama_stream(
+    app: 'SimpleChatApp',
+    messages: List[Dict],
+    model: str,
+    style: str,
+    client: Any,
+    callback: Callable[[str], Awaitable[None]],
+    update_lock: asyncio.Lock
+) -> Optional[str]:
+    """Generate streaming response using Ollama provider."""
+    try:
+        from app.main import debug_log
+    except ImportError:
+        debug_log = lambda msg: None
+    
+    debug_log(f"Using Ollama-specific streaming for model: {model}")
+    
+    # Initialize variables for response tracking
+    full_response = ""
+    buffer = []
+    last_update = time.time()
+    update_interval = 0.03  # Responsive updates for Ollama
+    
+    try:
+        # Show loading indicator for Ollama (which may need to load models)
+        if hasattr(app, 'query_one'):
+            try:
+                debug_log("Showing initial model loading indicator for Ollama")
+                loading = app.query_one("#loading-indicator")
+                loading.add_class("model-loading")
+                loading.update("⚙️ Loading Ollama model...")
+            except Exception as e:
+                debug_log(f"Error setting initial Ollama loading state: {str(e)}")
+        
+        # Initialize stream generator
+        debug_log("Initializing Ollama stream generator")
+        stream_generator = client.generate_stream(messages, model, style)
+        
+        # Update UI if model is ready
+        if hasattr(client, 'is_loading_model') and not client.is_loading_model() and hasattr(app, 'query_one'):
+            try:
+                debug_log("Ollama model is ready for generation, updating UI")
+                loading = app.query_one("#loading-indicator")
+                loading.remove_class("model-loading")
+                loading.update("▪▪▪ Generating response...")
+            except Exception as e:
+                debug_log(f"Error updating UI after Ollama stream init: {str(e)}")
+        
+        # Process stream chunks
+        debug_log("Beginning to process Ollama stream chunks")
+        async for chunk in stream_generator:
+            # Check for task cancellation
+            if asyncio.current_task().cancelled():
+                debug_log("Task cancellation detected during Ollama chunk processing")
+                if hasattr(client, 'cancel_stream'):
+                    await client.cancel_stream()
+                raise asyncio.CancelledError()
+                
+            # Handle Ollama model loading state changes
+            if hasattr(client, 'is_loading_model'):
+                try:
+                    model_loading = client.is_loading_model()
+                    if hasattr(app, 'query_one'):
+                        try:
+                            loading = app.query_one("#loading-indicator")
+                            if model_loading and hasattr(loading, 'has_class') and not loading.has_class("model-loading"):
+                                debug_log("Ollama model loading started during streaming")
+                                loading.add_class("model-loading")
+                                loading.update("⚙️ Loading Ollama model...")
+                            elif not model_loading and hasattr(loading, 'has_class') and loading.has_class("model-loading"):
+                                debug_log("Ollama model loading finished during streaming")
+                                loading.remove_class("model-loading")
+                                loading.update("▪▪▪ Generating response...")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                
+            # Process chunk content
+            if chunk:
+                if not isinstance(chunk, str):
+                    try:
+                        chunk = str(chunk)
+                    except Exception:
+                        continue
+                        
+                buffer.append(chunk)
+                current_time = time.time()
+                
+                # Update UI with new content
+                if (current_time - last_update >= update_interval or
+                    len(''.join(buffer)) > 5 or
+                    len(full_response) < 50):
+                    
+                    new_content = ''.join(buffer)
+                    full_response += new_content
+                    
+                    try:
+                        async with update_lock:
+                            await callback(full_response)
+                            if hasattr(app, 'refresh'):
+                                app.refresh(layout=True)
+                    except Exception as callback_err:
+                        logger.error(f"Error in Ollama UI callback: {str(callback_err)}")
+                        
+                    buffer = []
+                    last_update = current_time
+                    await asyncio.sleep(0.02)
+                    
+        # Process any remaining buffer content
+        if buffer:
+            new_content = ''.join(buffer)
+            full_response += new_content
+            
+            try:
+                async with update_lock:
+                    await callback(full_response)
+                    if hasattr(app, 'refresh'):
+                        app.refresh(layout=True)
+                        await asyncio.sleep(0.02)
+                        try:
+                            messages_container = app.query_one("#messages-container")
+                            if messages_container:
+                                messages_container.scroll_end(animate=False)
+                        except Exception:
+                            pass
+            except Exception as callback_err:
+                logger.error(f"Error in final Ollama UI callback: {str(callback_err)}")
+                
+        # Final refresh to ensure everything is displayed correctly
+        try:
+            await asyncio.sleep(0.05)
+            async with update_lock:
+                await callback(full_response)
+                if hasattr(app, 'refresh'):
+                    app.refresh(layout=True)
+        except Exception:
+            pass
+            
+        return full_response
+        
+    except asyncio.CancelledError:
+        logger.info(f"Ollama streaming cancelled. Partial response length: {len(full_response)}")
+        if hasattr(client, 'cancel_stream'):
+            await client.cancel_stream()
+        return full_response
+        
+    except Exception as e:
+        logger.error(f"Error during Ollama streaming: {str(e)}")
+        if hasattr(client, 'cancel_stream'):
+            await client.cancel_stream()
+        raise
+
+# Generic fallback streaming implementation
+async def _generate_generic_stream(
+    app: 'SimpleChatApp',
+    messages: List[Dict],
+    model: str,
+    style: str,
+    client: Any,
+    callback: Callable[[str], Awaitable[None]],
+    update_lock: asyncio.Lock
+) -> Optional[str]:
+    """Generic fallback implementation for streaming responses."""
+    try:
+        from app.main import debug_log
+    except ImportError:
+        debug_log = lambda msg: None
+    
+    debug_log(f"Using generic streaming for model: {model}, client type: {type(client).__name__}")
+    
+    # Initialize variables for response tracking
+    full_response = ""
+    buffer = []
+    last_update = time.time()
+    update_interval = 0.03  # Responsive updates
+    
+    try:
+        # Initialize stream generator
+        debug_log("Initializing generic stream generator")
+        stream_generator = client.generate_stream(messages, model, style)
+        
+        # Process stream chunks
+        debug_log("Beginning to process generic stream chunks")
+        async for chunk in stream_generator:
+            # Check for task cancellation
+            if asyncio.current_task().cancelled():
+                debug_log("Task cancellation detected during generic chunk processing")
+                if hasattr(client, 'cancel_stream'):
+                    await client.cancel_stream()
+                raise asyncio.CancelledError()
+                
+            # Process chunk content
+            if chunk:
+                if not isinstance(chunk, str):
+                    try:
+                        chunk = str(chunk)
+                    except Exception:
+                        continue
+                        
+                buffer.append(chunk)
+                current_time = time.time()
+                
+                # Update UI with new content
+                if (current_time - last_update >= update_interval or
+                    len(''.join(buffer)) > 5 or
+                    len(full_response) < 50):
+                    
+                    new_content = ''.join(buffer)
+                    full_response += new_content
+                    
+                    try:
+                        async with update_lock:
+                            await callback(full_response)
+                            if hasattr(app, 'refresh'):
+                                app.refresh(layout=True)
+                    except Exception as callback_err:
+                        logger.error(f"Error in generic UI callback: {str(callback_err)}")
+                        
+                    buffer = []
+                    last_update = current_time
+                    await asyncio.sleep(0.02)
+                    
+        # Process any remaining buffer content
+        if buffer:
+            new_content = ''.join(buffer)
+            full_response += new_content
+            
+            try:
+                async with update_lock:
+                    await callback(full_response)
+                    if hasattr(app, 'refresh'):
+                        app.refresh(layout=True)
+                        await asyncio.sleep(0.02)
+                        try:
+                            messages_container = app.query_one("#messages-container")
+                            if messages_container:
+                                messages_container.scroll_end(animate=False)
+                        except Exception:
+                            pass
+            except Exception as callback_err:
+                logger.error(f"Error in final generic UI callback: {str(callback_err)}")
+                
+        # Final refresh to ensure everything is displayed correctly
+        try:
+            await asyncio.sleep(0.05)
+            async with update_lock:
+                await callback(full_response)
+                if hasattr(app, 'refresh'):
+                    app.refresh(layout=True)
+        except Exception:
+            pass
+            
+        return full_response
+        
+    except asyncio.CancelledError:
+        logger.info(f"Generic streaming cancelled. Partial response length: {len(full_response)}")
+        if hasattr(client, 'cancel_stream'):
+            await client.cancel_stream()
+        return full_response
+        
+    except Exception as e:
+        logger.error(f"Error during generic streaming: {str(e)}")
+        if hasattr(client, 'cancel_stream'):
+            await client.cancel_stream()
+        raise
+
 # Worker function for streaming response generation
 async def generate_streaming_response(
     app: 'SimpleChatApp',
@@ -244,250 +740,50 @@ async def generate_streaming_response(
                 'content': str(msg) if msg else ''
             }
             debug_log(f"Repaired message {i}")
-
-    # Initialize variables for response tracking
-    full_response = ""
-    buffer = []
-    last_update = time.time()
-    update_interval = 0.03  # Further reduced interval for more responsive updates
-    
+            
     # Create a lock for synchronizing UI updates
     update_lock = asyncio.Lock()
+    
+    # Validate client
+    if client is None:
+        debug_log("Error: client is None, cannot proceed with streaming")
+        raise ValueError("Model client is None, cannot proceed with streaming")
 
+    if not hasattr(client, 'generate_stream'):
+        debug_log(f"Error: client {type(client).__name__} does not have generate_stream method")
+        raise ValueError(f"Client {type(client).__name__} does not support streaming")
+
+    # Explicitly check provider type first
+    is_ollama = 'ollama' in str(type(client)).lower()
+    is_openai = 'openai' in str(type(client)).lower()
+    is_anthropic = 'anthropic' in str(type(client)).lower()
+    
+    debug_log(f"Client types - Ollama: {is_ollama}, OpenAI: {is_openai}, Anthropic: {is_anthropic}")
+    
+    # Use separate implementations for each provider
     try:
-        # Validate client
-        if client is None:
-            debug_log("Error: client is None, cannot proceed with streaming")
-            raise ValueError("Model client is None, cannot proceed with streaming")
-
-        if not hasattr(client, 'generate_stream'):
-            debug_log(f"Error: client {type(client).__name__} does not have generate_stream method")
-            raise ValueError(f"Client {type(client).__name__} does not support streaming")
-
-        # Determine client type
-        is_ollama = 'ollama' in str(type(client)).lower()
-        is_openai = 'openai' in str(type(client)).lower()
-        is_anthropic = 'anthropic' in str(type(client)).lower()
-        
-        debug_log(f"Client types - Ollama: {is_ollama}, OpenAI: {is_openai}, Anthropic: {is_anthropic}")
-
-        # Only show loading indicator for Ollama (which may need to load models)
-        # This prevents Ollama-specific UI elements from showing when using other providers
-        if is_ollama and hasattr(app, 'query_one'):
-            try:
-                debug_log("Showing initial model loading indicator for Ollama")
-                logger.info("Showing initial model loading indicator for Ollama")
-                loading = app.query_one("#loading-indicator")
-                loading.add_class("model-loading")
-                loading.update("⚙️ Loading Ollama model...")
-            except Exception as e:
-                debug_log(f"Error setting initial Ollama loading state: {str(e)}")
-                logger.error(f"Error setting initial Ollama loading state: {str(e)}")
-
-        debug_log(f"Starting stream generation with messages length: {len(messages)}")
-        logger.info(f"Starting stream generation for model: {model}")
-
-        # Initialize stream generator
-        try:
-            debug_log("Calling client.generate_stream()")
-            stream_generator = client.generate_stream(messages, model, style)
-            debug_log("Successfully obtained stream generator")
-        except Exception as stream_init_error:
-            debug_log(f"Error initializing stream generator: {str(stream_init_error)}")
-            logger.error(f"Error initializing stream generator: {str(stream_init_error)}")
-            raise
-
-        # Update UI if model is ready (Ollama specific)
-        # Only check is_loading_model for Ollama clients to prevent errors with other providers
-        if is_ollama and hasattr(client, 'is_loading_model') and not client.is_loading_model() and hasattr(app, 'query_one'):
-            try:
-                debug_log("Ollama model is ready for generation, updating UI")
-                logger.info("Ollama model is ready for generation, updating UI")
-                loading = app.query_one("#loading-indicator")
-                loading.remove_class("model-loading")
-                loading.update("▪▪▪ Generating response...")
-            except Exception as e:
-                debug_log(f"Error updating UI after stream init: {str(e)}")
-                logger.error(f"Error updating UI after stream init: {str(e)}")
-
-        # Process stream chunks
-        debug_log("Beginning to process stream chunks")
-        try:
-            async for chunk in stream_generator:
-                # Check for task cancellation
-                if asyncio.current_task().cancelled():
-                    debug_log("Task cancellation detected during chunk processing")
-                    logger.info("Task cancellation detected during chunk processing")
-                    if hasattr(client, 'cancel_stream'):
-                        debug_log("Calling client.cancel_stream() due to task cancellation")
-                        await client.cancel_stream()
-                    raise asyncio.CancelledError()
-
-                # Handle Ollama model loading state changes - only for Ollama clients
-                if is_ollama and hasattr(client, 'is_loading_model'):
-                    try:
-                        model_loading = client.is_loading_model()
-                        debug_log(f"Ollama model loading state: {model_loading}")
-                        if hasattr(app, 'query_one'):
-                            try:
-                                loading = app.query_one("#loading-indicator")
-                                if model_loading and hasattr(loading, 'has_class') and not loading.has_class("model-loading"):
-                                    debug_log("Ollama model loading started during streaming")
-                                    logger.info("Ollama model loading started during streaming")
-                                    loading.add_class("model-loading")
-                                    loading.update("⚙️ Loading Ollama model...")
-                                elif not model_loading and hasattr(loading, 'has_class') and loading.has_class("model-loading"):
-                                    debug_log("Ollama model loading finished during streaming")
-                                    logger.info("Ollama model loading finished during streaming")
-                                    loading.remove_class("model-loading")
-                                    loading.update("▪▪▪ Generating response...")
-                            except Exception as ui_e:
-                                debug_log(f"Error updating UI elements: {str(ui_e)}")
-                                logger.error(f"Error updating UI elements: {str(ui_e)}")
-                    except Exception as e:
-                        debug_log(f"Error checking Ollama model loading state: {str(e)}")
-                        logger.error(f"Error checking Ollama model loading state: {str(e)}")
-
-                # Process chunk content
-                if chunk:
-                    if not isinstance(chunk, str):
-                        debug_log(f"WARNING: Received non-string chunk of type: {type(chunk).__name__}")
-                        try:
-                            chunk = str(chunk)
-                            debug_log(f"Successfully converted chunk to string, length: {len(chunk)}")
-                        except Exception as e:
-                            debug_log(f"Error converting chunk to string: {str(e)}")
-                            continue
-
-                    debug_log(f"Received chunk of length: {len(chunk)}")
-                    buffer.append(chunk)
-                    current_time = time.time()
-
-                    # Update UI with new content
-                    # Always update immediately for the first few chunks for better responsiveness
-                    if (current_time - last_update >= update_interval or
-                        len(''.join(buffer)) > 5 or  # Reduced buffer size threshold
-                        len(full_response) < 50):    # More aggressive updates for early content
-
-                        new_content = ''.join(buffer)
-                        full_response += new_content
-                        debug_log(f"Updating UI with content length: {len(full_response)}")
-                        
-                        # Enhanced debug logging
-                        print(f"STREAM DEBUG: +{len(new_content)} chars, total: {len(full_response)}")
-                        # Print first few characters of content for debugging
-                        if len(full_response) < 100:
-                            print(f"STREAM CONTENT: '{full_response}'")
-                        
-                        try:
-                            # Call the UI callback with the full response so far
-                            # Use the update_lock to prevent race conditions
-                            debug_log("Calling UI callback with content")
-                            async with update_lock:
-                                await callback(full_response)
-                                debug_log("UI callback completed successfully")
-                                
-                                # Force app refresh after each update
-                                if hasattr(app, 'refresh'):
-                                    debug_log("Forcing app refresh")
-                                    app.refresh(layout=True)  # Force layout refresh
-                        except Exception as callback_err:
-                            debug_log(f"Error in UI callback: {str(callback_err)}")
-                            logger.error(f"Error in UI callback: {str(callback_err)}")
-                            print(f"STREAM ERROR: Error updating UI: {str(callback_err)}")
-                            
-                        buffer = []
-                        last_update = current_time
-                        
-                        # Shorter sleep between updates for more responsive streaming
-                        await asyncio.sleep(0.02)
-        except asyncio.CancelledError:
-            debug_log("CancelledError in stream processing")
-            raise
-        except Exception as chunk_error:
-            debug_log(f"Error processing stream chunks: {str(chunk_error)}")
-            logger.error(f"Error processing stream chunks: {str(chunk_error)}")
-            raise
-
-        if buffer:
-            new_content = ''.join(buffer)
-            full_response += new_content
-            debug_log(f"Sending final content, total length: {len(full_response)}")
-            try:
-                # Use the update_lock for the final callback as well
-                async with update_lock:
-                    await callback(full_response)
-                    debug_log("Final UI callback completed successfully")
-
-                    debug_log("Forcing final UI refresh sequence for all models")
-                    try:
-                        if hasattr(app, 'refresh'):
-                            app.refresh(layout=False)
-                            await asyncio.sleep(0.02)
-                            try:
-                                messages_container = app.query_one("#messages-container")
-                                if messages_container and hasattr(messages_container, 'scroll_end'):
-                                    messages_container.scroll_end(animate=False)
-                            except Exception:
-                                pass
-                            app.refresh(layout=True)
-                            await asyncio.sleep(0.02)
-                            try:
-                                messages_container = app.query_one("#messages-container")
-                                if messages_container and hasattr(messages_container, 'scroll_end'):
-                                    messages_container.scroll_end(animate=False)
-                            except Exception:
-                                pass
-                    except Exception as refresh_err:
-                        debug_log(f"Error forcing final UI refresh: {str(refresh_err)}")
-            except Exception as callback_err:
-                debug_log(f"Error in final UI callback: {str(callback_err)}")
-                logger.error(f"Error in final UI callback: {str(callback_err)}")
-
-        try:
-            await asyncio.sleep(0.05)
-            debug_log("Sending one final callback to ensure UI refresh")
-            # Use the update_lock for this final callback as well
-            async with update_lock:
-                await callback(full_response)
-                if hasattr(app, 'refresh'):
-                    app.refresh(layout=True)
-        except Exception as final_err:
-            debug_log(f"Error in final extra callback: {str(final_err)}")
-
-        debug_log(f"Streaming response completed successfully. Response length: {len(full_response)}")
-        logger.info(f"Streaming response completed successfully. Response length: {len(full_response)}")
-        return full_response
-
+        if is_openai:
+            debug_log("Using OpenAI-specific streaming implementation")
+            return await _generate_openai_stream(app, messages, model, style, client, callback, update_lock)
+        elif is_anthropic:
+            debug_log("Using Anthropic-specific streaming implementation")
+            return await _generate_anthropic_stream(app, messages, model, style, client, callback, update_lock)
+        elif is_ollama:
+            debug_log("Using Ollama-specific streaming implementation")
+            return await _generate_ollama_stream(app, messages, model, style, client, callback, update_lock)
+        else:
+            # Generic fallback
+            debug_log("Using generic streaming implementation")
+            return await _generate_generic_stream(app, messages, model, style, client, callback, update_lock)
     except asyncio.CancelledError:
-        debug_log(f"Streaming response task cancelled. Partial response length: {len(full_response)}")
-        logger.info(f"Streaming response task cancelled. Partial response length: {len(full_response)}")
+        debug_log("Task cancellation detected in main streaming function")
         if hasattr(client, 'cancel_stream'):
-            debug_log("Calling client.cancel_stream() after cancellation")
-            try:
-                await client.cancel_stream()
-                debug_log("Successfully cancelled client stream")
-            except Exception as cancel_err:
-                debug_log(f"Error cancelling client stream: {str(cancel_err)}")
-        return full_response
-
-    except Exception as e:
-        debug_log(f"Error during streaming response: {str(e)}")
-        logger.error(f"Error during streaming response: {str(e)}")
-        if hasattr(client, 'cancel_stream'):
-            debug_log("Attempting to cancel client stream after error")
-            try:
-                await client.cancel_stream()
-                debug_log("Successfully cancelled client stream after error")
-            except Exception as cancel_err:
-                debug_log(f"Error cancelling client stream after error: {str(cancel_err)}")
+            await client.cancel_stream()
         raise
-
-    finally:
-        debug_log("generate_streaming_response worker finished or errored.")
-        if 'full_response' in locals():
-            return full_response
-        return None
+    except Exception as e:
+        debug_log(f"Error in streaming implementation: {str(e)}")
+        logger.error(f"Error in streaming implementation: {str(e)}")
+        raise
 
 async def ensure_ollama_running() -> bool:
     """
