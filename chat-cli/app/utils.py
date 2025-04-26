@@ -27,179 +27,64 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     
     debug_log(f"Starting title generation with model: {model}, client type: {type(client).__name__}")
     
-    # --- Choose a specific, reliable model for title generation ---
-    # First, determine if we have a valid client
-    if client is None:
-        debug_log("Client is None, will use default title")
-        return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+    # For safety, always use a default title first
+    default_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
     
-    # Determine the best model to use for title generation
-    title_model_id = None
-    
-    # Check if client is Anthropic
-    is_anthropic = 'anthropic' in str(type(client)).lower()
-    if is_anthropic:
-        debug_log("Using Anthropic client for title generation")
-        # Try to get available models safely
-        try:
-            available_anthropic_models = client.get_available_models()
-            debug_log(f"Found {len(available_anthropic_models)} Anthropic models")
-            
-            # Try Claude 3 Haiku first (fastest)
-            haiku_id = "claude-3-haiku-20240307"
-            if any(m.get("id") == haiku_id for m in available_anthropic_models):
-                title_model_id = haiku_id
-                debug_log(f"Using Anthropic Haiku for title generation: {title_model_id}")
-            else:
-                # If Haiku not found, try Sonnet
-                sonnet_id = "claude-3-sonnet-20240229"
-                if any(m.get("id") == sonnet_id for m in available_anthropic_models):
-                    title_model_id = sonnet_id
-                    debug_log(f"Using Anthropic Sonnet for title generation: {title_model_id}")
-                else:
-                    debug_log("Neither Haiku nor Sonnet found in Anthropic models list")
-        except Exception as e:
-            debug_log(f"Error getting Anthropic models: {str(e)}")
-
-    # Check if client is OpenAI
-    is_openai = 'openai' in str(type(client)).lower()
-    if is_openai:
-        debug_log("Using OpenAI client for title generation")
-        # Use GPT-3.5 for title generation (fast and cost-effective)
-        title_model_id = "gpt-3.5-turbo"
-        debug_log(f"Using OpenAI model for title generation: {title_model_id}")
-        # For OpenAI, we'll always use their model, not fall back to the passed model
-        # This prevents trying to use Ollama models with OpenAI client
-    
-    # Check if client is Ollama
-    is_ollama = 'ollama' in str(type(client)).lower()
-    if is_ollama and not title_model_id:
-        debug_log("Using Ollama client for title generation")
-        # For Ollama, check if the model exists before using it
-        try:
-            # Try a quick test request to check if model exists
-            debug_log(f"Testing if Ollama model exists: {model}")
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                try:
-                    base_url = "http://localhost:11434"
-                    async with session.post(
-                        f"{base_url}/api/generate",
-                        json={"model": model, "prompt": "test", "stream": False},
-                        timeout=2
-                    ) as response:
-                        if response.status == 200:
-                            # Model exists, use it
-                            title_model_id = model
-                            debug_log(f"Ollama model {model} exists, using it for title generation")
-                        else:
-                            debug_log(f"Ollama model {model} returned status {response.status}, falling back to default")
-                            # Fall back to a common model
-                            title_model_id = "llama3"
-                except Exception as e:
-                    debug_log(f"Error testing Ollama model: {str(e)}, falling back to default")
-                    # Fall back to a common model
-                    title_model_id = "llama3"
-        except Exception as e:
-            debug_log(f"Error checking Ollama model: {str(e)}")
-            # Fall back to a common model
-            title_model_id = "llama3"
-    
-    # Fallback logic if no specific model was found
-    if not title_model_id:
-        # Use a safe default based on client type
-        if is_openai:
-            title_model_id = "gpt-3.5-turbo"
-        elif is_anthropic:
-            title_model_id = "claude-3-haiku-20240307"
-        elif is_ollama:
-            title_model_id = "llama3"  # Common default
-        else:
-            # Last resort - use the originally passed model
-            title_model_id = model
+    # Try-except the entire function to ensure we always return a title
+    try:
+        # Pick a reliable title generation model - prefer OpenAI if available
+        from ..config import OPENAI_API_KEY, ANTHROPIC_API_KEY
         
-        debug_log(f"No specific model found, using fallback model for title generation: {title_model_id}")
-    
-    logger.info(f"Generating title for conversation using model: {title_model_id}")
-    debug_log(f"Final model selected for title generation: {title_model_id}")
-
-    # Create a special prompt for title generation
-    title_prompt = [
-        {
-            "role": "system", 
-            "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. The title should be concise and reflect the main topic or query. Return only the title text with no additional explanation or formatting."
-        },
-        {
-            "role": "user",
-            "content": message
-        }
-    ]
-    
-    tries = 2  # Number of retries
-    last_error = None
-    
-    while tries > 0:
-        try:
-            debug_log(f"Attempt {3-tries} to generate title")
-            # First try generate_completion if available
-            if hasattr(client, 'generate_completion'):
-                debug_log("Using generate_completion method")
-                try:
-                    title = await client.generate_completion(
-                        messages=title_prompt,
-                        model=title_model_id,
-                        temperature=0.7,
-                        max_tokens=60  # Titles should be short
-                    )
-                    debug_log(f"Title generated successfully: {title}")
-                except Exception as completion_error:
-                    debug_log(f"Error in generate_completion: {str(completion_error)}")
-                    raise  # Re-raise to be caught by outer try/except
-            # Fall back to generate_stream if completion not available
-            elif hasattr(client, 'generate_stream'):
-                debug_log("Using generate_stream method")
-                title_chunks = []
-                try:
-                    async for chunk in client.generate_stream(title_prompt, title_model_id, style=""):
-                        if chunk is not None:
-                            title_chunks.append(chunk)
-                            debug_log(f"Received chunk of length: {len(chunk)}")
-                    
-                    title = "".join(title_chunks)
-                    debug_log(f"Combined title from chunks: {title}")
-                    
-                    # If we didn't get any content, use a default
-                    if not title.strip():
-                        debug_log("Empty title received, using default")
-                        title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
-                except Exception as stream_error:
-                    debug_log(f"Error during title stream processing: {str(stream_error)}")
-                    raise  # Re-raise to be caught by outer try/except
-            else:
-                debug_log("Client does not support any title generation method")
-                raise NotImplementedError("Client does not support a suitable method for title generation.")
-
-            # Sanitize and limit the title
-            title = title.strip().strip('"\'').strip()
-            if len(title) > 40:  # Set a maximum title length
-                title = title[:37] + "..."
-                
-            logger.info(f"Generated title: {title}")
-            debug_log(f"Final sanitized title: {title}")
-            return title  # Return successful title
+        if OPENAI_API_KEY:
+            from ..api.openai import OpenAIClient
+            title_client = await OpenAIClient.create()
+            title_model = "gpt-3.5-turbo"
+            debug_log("Using OpenAI for title generation")
+        elif ANTHROPIC_API_KEY:
+            from ..api.anthropic import AnthropicClient
+            title_client = await AnthropicClient.create() 
+            title_model = "claude-3-haiku-20240307"
+            debug_log("Using Anthropic for title generation")
+        else:
+            # Use the passed client if no API keys available
+            title_client = client
+            title_model = model
+            debug_log(f"Using provided {type(client).__name__} for title generation")
+        
+        # Create a special prompt for title generation
+        title_prompt = [
+            {
+                "role": "system", 
+                "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. Return only the title text with no additional explanation or formatting."
+            },
+            {
+                "role": "user",
+                "content": message
+            }
+        ]
+        
+        # Generate title
+        debug_log(f"Sending title generation request to {title_model}")
+        title = await title_client.generate_completion(
+            messages=title_prompt,
+            model=title_model,
+            temperature=0.7,
+            max_tokens=60
+        )
+        
+        # Sanitize the title
+        title = title.strip().strip('"\'').strip()
+        if len(title) > 40:
+            title = title[:37] + "..."
             
-        except Exception as e:
-            last_error = str(e)
-            debug_log(f"Error generating title (tries left: {tries-1}): {last_error}")
-            logger.error(f"Error generating title (tries left: {tries-1}): {last_error}")
-            tries -= 1
-            if tries > 0:  # Only sleep if there are more retries
-                await asyncio.sleep(1)  # Small delay before retry
-    
-    # If all retries fail, log the error and return a default title
-    debug_log(f"Failed to generate title after multiple retries. Using default title.")
-    logger.error(f"Failed to generate title after multiple retries. Last error: {last_error}")
-    return f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        debug_log(f"Generated title: {title}")
+        return title
+        
+    except Exception as e:
+        # Log the error and return default title
+        debug_log(f"Title generation failed: {str(e)}")
+        logger.error(f"Title generation failed: {str(e)}")
+        return default_title
 
 # Helper function for OpenAI streaming
 async def _generate_openai_stream(

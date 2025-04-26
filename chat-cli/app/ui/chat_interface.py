@@ -120,7 +120,7 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         self.update(self._format_content(self.message.content))
         
     async def update_content(self, content: str) -> None:
-        """Update the message content."""
+        """Update the message content using Static.update() with optimizations for streaming"""
         import logging
         logger = logging.getLogger(__name__)
         logger.debug(f"MessageDisplay.update_content called with content length: {len(content)}")
@@ -130,51 +130,41 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
             self._update_lock = asyncio.Lock()
         
         async with self._update_lock:
-            # For initial update from "Thinking..."
+            # Special handling for "Thinking..." to ensure it gets replaced
             if self.message.content == "Thinking..." and content:
-                logger.debug("Replacing 'Thinking...' with initial content")
-                self.message.content = content  # Update the stored content
-                formatted = self._format_content(content)
-                self.update(formatted, refresh=True)
-                
-                # Force a clean layout update
-                try:
-                    if self.app:
-                        self.app.refresh(layout=True)
-                        await asyncio.sleep(0.05)  # Small delay for layout to update
-                        
-                        # Find container and scroll
-                        messages_container = self.app.query_one("#messages-container")
-                        if messages_container:
-                            messages_container.scroll_end(animate=False)
-                except Exception as e:
-                    logger.error(f"Error in initial UI update: {str(e)}")
-                return
-                
-            # Quick unchanged content check to avoid unnecessary updates
-            if self.message.content == content:
-                logger.debug("Content unchanged, skipping update")
-                return
-                
-            # For subsequent updates
-            if self.message.content != content:
+                logger.debug("Replacing 'Thinking...' with actual content")
+                # Force a complete replacement
                 self.message.content = content
-                formatted = self._format_content(content)
-                self.update(formatted, refresh=True)
+                formatted_content = self._format_content(content)
+                self.update(formatted_content, refresh=True)
                 
-                # Use a more targeted refresh approach
+                # Force app-level refresh
                 try:
                     if self.app:
-                        self.app.refresh(layout=False)  # Lightweight refresh first
+                        self.app.refresh(layout=True)
                         # Find container and scroll
                         messages_container = self.app.query_one("#messages-container")
                         if messages_container:
                             messages_container.scroll_end(animate=False)
-                            
-                        # Final full refresh only at end
-                        self.app.refresh(layout=True)
                 except Exception as e:
-                    logger.error(f"Error refreshing UI: {str(e)}")
+                    logger.error(f"Error refreshing app: {str(e)}")
+                return
+                
+            # For all other updates - ALWAYS update
+            self.message.content = content
+            formatted_content = self._format_content(content)
+            self.update(formatted_content, refresh=True)
+            
+            # Force refresh
+            try:
+                if self.app:
+                    self.app.refresh(layout=True)
+                    # Find container and scroll
+                    messages_container = self.app.query_one("#messages-container")
+                    if messages_container:
+                        messages_container.scroll_end(animate=False)
+            except Exception as e:
+                logger.error(f"Error refreshing app: {str(e)}")
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp and handle markdown links"""
