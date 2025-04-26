@@ -175,35 +175,38 @@ CONFIG = load_config()
 
 # --- Dynamically update Anthropic models after initial load ---
 def update_anthropic_models(config):
-    """Fetch models from Anthropic API and update the config dict."""
+    """Update the config with Anthropic models."""
     if AVAILABLE_PROVIDERS["anthropic"]:
         try:
-            from app.api.anthropic import AnthropicClient # Import here to avoid circular dependency at top level
-            client = AnthropicClient()
-            fetched_models = client.get_available_models() # This now fetches (or uses fallback)
-
-            if fetched_models:
-                # Remove old hardcoded anthropic models first
-                models_to_remove = [
-                    model_id for model_id, info in config["available_models"].items()
-                    if info.get("provider") == "anthropic"
-                ]
-                for model_id in models_to_remove:
-                    del config["available_models"][model_id]
-
-                # Add fetched models
-                for model in fetched_models:
-                    config["available_models"][model["id"]] = {
-                        "provider": "anthropic",
-                        "max_tokens": 4096, # Assign a default max_tokens
-                        "display_name": model["name"]
-                    }
-                print(f"Updated Anthropic models in config: {[m['id'] for m in fetched_models]}") # Add print statement
-            else:
-                 print("Could not fetch or find Anthropic models to update config.") # Add print statement
-
+            # Instead of calling an async method, use a hardcoded fallback list
+            # that matches what's in the AnthropicClient class
+            fallback_models = [
+                {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
+                {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
+                {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
+                {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
+                {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},
+            ]
+            
+            # Remove old models first
+            models_to_remove = [
+                model_id for model_id, info in config["available_models"].items()
+                if info.get("provider") == "anthropic"
+            ]
+            for model_id in models_to_remove:
+                del config["available_models"][model_id]
+                
+            # Add the fallback models
+            for model in fallback_models:
+                config["available_models"][model["id"]] = {
+                    "provider": "anthropic",
+                    "max_tokens": 4096,
+                    "display_name": model["name"]
+                }
+            print(f"Updated Anthropic models in config with fallback list")
+            
         except Exception as e:
-            print(f"Error updating Anthropic models in config: {e}") # Add print statement
+            print(f"Error updating Anthropic models in config: {e}")
             # Keep existing config if update fails
 
     return config

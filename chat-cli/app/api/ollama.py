@@ -335,10 +335,11 @@ class OllamaClient(BaseModelClient):
                                 if response.status == 404:
                                     error_text = await response.text()
                                     debug_log(f"404 error details: {error_text}")
-                                    # This is likely a model not found error
                                     error_msg = f"Error: Model '{model}' not found on the Ollama server. Please check if the model name is correct or try pulling it first."
                                     logger.error(error_msg)
-                                    raise OllamaApiError(error_msg, status_code=404)
+                                    # Instead of raising, yield the error message for user display
+                                    yield error_msg
+                                    return  # End the generation
                                     
                                 raise aiohttp.ClientError("Model not ready")
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:

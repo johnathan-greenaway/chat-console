@@ -860,6 +860,22 @@ def resolve_model_id(model_id_or_name: str) -> str:
     input_lower = model_id_or_name.lower().strip()
     logger.info(f"Attempting to resolve model identifier: '{input_lower}'")
     
+    # Add special case handling for common OpenAI models
+    openai_model_aliases = {
+        "04-mini": "gpt-4-mini",  # Fix "04-mini" typo to "gpt-4-mini"
+        "04": "gpt-4",
+        "04-vision": "gpt-4-vision",
+        "04-turbo": "gpt-4-turbo",
+        "035": "gpt-3.5-turbo",
+        "35-turbo": "gpt-3.5-turbo",
+        "35": "gpt-3.5-turbo"
+    }
+    
+    if input_lower in openai_model_aliases:
+        resolved = openai_model_aliases[input_lower]
+        logger.info(f"Resolved '{input_lower}' to '{resolved}' via OpenAI model alias")
+        return resolved
+    
     # Special case handling for common typos and model name variations
     typo_corrections = {
         "o4-mini": "04-mini",
