@@ -61,10 +61,12 @@ class BaseModelClient(ABC):
             logger.info(f"Found model in config with provider: {provider}")
         # For custom models, try to infer provider
         else:
-            # First check for OpenAI models - these should ALWAYS use OpenAI client
-            if any(name in model_name_lower for name in ["gpt", "text-", "davinci"]):
+            # Check for common OpenAI model patterns or prefixes
+            if (model_name_lower.startswith(("gpt-", "text-", "davinci")) or 
+                "gpt" in model_name_lower or 
+                model_name_lower in ["04-mini", "04", "04-turbo", "04-vision"]):
                 provider = "openai"
-                logger.info(f"Identified as OpenAI model: {model_name}")
+                logger.info(f"Identified {model_name} as an OpenAI model")
             # Then check for Anthropic models - these should ALWAYS use Anthropic client
             elif any(name in model_name_lower for name in ["claude", "anthropic"]):
                 provider = "anthropic"
@@ -120,12 +122,14 @@ class BaseModelClient(ABC):
                 raise Exception(f"Provider '{provider}' is not available. Please check your configuration.")
         # For custom models, try to infer provider
         else:
-            # First check for OpenAI models - these should ALWAYS use OpenAI client
-            if any(name in model_name_lower for name in ["gpt", "text-", "davinci"]):
+            # Check for common OpenAI model patterns or prefixes
+            if (model_name_lower.startswith(("gpt-", "text-", "davinci")) or 
+                "gpt" in model_name_lower or 
+                model_name_lower in ["04-mini", "04", "04-turbo", "04-vision"]):
                 if not AVAILABLE_PROVIDERS["openai"]:
                     raise Exception("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
                 provider = "openai"
-                logger.info(f"Identified as OpenAI model: {model_name}")
+                logger.info(f"Identified {model_name} as an OpenAI model")
             # Then check for Anthropic models - these should ALWAYS use Anthropic client
             elif any(name in model_name_lower for name in ["claude", "anthropic"]):
                 if not AVAILABLE_PROVIDERS["anthropic"]:

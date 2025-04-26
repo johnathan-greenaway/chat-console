@@ -20,10 +20,10 @@ file_handler = logging.FileHandler(debug_log_file)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
 # Get the logger and add the handler
-debug_logger = logging.getLogger("chat-cli-debug")
+debug_logger = logging.getLogger()  # Root logger
 debug_logger.setLevel(logging.DEBUG)
 debug_logger.addHandler(file_handler)
-# Prevent propagation to the root logger (which would print to console)
+# CRITICAL: Force all output to the file, not stdout
 debug_logger.propagate = False
 
 # Add a convenience function to log to this file
@@ -766,13 +766,17 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         input_widget.focus()
 
     async def generate_response(self) -> None:
-        """Generate an AI response using a non-blocking worker."""
+        """Generate an AI response using a non-blocking worker with fallback."""
         # Import debug_log function from main
         debug_log(f"Entering generate_response method")
         
         if not self.current_conversation or not self.messages:
             debug_log("No current conversation or messages, returning")
             return
+
+        # Track if we've already attempted a fallback to avoid infinite loops
+        if not hasattr(self, 'fallback_attempted'):
+            self.fallback_attempted = False
 
         self.is_generating = True
         log("Setting is_generating to True")
@@ -1010,11 +1014,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 self._loading_animation_task.cancel()
             self._loading_animation_task = None
             try:
+                # Explicitly hide loading indicator
                 loading = self.query_one("#loading-indicator")
                 loading.add_class("hidden")
+                loading.remove_class("model-loading")  # Also remove model-loading class if present
+                self.refresh(layout=True)  # Force a refresh to ensure UI updates
                 self.query_one("#message-input").focus()
-            except Exception:
-                pass # Ignore UI errors during cleanup
+            except Exception as ui_err:
+                debug_log(f"Error hiding loading indicator: {str(ui_err)}")
+                log.error(f"Error hiding loading indicator: {str(ui_err)}")
 
     # Rename this method slightly to avoid potential conflicts and clarify purpose
     async def _handle_generation_result(self, worker: Worker[Optional[str]]) -> None:
@@ -1043,17 +1051,76 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 debug_log(f"Error in generation worker: {error}")
                 log.error(f"Error in generation worker: {error}")
                 
-                # Sanitize error message for UI display
+                # Check if this is a model not found error that we can try to recover from
                 error_str = str(error)
+                is_model_not_found = "not found" in error_str.lower() or "404" in error_str
                 
-                # Check if this is an Ollama error
-                is_ollama_error = "ollama" in error_str.lower() or "404" in error_str
+                # Try fallback if this is a model not found error and we haven't tried fallback yet
+                if is_model_not_found and not self.fallback_attempted:
+                    debug_log("Model not found error detected, attempting fallback")
+                    self.fallback_attempted = True
+                    
+                    # Choose an appropriate fallback based on available providers
+                    fallback_model = None
+                    from app.config import OPENAI_API_KEY, ANTHROPIC_API_KEY
+                    
+                    if OPENAI_API_KEY:
+                        fallback_model = "gpt-3.5-turbo"
+                        debug_log(f"Falling back to OpenAI model: {fallback_model}")
+                    elif ANTHROPIC_API_KEY:
+                        fallback_model = "claude-3-haiku-20240307"
+                        debug_log(f"Falling back to Anthropic model: {fallback_model}")
+                    else:
+                        # Find a common Ollama model that should exist
+                        try:
+                            from app.api.ollama import OllamaClient
+                            ollama = await OllamaClient.create()
+                            models = await ollama.get_available_models()
+                            for model_name in ["gemma:2b", "phi3:mini", "llama3:8b"]:
+                                if any(m["id"] == model_name for m in models):
+                                    fallback_model = model_name
+                                    debug_log(f"Found available Ollama model for fallback: {fallback_model}")
+                                    break
+                        except Exception as e:
+                            debug_log(f"Error finding Ollama fallback model: {str(e)}")
+                    
+                    if fallback_model:
+                        # Update UI to show fallback is happening
+                        loading = self.query_one("#loading-indicator")
+                        loading.remove_class("hidden")
+                        loading.update(f"⚙️ Falling back to {fallback_model}...")
+                        
+                        # Update the selected model
+                        self.selected_model = fallback_model
+                        self.update_app_info()  # Update the displayed model info
+                        
+                        # Remove the "Thinking..." message
+                        if self.messages and self.messages[-1].role == "assistant":
+                            debug_log("Removing thinking message before fallback")
+                            self.messages.pop()
+                            await self.update_messages_ui()
+                        
+                        # Try again with the new model
+                        debug_log(f"Retrying with fallback model: {fallback_model}")
+                        self.notify(f"Trying fallback model: {fallback_model}", severity="warning", timeout=3)
+                        await self.generate_response()
+                        return
+                
+                # If we get here, either it's not a model error or fallback already attempted
+                # Explicitly hide loading indicator
+                try:
+                    loading = self.query_one("#loading-indicator")
+                    loading.add_class("hidden")
+                    loading.remove_class("model-loading")  # Also remove model-loading class if present
+                except Exception as ui_err:
+                    debug_log(f"Error hiding loading indicator: {str(ui_err)}")
+                    log.error(f"Error hiding loading indicator: {str(ui_err)}")
                 
                 # Create a user-friendly error message
-                if is_ollama_error:
-                    # For Ollama errors, provide a more user-friendly message
+                if is_model_not_found:
+                    # For model not found errors, provide a more user-friendly message
                     user_error = "Unable to generate response. The selected model may not be available."
-                    debug_log(f"Sanitizing Ollama error to user-friendly message: {user_error}")
+                    debug_log(f"Sanitizing model not found error to user-friendly message: {user_error}")
                     # Show technical details only in notification, not in chat
                     self.notify(f"Model error: {error_str}", severity="error", timeout=5)
                 else:
@@ -1069,6 +1136,9 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 debug_log(f"Adding error message: {user_error}")
                 self.messages.append(Message(role="assistant", content=user_error))
                 await self.update_messages_ui()
+                
+                # Force a refresh to ensure UI updates
+                self.refresh(layout=True)
 
             elif worker.state == "success":
                 full_response = worker.result

@@ -121,77 +121,50 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
         
     async def update_content(self, content: str) -> None:
         """Update the message content using Static.update() with optimizations for streaming"""
-        # Use proper logging instead of print statements
         import logging
         logger = logging.getLogger(__name__)
         logger.debug(f"MessageDisplay.update_content called with content length: {len(content)}")
         
-        # Quick unchanged content check to avoid unnecessary updates
-        if self.message.content == content:
-            logger.debug("Content unchanged, skipping update")
-            return
-            
-        # Special handling for "Thinking..." to ensure it gets replaced
-        if self.message.content == "Thinking..." and content:
-            logger.debug("Replacing 'Thinking...' with actual content")
-            # Force a complete replacement rather than an append
-            self.message.content = ""
-            
-            # Update the stored message object content
+        # Use a lock to prevent race conditions during updates
+        if not hasattr(self, '_update_lock'):
+            self._update_lock = asyncio.Lock()
+        
+        async with self._update_lock:
+            # Special handling for "Thinking..." to ensure it gets replaced
+            if self.message.content == "Thinking..." and content:
+                logger.debug("Replacing 'Thinking...' with actual content")
+                # Force a complete replacement
+                self.message.content = content
+                formatted_content = self._format_content(content)
+                self.update(formatted_content, refresh=True)
+                
+                # Force app-level refresh
+                try:
+                    if self.app:
+                        self.app.refresh(layout=True)
+                        # Find container and scroll
+                        messages_container = self.app.query_one("#messages-container")
+                        if messages_container:
+                            messages_container.scroll_end(animate=False)
+                except Exception as e:
+                    logger.error(f"Error refreshing app: {str(e)}")
+                return
+                
+            # For all other updates - ALWAYS update
             self.message.content = content
-            
-            # Format with fixed-width placeholder to minimize layout shifts
             formatted_content = self._format_content(content)
-            
-            # Use a direct update that forces refresh - critical fix for streaming
             self.update(formatted_content, refresh=True)
             
-            # Force app-level refresh and scroll to ensure visibility
+            # Force refresh
             try:
                 if self.app:
-                    # Force a full layout refresh to ensure content is visible
                     self.app.refresh(layout=True)
-                    
-                    # Find the messages container and scroll to end
-                    containers = self.app.query("ScrollableContainer")
-                    for container in containers:
-                        if hasattr(container, 'scroll_end'):
-                            container.scroll_end(animate=False)
+                    # Find container and scroll
+                    messages_container = self.app.query_one("#messages-container")
+                    if messages_container:
+                        messages_container.scroll_end(animate=False)
             except Exception as e:
                 logger.error(f"Error refreshing app: {str(e)}")
-                self.refresh(layout=True)
-            
-            # Return early to avoid duplicate updates
-            return
-            
-        # Update the stored message object content
-        self.message.content = content
-        
-        # Format with fixed-width placeholder to minimize layout shifts
-        # This avoids text reflowing as new tokens arrive
-        formatted_content = self._format_content(content)
-        
-        # Use a direct update that forces refresh - critical fix for streaming
-        # This ensures content is immediately visible
-        logger.debug(f"Updating widget with formatted content length: {len(formatted_content)}")
-        self.update(formatted_content, refresh=True)
-        
-        # Force app-level refresh and scroll to ensure visibility
-        try:
-            # Always force app refresh for every update
-            if self.app:
-                # Force a full layout refresh to ensure content is visible
-                self.app.refresh(layout=True)
-                
-                # Find the messages container and scroll to end
-                containers = self.app.query("ScrollableContainer")
-                for container in containers:
-                    if hasattr(container, 'scroll_end'):
-                        container.scroll_end(animate=False)
-        except Exception as e:
-            # Log the error and fallback to local refresh
-            logger.error(f"Error refreshing app: {str(e)}")
-            self.refresh(layout=True)
         
     def _format_content(self, content: str) -> str:
         """Format message content with timestamp and handle markdown links"""
