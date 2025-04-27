@@ -753,7 +753,9 @@ def resolve_model_id(model_id_or_name: str) -> str:
         "04-turbo": "gpt-4-turbo",
         "035": "gpt-3.5-turbo",
         "35-turbo": "gpt-3.5-turbo",
-        "35": "gpt-3.5-turbo"
+        "35": "gpt-3.5-turbo",
+        "4.1-mini": "gpt-4.1-mini",  # Add support for gpt-4.1-mini
+        "4.1": "gpt-4.1"  # Add support for gpt-4.1
     }
     
     if input_lower in openai_model_aliases:

@@ -136,7 +136,7 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
                 # Force a complete replacement
                 self.message.content = content
                 formatted_content = self._format_content(content)
-                self.update(formatted_content, refresh=True)
+                self.update(formatted_content)
                 
                 # Force app-level refresh
                 try:
@@ -153,9 +153,10 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
             # For all other updates - ALWAYS update
             self.message.content = content
             formatted_content = self._format_content(content)
-            self.update(formatted_content, refresh=True)
+            # Ensure the update call doesn't have refresh=True
+            self.update(formatted_content) 
             
-            # Force refresh
+            # Force refresh using app.refresh() instead of passing to update()
             try:
                 if self.app:
                     self.app.refresh(layout=True)
