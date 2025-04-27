@@ -1,13 +1,17 @@
 import anthropic
-import asyncio  # Add missing import
+import asyncio
+import logging
 from typing import List, Dict, Any, Optional, Generator, AsyncGenerator
 from .base import BaseModelClient
 from ..config import ANTHROPIC_API_KEY
-from ..utils import resolve_model_id  # Import the resolve_model_id function
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class AnthropicClient(BaseModelClient):
     def __init__(self):
         self.client = None  # Initialize in create()
+        self._active_stream = None  # Track active stream for cancellation
 
     @classmethod
     async def create(cls) -> 'AnthropicClient':
@@ -17,237 +21,218 @@ class AnthropicClient(BaseModelClient):
         return instance
     
     def _prepare_messages(self, messages: List[Dict[str, str]], style: Optional[str] = None) -> List[Dict[str, str]]:
-        """Prepare messages for Claude API"""
-        # Anthropic expects role to be 'user' or 'assistant'
+        """Prepare messages for Anthropic API"""
         processed_messages = []
-        
-        for msg in messages:
-            role = msg["role"]
-            if role == "system":
-                # For Claude, we'll convert system messages to user messages with a special prefix
-                processed_messages.append({
-                    "role": "user",
-                    "content": f"<system>\n{msg['content']}\n</system>"
-                })
-            else:
-                processed_messages.append(msg)
         
         # Add style instructions if provided
         if style and style != "default":
-            # Find first non-system message to attach style to
-            for i, msg in enumerate(processed_messages):
-                if msg["role"] == "user":
-                    content = msg["content"]
-                    if "<userStyle>" not in content:
-                        style_instructions = self._get_style_instructions(style)
-                        msg["content"] = f"<userStyle>{style_instructions}</userStyle>\n\n{content}"
-                    break
+            style_instructions = self._get_style_instructions(style)
+            processed_messages.append({
+                "role": "system",
+                "content": style_instructions
+            })
+        
+        # Add the rest of the messages
+        for message in messages:
+            # Ensure message has required fields
+            if "role" not in message or "content" not in message:
+                continue
+                
+            # Map 'user' and 'assistant' roles directly
+            # Anthropic only supports 'user' and 'assistant' roles
+            if message["role"] in ["user", "assistant"]:
+                processed_messages.append(message)
+            elif message["role"] == "system":
+                # For system messages, we need to add them as system messages
+                processed_messages.append({
+                    "role": "system",
+                    "content": message["content"]
+                })
+            else:
+                # For any other role, treat as user message
+                processed_messages.append({
+                    "role": "user",
+                    "content": message["content"]
+                })
         
         return processed_messages
     
     def _get_style_instructions(self, style: str) -> str:
         """Get formatting instructions for different styles"""
         styles = {
-            "concise": "Be extremely concise and to the point. Use short sentences and paragraphs. Avoid unnecessary details.",
-            "detailed": "Be comprehensive and thorough in your responses. Provide detailed explanations, examples, and cover all relevant aspects of the topic.",
-            "technical": "Use precise technical language and terminology. Be formal and focus on accuracy and technical details.",
-            "friendly": "Be warm, approachable and conversational. Use casual language, personal examples, and a friendly tone.",
+            "concise": "Please provide concise, to-the-point responses without unnecessary elaboration.",
+            "detailed": "Please provide comprehensive responses with thorough explanations and examples.",
+            "technical": "Please use precise technical language and focus on accuracy and technical details.",
+            "friendly": "Please use a warm, conversational tone and relatable examples.",
         }
         
         return styles.get(style, "")
     
-    async def generate_completion(self, messages: List[Dict[str, str]],
-                           model: str,
-                           style: Optional[str] = None,
-                           temperature: float = 0.7,
+    async def generate_completion(self, messages: List[Dict[str, str]], 
+                           model: str, 
+                           style: Optional[str] = None, 
+                           temperature: float = 0.7, 
                            max_tokens: Optional[int] = None) -> str:
-        """Generate a text completion using Claude"""
-        try:
-            from app.main import debug_log
-        except ImportError:
-            debug_log = lambda msg: None
-            
-        # Resolve the model ID right before making the API call
-        original_model = model
-        resolved_model = resolve_model_id(model)
-        debug_log(f"Anthropic: Original model ID '{original_model}' resolved to '{resolved_model}' in generate_completion")
-        
+        """Generate a text completion using Anthropic"""
         processed_messages = self._prepare_messages(messages, style)
         
-        response = await self.client.messages.create(
-            model=resolved_model,  # Use the resolved model ID
-            messages=processed_messages,
-            temperature=temperature,
-            max_tokens=max_tokens or 1024,
-        )
-        
-        return response.content[0].text
+        try:
+            response = await self.client.messages.create(
+                model=model,
+                messages=processed_messages,
+                temperature=temperature,
+                max_tokens=max_tokens if max_tokens else 4096,
+            )
+            
+            return response.content[0].text
+        except Exception as e:
+            logger.error(f"Error generating completion: {str(e)}")
+            raise Exception(f"Anthropic API error: {str(e)}")
     
-    async def generate_stream(self, messages: List[Dict[str, str]],
-                            model: str,
+    async def generate_stream(self, messages: List[Dict[str, str]], 
+                            model: str, 
                             style: Optional[str] = None,
-                            temperature: float = 0.7,
+                            temperature: float = 0.7, 
                             max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
-        """Generate a streaming text completion using Claude"""
+        """Generate a streaming text completion using Anthropic"""
         try:
             from app.main import debug_log  # Import debug logging if available
+            debug_log(f"Anthropic: starting streaming generation with model: {model}")
         except ImportError:
             # If debug_log not available, create a no-op function
             debug_log = lambda msg: None
             
-        # Resolve the model ID right before making the API call
-        original_model = model
-        resolved_model = resolve_model_id(model)
-        debug_log(f"Anthropic: Original model ID '{original_model}' resolved to '{resolved_model}'")
-        debug_log(f"Anthropic: starting streaming generation with model: {resolved_model}")
-            
         processed_messages = self._prepare_messages(messages, style)
         
         try:
-            debug_log(f"Anthropic: requesting stream with {len(processed_messages)} messages")
-            # Remove await from this line - it returns the context manager, not an awaitable
-            stream = self.client.messages.stream(
-                model=resolved_model,  # Use the resolved model ID
-                messages=processed_messages,
-                temperature=temperature,
-                max_tokens=max_tokens or 1024,
-            )
+            debug_log(f"Anthropic: preparing {len(processed_messages)} messages for stream")
             
-            debug_log("Anthropic: stream created successfully, processing chunks using async with")
-            async with stream as stream_context: # Use async with
-                async for chunk in stream_context: # Iterate over the context
-                    try:
-                        if chunk.type == "content_block_delta": # Check for delta type
-                            # Ensure we always return a string
-                            if chunk.delta.text is None:
-                                debug_log("Anthropic: skipping empty text delta chunk")
-                                continue
-                                
-                            text = str(chunk.delta.text) # Get text from delta
-                            debug_log(f"Anthropic: yielding chunk of length: {len(text)}")
-                            yield text
-                        else:
-                            debug_log(f"Anthropic: skipping non-content_delta chunk of type: {chunk.type}")
-                    except Exception as chunk_error: # Restore the except block for chunk processing
-                        debug_log(f"Anthropic: error processing chunk: {str(chunk_error)}")
-                        # Skip problematic chunks but continue processing
-                        continue # This continue is now correctly inside the loop and except block
+            # Use more robust error handling with retry for connection issues
+            max_retries = 2
+            retry_count = 0
+            
+            while retry_count <= max_retries:
+                try:
+                    debug_log(f"Anthropic: creating stream with model {model}")
                     
+                    # Create the stream
+                    stream = await self.client.messages.create(
+                        model=model,
+                        messages=processed_messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens if max_tokens else 4096,
+                        stream=True
+                    )
+                    
+                    # Store the stream for potential cancellation
+                    self._active_stream = stream
+                    
+                    debug_log("Anthropic: stream created successfully")
+                    
+                    # Process stream chunks
+                    chunk_count = 0
+                    debug_log("Anthropic: starting to process chunks")
+                    
+                    async for chunk in stream:
+                        # Check if stream has been cancelled
+                        if self._active_stream is None:
+                            debug_log("Anthropic: stream was cancelled, stopping generation")
+                            break
+                            
+                        chunk_count += 1
+                        try:
+                            if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'text'):
+                                content = chunk.delta.text
+                                if content is not None:
+                                    debug_log(f"Anthropic: yielding chunk {chunk_count} of length: {len(content)}")
+                                    yield content
+                                else:
+                                    debug_log(f"Anthropic: skipping None content chunk {chunk_count}")
+                            else:
+                                debug_log(f"Anthropic: skipping chunk {chunk_count} with missing content")
+                        except Exception as chunk_error:
+                            debug_log(f"Anthropic: error processing chunk {chunk_count}: {str(chunk_error)}")
+                            # Skip problematic chunks but continue processing
+                            continue
+                    
+                    debug_log(f"Anthropic: stream completed successfully with {chunk_count} chunks")
+                    
+                    # Clear the active stream reference when done
+                    self._active_stream = None
+                    
+                    # If we reach this point, we've successfully processed the stream
+                    break
+                    
+                except Exception as e:
+                    debug_log(f"Anthropic: error in attempt {retry_count+1}/{max_retries+1}: {str(e)}")
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        debug_log(f"Anthropic: retrying after error (attempt {retry_count+1})")
+                        # Simple exponential backoff
+                        await asyncio.sleep(1 * retry_count)
+                    else:
+                        debug_log("Anthropic: max retries reached, raising exception")
+                        raise Exception(f"Anthropic streaming error after {max_retries+1} attempts: {str(e)}")
+                        
         except Exception as e:
             debug_log(f"Anthropic: error in generate_stream: {str(e)}")
+            # Yield a simple error message as a last resort to ensure UI updates
+            yield f"Error: {str(e)}"
             raise Exception(f"Anthropic streaming error: {str(e)}")
-
-    async def _fetch_models_from_api(self) -> List[Dict[str, Any]]:
-        """Fetch available models directly from the Anthropic API."""
+    
+    async def cancel_stream(self) -> None:
+        """Cancel any active streaming request"""
+        logger.info("Cancelling active Anthropic stream")
         try:
             from app.main import debug_log
+            debug_log("Anthropic: cancelling active stream")
         except ImportError:
-            debug_log = lambda msg: None
-
-        # Always include a reliable fallback list in case API calls fail
-        fallback_models = [
-            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
-            {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
-            {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
-            {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
-            {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},
-        ]
-
-        # If no client is initialized, return fallback immediately
-        if not self.client:
-            debug_log("Anthropic: No client initialized, using fallback models")
-            return fallback_models
-
-        try:
-            debug_log("Anthropic: Fetching models from API...")
+            pass
             
-            # Try using the models.list method if available in newer SDK versions
-            if hasattr(self.client, 'models') and hasattr(self.client.models, 'list'):
-                try:
-                    debug_log("Anthropic: Using client.models.list() method")
-                    models_response = await self.client.models.list()
-                    if hasattr(models_response, 'data') and isinstance(models_response.data, list):
-                        formatted_models = [
-                            {"id": model.id, "name": getattr(model, "name", model.id)}
-                            for model in models_response.data
-                        ]
-                        debug_log(f"Anthropic: Found {len(formatted_models)} models via SDK")
-                        return formatted_models
-                except Exception as sdk_err:
-                    debug_log(f"Anthropic: Error using models.list(): {str(sdk_err)}")
-                    # Continue to next method
-            
-            # Try direct HTTP request if client exposes the underlying HTTP client
-            if hasattr(self.client, '_client') and hasattr(self.client._client, 'get'):
-                try:
-                    debug_log("Anthropic: Using direct HTTP request to /v1/models")
-                    response = await self.client._client.get(
-                        "/v1/models",
-                        headers={"anthropic-version": "2023-06-01"}
-                    )
-                    response.raise_for_status()
-                    models_data = response.json()
-                    
-                    if 'data' in models_data and isinstance(models_data['data'], list):
-                        formatted_models = [
-                            {"id": model.get("id"), "name": model.get("display_name", model.get("id"))}
-                            for model in models_data['data']
-                            if model.get("id")
-                        ]
-                        debug_log(f"Anthropic: Found {len(formatted_models)} models via HTTP request")
-                        return formatted_models
-                    else:
-                        debug_log("Anthropic: Unexpected API response format")
-                except Exception as http_err:
-                    debug_log(f"Anthropic: HTTP request error: {str(http_err)}")
-                    # Continue to fallback
-            
-            # If we reach here, both methods failed
-            debug_log("Anthropic: All API methods failed, using fallback models")
-            return fallback_models
-
-        except Exception as e:
-            debug_log(f"Anthropic: Failed to fetch models from API: {str(e)}")
-            debug_log("Anthropic: Using fallback model list")
-            return fallback_models
-
-    def get_available_models(self) -> List[Dict[str, Any]]:
-        """Get list of available Claude models by fetching from API."""
-        # Reliable fallback list that doesn't depend on async operations
-        fallback_models = [
-            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
-            {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
-            {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
-            {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet"},
-            {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet"},
+        # Simply set the active stream to None
+        # This will cause the generate_stream method to stop processing chunks
+        self._active_stream = None
+        logger.info("Anthropic stream cancelled successfully")
+    
+    async def get_available_models(self) -> List[Dict[str, Any]]:
+        """Get list of available Anthropic models"""
+        # Anthropic doesn't have a models endpoint, so we return a static list
+        models = [
+            {
+                "id": "claude-3-opus-20240229",
+                "name": "Claude 3 Opus",
+                "description": "Most powerful model for highly complex tasks",
+                "context_window": 200000,
+                "provider": "anthropic"
+            },
+            {
+                "id": "claude-3-sonnet-20240229",
+                "name": "Claude 3 Sonnet",
+                "description": "Balanced model for most tasks",
+                "context_window": 200000,
+                "provider": "anthropic"
+            },
+            {
+                "id": "claude-3-haiku-20240307",
+                "name": "Claude 3 Haiku",
+                "description": "Fastest and most compact model",
+                "context_window": 200000,
+                "provider": "anthropic"
+            },
+            {
+                "id": "claude-3-5-sonnet-20240620",
+                "name": "Claude 3.5 Sonnet",
+                "description": "Latest model with improved capabilities",
+                "context_window": 200000,
+                "provider": "anthropic"
+            },
+            {
+                "id": "claude-3-7-sonnet-20250219",
+                "name": "Claude 3.7 Sonnet",
+                "description": "Newest model with advanced reasoning",
+                "context_window": 200000,
+                "provider": "anthropic"
+            }
         ]
         
-        try:
-            # Check if we're already in an event loop
-            try:
-                loop = asyncio.get_running_loop()
-                in_loop = True
-            except RuntimeError:
-                in_loop = False
-                
-            if in_loop:
-                # We're already in an event loop, create a future
-                try:
-                    from app.main import debug_log
-                except ImportError:
-                    debug_log = lambda msg: None
-                    
-                debug_log("Anthropic: Already in event loop, using fallback models")
-                return fallback_models
-            else:
-                # Not in an event loop, we can use asyncio.run
-                models = asyncio.run(self._fetch_models_from_api())
-                return models
-        except Exception as e:
-            try:
-                from app.main import debug_log
-            except ImportError:
-                debug_log = lambda msg: None
-                
-            debug_log(f"Anthropic: Error in get_available_models: {str(e)}")
-            return fallback_models
+        return models

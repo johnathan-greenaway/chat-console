@@ -20,10 +20,10 @@ file_handler = logging.FileHandler(debug_log_file)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
 # Get the logger and add the handler
-debug_logger = logging.getLogger("chat-cli-debug")
+debug_logger = logging.getLogger()  # Root logger
 debug_logger.setLevel(logging.DEBUG)
 debug_logger.addHandler(file_handler)
-# Prevent propagation to the root logger (which would print to console)
+# CRITICAL: Force all output to the file, not stdout
 debug_logger.propagate = False
 
 # Add a convenience function to log to this file
@@ -707,10 +707,18 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         else:
                             raise Exception("No valid API clients available for title generation")
 
-                # Generate title
+                # Generate title - make sure we're using the right client for the model
                 print(f"Calling generate_conversation_title with model: {model}")
                 log(f"Calling generate_conversation_title with model: {model}")
-                debug_log(f"Calling generate_conversation_title with model: {model}")
+                debug_log(f"Calling generate_conversation_title with model: {model}, client type: {type(client).__name__}")
+                
+                # Double-check that we're using the right client for this model
+                expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                if expected_client_type and not isinstance(client, expected_client_type):
+                    debug_log(f"Warning: Client type mismatch. Expected {expected_client_type.__name__}, got {type(client).__name__}")
+                    debug_log("Creating new client with correct type")
+                    client = await BaseModelClient.get_client_for_model(model)
+                
                 title = await generate_conversation_title(content, model, client)
                 debug_log(f"Generated title: {title}")
                 log(f"Generated title: {title}")
@@ -729,11 +737,9 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 # Update conversation object
                 self.current_conversation.title = title
                 
-                # IMPORTANT: Save the successful model for consistency
-                # If the title was generated with a different model than initially selected,
-                # update the selected_model to match so the response uses the same model
-                debug_log(f"Using same model for chat response: '{model}'")
-                self.selected_model = model
+                # DO NOT update the selected model here - keep the user's original selection
+                # This was causing issues with model mixing
+                debug_log(f"Keeping original selected model: '{self.selected_model}'")
 
                 self.notify(f"Conversation title set to: {title}", severity="information", timeout=3)
 
@@ -760,13 +766,17 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         input_widget.focus()
 
     async def generate_response(self) -> None:
-        """Generate an AI response using a non-blocking worker."""
+        """Generate an AI response using a non-blocking worker with fallback."""
         # Import debug_log function from main
         debug_log(f"Entering generate_response method")
         
         if not self.current_conversation or not self.messages:
             debug_log("No current conversation or messages, returning")
             return
+
+        # Track if we've already attempted a fallback to avoid infinite loops
+        if not hasattr(self, 'fallback_attempted'):
+            self.fallback_attempted = False
 
         self.is_generating = True
         log("Setting is_generating to True")
@@ -805,17 +815,23 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             style = self.selected_style
             
             debug_log(f"Using model: '{model}', style: '{style}'")
+            
+            # Determine the expected client type for this model
+            expected_client_type = BaseModelClient.get_client_type_for_model(model)
+            debug_log(f"Expected client type for {model}: {expected_client_type.__name__ if expected_client_type else 'None'}")
 
             # Ensure we have a valid model
             if not model:
                 debug_log("Model is empty, selecting a default model")
-                # Same fallback logic as in autotitling - this ensures consistency
+                # Check which providers are available and select an appropriate default
                 if OPENAI_API_KEY:
                     model = "gpt-3.5-turbo"
-                    debug_log("Falling back to OpenAI gpt-3.5-turbo")
+                    expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                    debug_log(f"Falling back to OpenAI gpt-3.5-turbo with client type {expected_client_type.__name__ if expected_client_type else 'None'}")
                 elif ANTHROPIC_API_KEY:
-                    model = "claude-instant-1.2"
-                    debug_log("Falling back to Anthropic claude-instant-1.2")
+                    model = "claude-3-haiku-20240307"  # Updated to newer Claude model
+                    expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                    debug_log(f"Falling back to Anthropic Claude 3 Haiku with client type {expected_client_type.__name__ if expected_client_type else 'None'}")
                 else:
                     # Check for a common Ollama model
                     try:
@@ -826,11 +842,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                             model = models[0].get("id", "llama3")
                         else:
                             model = "llama3"  # Common default
-                        debug_log(f"Falling back to Ollama model: {model}")
+                        expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                        debug_log(f"Falling back to Ollama model: {model} with client type {expected_client_type.__name__ if expected_client_type else 'None'}")
                     except Exception as ollama_err:
                         debug_log(f"Error getting Ollama models: {str(ollama_err)}")
                         model = "llama3"  # Final fallback
-                        debug_log("Final fallback to llama3")
+                        expected_client_type = BaseModelClient.get_client_type_for_model(model)
+                        debug_log(f"Final fallback to llama3 with client type {expected_client_type.__name__ if expected_client_type else 'None'}")
 
             # Convert messages to API format with enhanced error checking
             api_messages = []
@@ -926,27 +944,39 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             last_refresh_time = time.time()  # Initialize refresh throttling timer
 
             async def update_ui(content: str):
-                # This function remains the same, called by the worker
+                # This function is called by the worker with each content update
                 if not self.is_generating:
                     debug_log("update_ui called but is_generating is False, returning.")
                     return
                 
                 async with update_lock:
                     try:
+                        # Add more verbose logging
+                        debug_log(f"update_ui called with content length: {len(content)}")
+                        print(f"update_ui: Updating with content length {len(content)}")
+                        
                         # Clear thinking indicator on first content
                         if assistant_message.content == "Thinking...":
                             debug_log("First content received, clearing 'Thinking...'")
                             print("First content received, clearing 'Thinking...'")
-                            assistant_message.content = ""
-
+                            # We'll let the MessageDisplay.update_content handle this special case
+                        
                         # Update the message object with the full content
                         assistant_message.content = content
 
-                        # Update UI with the content
+                        # Update UI with the content - this now has special handling for "Thinking..."
+                        debug_log("Calling message_display.update_content")
                         await message_display.update_content(content)
                         
-                        # Simple refresh approach - just force a layout refresh
+                        # More aggressive UI refresh sequence
+                        debug_log("Performing UI refresh sequence")
+                        # First do a lightweight refresh
+                        self.refresh(layout=False)
+                        # Then scroll to end
+                        messages_container.scroll_end(animate=False)
+                        # Then do a full layout refresh
                         self.refresh(layout=True)
+                        # Final scroll to ensure visibility
                         messages_container.scroll_end(animate=False)
                         
                     except Exception as e:
@@ -984,11 +1014,15 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 self._loading_animation_task.cancel()
             self._loading_animation_task = None
             try:
+                # Explicitly hide loading indicator
                 loading = self.query_one("#loading-indicator")
                 loading.add_class("hidden")
+                loading.remove_class("model-loading")  # Also remove model-loading class if present
+                self.refresh(layout=True)  # Force a refresh to ensure UI updates
                 self.query_one("#message-input").focus()
-            except Exception:
-                pass # Ignore UI errors during cleanup
+            except Exception as ui_err:
+                debug_log(f"Error hiding loading indicator: {str(ui_err)}")
+                log.error(f"Error hiding loading indicator: {str(ui_err)}")
 
     # Rename this method slightly to avoid potential conflicts and clarify purpose
     async def _handle_generation_result(self, worker: Worker[Optional[str]]) -> None:
@@ -1016,15 +1050,95 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 error = worker.error
                 debug_log(f"Error in generation worker: {error}")
                 log.error(f"Error in generation worker: {error}")
-                self.notify(f"Generation error: {error}", severity="error", timeout=5)
+                
+                # Check if this is a model not found error that we can try to recover from
+                error_str = str(error)
+                is_model_not_found = "not found" in error_str.lower() or "404" in error_str
+                
+                # Try fallback if this is a model not found error and we haven't tried fallback yet
+                if is_model_not_found and not self.fallback_attempted:
+                    debug_log("Model not found error detected, attempting fallback")
+                    self.fallback_attempted = True
+                    
+                    # Choose an appropriate fallback based on available providers
+                    fallback_model = None
+                    from app.config import OPENAI_API_KEY, ANTHROPIC_API_KEY
+                    
+                    if OPENAI_API_KEY:
+                        fallback_model = "gpt-3.5-turbo"
+                        debug_log(f"Falling back to OpenAI model: {fallback_model}")
+                    elif ANTHROPIC_API_KEY:
+                        fallback_model = "claude-3-haiku-20240307"
+                        debug_log(f"Falling back to Anthropic model: {fallback_model}")
+                    else:
+                        # Find a common Ollama model that should exist
+                        try:
+                            from app.api.ollama import OllamaClient
+                            ollama = await OllamaClient.create()
+                            models = await ollama.get_available_models()
+                            for model_name in ["gemma:2b", "phi3:mini", "llama3:8b"]:
+                                if any(m["id"] == model_name for m in models):
+                                    fallback_model = model_name
+                                    debug_log(f"Found available Ollama model for fallback: {fallback_model}")
+                                    break
+                        except Exception as e:
+                            debug_log(f"Error finding Ollama fallback model: {str(e)}")
+                    
+                    if fallback_model:
+                        # Update UI to show fallback is happening
+                        loading = self.query_one("#loading-indicator")
+                        loading.remove_class("hidden")
+                        loading.update(f"⚙️ Falling back to {fallback_model}...")
+                        
+                        # Update the selected model
+                        self.selected_model = fallback_model
+                        self.update_app_info()  # Update the displayed model info
+                        
+                        # Remove the "Thinking..." message
+                        if self.messages and self.messages[-1].role == "assistant":
+                            debug_log("Removing thinking message before fallback")
+                            self.messages.pop()
+                            await self.update_messages_ui()
+                        
+                        # Try again with the new model
+                        debug_log(f"Retrying with fallback model: {fallback_model}")
+                        self.notify(f"Trying fallback model: {fallback_model}", severity="warning", timeout=3)
+                        await self.generate_response()
+                        return
+                
+                # If we get here, either it's not a model error or fallback already attempted
+                # Explicitly hide loading indicator
+                try:
+                    loading = self.query_one("#loading-indicator")
+                    loading.add_class("hidden")
+                    loading.remove_class("model-loading")  # Also remove model-loading class if present
+                except Exception as ui_err:
+                    debug_log(f"Error hiding loading indicator: {str(ui_err)}")
+                    log.error(f"Error hiding loading indicator: {str(ui_err)}")
+                
+                # Create a user-friendly error message
+                if is_model_not_found:
+                    # For model not found errors, provide a more user-friendly message
+                    user_error = "Unable to generate response. The selected model may not be available."
+                    debug_log(f"Sanitizing model not found error to user-friendly message: {user_error}")
+                    # Show technical details only in notification, not in chat
+                    self.notify(f"Model error: {error_str}", severity="error", timeout=5)
+                else:
+                    # For other errors, show a generic message
+                    user_error = f"Error generating response: {error_str}"
+                    self.notify(f"Generation error: {error_str}", severity="error", timeout=5)
+                
                 # Add error message to UI
                 if self.messages and self.messages[-1].role == "assistant":
                     debug_log("Removing thinking message")
                     self.messages.pop()  # Remove thinking message
-                error_msg = f"Error: {error}"
-                debug_log(f"Adding error message: {error_msg}")
-                self.messages.append(Message(role="assistant", content=error_msg))
+                
+                debug_log(f"Adding error message: {user_error}")
+                self.messages.append(Message(role="assistant", content=user_error))
                 await self.update_messages_ui()
+                
+                # Force a refresh to ensure UI updates
+                self.refresh(layout=True)
 
             elif worker.state == "success":
                 full_response = worker.result

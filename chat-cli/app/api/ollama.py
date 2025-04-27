@@ -11,6 +11,14 @@ from .base import BaseModelClient
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Custom exception for Ollama API errors
+class OllamaApiError(Exception):
+    """Exception raised for errors in the Ollama API."""
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
+
 class OllamaClient(BaseModelClient):
     def __init__(self):
         from ..config import OLLAMA_BASE_URL
@@ -266,6 +274,31 @@ class OllamaClient(BaseModelClient):
         last_error = None
         self._active_stream_session = None  # Track the active session
         
+        # First check if the model exists in our available models
+        try:
+            available_models = await self.get_available_models()
+            model_exists = False
+            available_model_names = []
+            
+            for m in available_models:
+                model_id = m.get("id", "")
+                available_model_names.append(model_id)
+                if model_id == model:
+                    model_exists = True
+                    break
+                    
+            if not model_exists:
+                error_msg = f"Model '{model}' not found in available models. Available models include: {', '.join(available_model_names[:5])}"
+                if len(available_model_names) > 5:
+                    error_msg += f" and {len(available_model_names) - 5} more."
+                logger.error(error_msg)
+                # Instead of raising a custom error, yield the message and return
+                yield error_msg
+                return
+        except Exception as e:
+            debug_log(f"Error checking model availability: {str(e)}")
+            # Continue anyway, the main request will handle errors
+        
         while retries >= 0:
             try:
                 # First try a quick test request to check if model is loaded
@@ -299,6 +332,17 @@ class OllamaClient(BaseModelClient):
                             if response.status != 200:
                                 logger.warning(f"Model test request failed with status {response.status}")
                                 debug_log(f"Model test request failed with status {response.status}")
+                                
+                                # Check if this is a 404 Not Found error
+                                if response.status == 404:
+                                    error_text = await response.text()
+                                    debug_log(f"404 error details: {error_text}")
+                                    error_msg = f"Error: Model '{model}' not found on the Ollama server. Please check if the model name is correct or try pulling it first."
+                                    logger.error(error_msg)
+                                    # Instead of raising, yield the error message for user display
+                                    yield error_msg
+                                    return  # End the generation
+                                    
                                 raise aiohttp.ClientError("Model not ready")
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                         logger.info(f"Model cold start detected: {str(e)}")
@@ -326,6 +370,18 @@ class OllamaClient(BaseModelClient):
                                 logger.error("Failed to pull model")
                                 debug_log("Failed to pull model")
                                 self._model_loading = False  # Reset flag on failure
+                                
+                                # Check if this is a 404 Not Found error
+                                if response.status == 404:
+                                    error_text = await response.text()
+                                    debug_log(f"404 error details: {error_text}")
+                                    # This is likely a model not found in registry
+                                    error_msg = f"Error: Model '{model}' not found in the Ollama registry. Please check if the model name is correct or try a different model."
+                                    logger.error(error_msg)
+                                    # Instead of raising a custom error, yield the message and return
+                                    yield error_msg
+                                    return
+                                    
                                 raise Exception("Failed to pull model")
                             logger.info("Model pulled successfully")
                             debug_log("Model pulled successfully")
@@ -387,17 +443,34 @@ class OllamaClient(BaseModelClient):
                                 if chunk_str.startswith('{') and chunk_str.endswith('}'):
                                     try:
                                         data = json.loads(chunk_str)
-                                        if isinstance(data, dict) and "response" in data:
-                                            response_text = data["response"]
-                                            if response_text:  # Only yield non-empty responses
-                                                has_yielded_content = True
-                                                chunk_length = len(response_text)
-                                                # Only log occasionally to reduce console spam
-                                                if chunk_length % 20 == 0:
-                                                    debug_log(f"Yielding chunk of length: {chunk_length}")
-                                                yield response_text
+                                        if isinstance(data, dict):
+                                            # Check for error in the chunk
+                                            if "error" in data:
+                                                error_msg = data.get("error", "")
+                                                debug_log(f"Ollama API error in chunk: {error_msg}")
+                                                
+                                                # Handle model loading state
+                                                if "loading model" in error_msg.lower():
+                                                    # Yield a user-friendly message and keep trying
+                                                    yield "The model is still loading. Please wait a moment..."
+                                                    # Add delay before continuing
+                                                    await asyncio.sleep(2)
+                                                    continue
+                                            
+                                            # Process normal response
+                                            if "response" in data:
+                                                response_text = data["response"]
+                                                if response_text:  # Only yield non-empty responses
+                                                    has_yielded_content = True
+                                                    chunk_length = len(response_text)
+                                                    # Only log occasionally to reduce console spam
+                                                    if chunk_length % 20 == 0:
+                                                        debug_log(f"Yielding chunk of length: {chunk_length}")
+                                                    yield response_text
+                                            else:
+                                                debug_log(f"JSON chunk missing 'response' key: {chunk_str[:100]}")
                                         else:
-                                            debug_log(f"JSON chunk missing 'response' key: {chunk_str[:100]}")
+                                            debug_log(f"JSON chunk is not a dict: {chunk_str[:100]}")
                                     except json.JSONDecodeError:
                                         debug_log(f"JSON decode error for chunk: {chunk_str[:100]}")
                                 else:

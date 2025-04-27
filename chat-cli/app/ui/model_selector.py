@@ -247,6 +247,11 @@ class ModelSelector(Container):
         """Handle select changes"""
         if event.select.id == "provider-select":
             self.selected_provider = event.value
+            
+            # IMPORTANT: Clear any cached client
+            if hasattr(self.app, 'cached_client'):
+                self.app.cached_client = None
+                
             # Update model options
             model_select = self.query_one("#model-select", Select)
             model_options = await self._get_model_options(self.selected_provider)

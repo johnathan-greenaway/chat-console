@@ -1,82 +1,136 @@
 #!/usr/bin/env python3
 """
-Diagnostic version of Terminal Chat to isolate UI interactivity issues
+Diagnostic script for chat-cli to debug streaming response issues.
 """
-from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Button, Input, Label, Header, Footer, Static
+import os
+import sys
+import asyncio
+import logging
+from app.main import SimpleChatApp
+from app.api.base import BaseModelClient
+from app.api.openai import OpenAIClient
+from app.api.anthropic import AnthropicClient
+from app.api.ollama import OllamaClient
+from app.utils import generate_streaming_response
 
-class DiagnosticApp(App):
-    """Simplified Terminal Chat app to diagnose UI interactivity issues"""
+# Set up logging to console
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("diagnostic")
+
+# Debug log function
+def debug_log(msg):
+    logger.debug(msg)
+    print(f"DEBUG: {msg}")
+
+async def test_streaming_response():
+    """Test streaming response with a simple prompt."""
+    print("Starting diagnostic test for streaming response...")
     
-    TITLE = "Terminal Chat Diagnostic"
-    SUB_TITLE = "Testing UI interactivity"
-    
-    BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("escape", "quit", "Quit"),
-        ("ctrl+c", "quit", "Quit"),
-    ]
-    
-    def compose(self) -> ComposeResult:
-        """Create a simple test UI layout"""
-        yield Header()
+    # Test with OpenAI first (most reliable)
+    try:
+        print("\n=== Testing OpenAI Streaming ===")
+        client = await OpenAIClient.create()
         
-        with Vertical():
-            yield Label("This is a diagnostic version to test UI interactivity")
-            yield Label("Please try interacting with the buttons and input field below:")
-            
-            with Container(id="message-container"):
-                yield Static("Messages will appear here", id="message-display")
-            
-            with Horizontal():
-                yield Input(placeholder="Type here to test input...", id="test-input")
-                yield Button("Send", id="send-button", variant="primary")
-                yield Button("Clear", id="clear-button", variant="warning")
+        # Simple callback to print chunks
+        async def callback(content):
+            print(f"CALLBACK: Received content length: {len(content)}")
+            print(f"CALLBACK CONTENT: '{content[:50]}...'")
         
-        yield Footer()
-    
-    def on_mount(self) -> None:
-        """Set focus to input on start"""
-        self.query_one("#test-input").focus()
-    
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses"""
-        if event.button.id == "send-button":
-            self.send_message()
-        elif event.button.id == "clear-button":
-            self.clear_messages()
-    
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle input submission"""
-        self.send_message()
-    
-    def send_message(self) -> None:
-        """Add the input text to the message display"""
-        input_widget = self.query_one("#test-input", Input)
-        message = input_widget.value.strip()
+        # Test messages
+        messages = [
+            {"role": "user", "content": "Hello, can you respond with a short greeting?"}
+        ]
         
-        if message:
-            # Get current content
-            display = self.query_one("#message-display", Static)
-            current_content = display.renderable
+        # Create a mock app object with query_one method
+        class MockApp:
+            def query_one(self, selector):
+                class MockElement:
+                    def add_class(self, cls):
+                        print(f"MockApp: add_class({cls})")
+                    def remove_class(self, cls):
+                        print(f"MockApp: remove_class({cls})")
+                    def update(self, content):
+                        print(f"MockApp: update({content})")
+                return MockElement()
             
-            # Add new message
-            new_content = f"{current_content}\n• {message}"
-            display.update(new_content)
-            
-            # Clear input
-            input_widget.value = ""
-            input_widget.focus()
-    
-    def clear_messages(self) -> None:
-        """Clear message display"""
-        display = self.query_one("#message-display", Static)
-        display.update("Messages will appear here")
+            def refresh(self, layout=False):
+                print(f"MockApp: refresh(layout={layout})")
         
-        # Return focus to input
-        self.query_one("#test-input").focus()
+        mock_app = MockApp()
+        
+        # Test streaming
+        print("Starting OpenAI streaming test...")
+        response = await generate_streaming_response(
+            mock_app,
+            messages,
+            "gpt-3.5-turbo",
+            "default",
+            client,
+            callback
+        )
+        
+        print(f"\nFinal response: '{response}'")
+        print("OpenAI streaming test completed")
+        
+    except Exception as e:
+        print(f"Error testing OpenAI streaming: {str(e)}")
+    
+    # Test with Anthropic if available
+    try:
+        print("\n=== Testing Anthropic Streaming ===")
+        client = await AnthropicClient.create()
+        
+        # Test streaming
+        print("Starting Anthropic streaming test...")
+        response = await generate_streaming_response(
+            mock_app,
+            messages,
+            "claude-3-haiku-20240307",
+            "default",
+            client,
+            callback
+        )
+        
+        print(f"\nFinal response: '{response}'")
+        print("Anthropic streaming test completed")
+        
+    except Exception as e:
+        print(f"Error testing Anthropic streaming: {str(e)}")
+    
+    # Test with Ollama if available
+    try:
+        print("\n=== Testing Ollama Streaming ===")
+        client = await OllamaClient.create()
+        
+        # Test streaming
+        print("Starting Ollama streaming test...")
+        response = await generate_streaming_response(
+            mock_app,
+            messages,
+            "gemma:2b",  # Use a small model for quick testing
+            "default",
+            client,
+            callback
+        )
+        
+        print(f"\nFinal response: '{response}'")
+        print("Ollama streaming test completed")
+        
+    except Exception as e:
+        print(f"Error testing Ollama streaming: {str(e)}")
+
+def main():
+    """Run the diagnostic tests."""
+    print("Starting chat-cli diagnostic tests...")
+    
+    # Run streaming response test
+    asyncio.run(test_streaming_response())
+    
+    print("\nDiagnostic tests completed.")
 
 if __name__ == "__main__":
-    app = DiagnosticApp()
-    app.run()
+    main()
