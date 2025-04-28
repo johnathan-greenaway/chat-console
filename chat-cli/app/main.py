@@ -1215,9 +1215,16 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             debug_log(f"State change event from unrelated worker: {event.worker.name}")
 
 
-    def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None: # Keep SimpleChatApp on_model_selector_model_selected
-        """Handle model selection""" # Keep SimpleChatApp on_model_selector_model_selected docstring
-        self.selected_model = event.model_id # Keep SimpleChatApp on_model_selector_model_selected
+    def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None:
+        """Handle model selection"""
+        self.selected_model = event.model_id
+        
+        # Store the selected provider for use in client resolution
+        model_selector = self.query_one(ModelSelector)
+        if model_selector:
+            self.selected_provider = model_selector.selected_provider
+            log(f"Stored selected provider: {self.selected_provider} for model: {self.selected_model}")
+        
         self.update_app_info()  # Update the displayed model info
 
     def on_style_selector_style_selected(self, event: StyleSelector.StyleSelected) -> None: # Keep SimpleChatApp on_style_selector_style_selected

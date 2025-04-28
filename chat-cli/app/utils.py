@@ -774,6 +774,13 @@ def resolve_model_id(model_id_or_name: str) -> str:
         "o4-vision": "04-vision"
     }
     
+    # Check for more complex typo patterns with dates
+    if input_lower.startswith("o1-") and "-202" in input_lower:
+        corrected = "01" + input_lower[2:]
+        logger.info(f"Converting '{input_lower}' to '{corrected}' (letter 'o' to zero '0')")
+        input_lower = corrected
+        model_id_or_name = corrected
+    
     if input_lower in typo_corrections:
         corrected = typo_corrections[input_lower]
         logger.info(f"Converting '{input_lower}' to '{corrected}' (letter 'o' to zero '0')")

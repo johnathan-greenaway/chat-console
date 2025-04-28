@@ -3,4 +3,4 @@ Chat CLI
 A command-line interface for chatting with various LLM providers like ChatGPT and Claude.
 """
 
-__version__ = "0.3.991"
+__version__ = "0.3.993"
