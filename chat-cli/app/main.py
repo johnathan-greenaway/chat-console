@@ -643,127 +643,94 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         # Update UI with user message first
         await self.update_messages_ui()
 
-        # If this is the first message and dynamic titles are enabled, generate one
-        # Only attempt title generation if the message has sufficient content (at least 3 characters)
+        # If this is the first message and dynamic titles are enabled, start background title generation
         if is_first_message and self.current_conversation and CONFIG.get("generate_dynamic_titles", True) and len(content) >= 3:
-            log("First message detected, generating title...")
-            print(f"First message detected, generating conversation title for: {content[:30]}...")
-            debug_log(f"First message detected with length {len(content)}, generating conversation title")
-            
-            # Show loading indicator for title generation
-            loading = self.query_one("#loading-indicator")
-            loading.remove_class("hidden")
-            loading.update("🔤 Generating title...")
+            log("First message detected, starting background title generation...")
+            debug_log(f"First message detected with length {len(content)}, creating background title task")
+            asyncio.create_task(self._generate_title_background(content))
 
-            try:
-                # Get appropriate client
-                model = self.selected_model
-                print(f"Using model for title generation: {model}")
-                debug_log(f"Selected model for title generation: '{model}'")
-                
-                # Check if model is valid
-                if not model:
-                    debug_log("Model is empty, falling back to default")
-                    # Fallback to a safe default model - preferring OpenAI if key exists
-                    if OPENAI_API_KEY:
-                        model = "gpt-3.5-turbo"
-                        debug_log("Falling back to OpenAI gpt-3.5-turbo for title generation")
-                    elif ANTHROPIC_API_KEY:
-                        model = "claude-3-haiku-20240307"  # Updated to newer Claude model
-                        debug_log("Falling back to Anthropic Claude 3 Haiku for title generation")
-                    else:
-                        # Last resort - use a common Ollama model
-                        model = "llama3"  # Common default
-                        debug_log("Falling back to Ollama model: llama3")
-
-                debug_log(f"Getting client for model: {model}")
-                client = await BaseModelClient.get_client_for_model(model)
-                
-                if client is None:
-                    debug_log(f"No client available for model: {model}, trying to initialize")
-                    # Try to determine client type and initialize manually
-                    client_type = BaseModelClient.get_client_type_for_model(model)
-                    if client_type:
-                        debug_log(f"Found client type {client_type.__name__} for {model}, initializing")
-                        try:
-                            client = await client_type.create()
-                            debug_log("Client initialized successfully")
-                        except Exception as init_err:
-                            debug_log(f"Error initializing client: {str(init_err)}")
-                    
-                    if client is None:
-                        debug_log("Could not initialize client, falling back to safer model")
-                        # Try a different model as last resort
-                        if OPENAI_API_KEY:
-                            from app.api.openai import OpenAIClient
-                            client = await OpenAIClient.create()
-                            model = "gpt-3.5-turbo"
-                            debug_log("Falling back to OpenAI for title generation")
-                        elif ANTHROPIC_API_KEY:
-                            from app.api.anthropic import AnthropicClient
-                            client = await AnthropicClient.create()
-                            model = "claude-3-haiku-20240307"  # Updated to newer Claude model
-                            debug_log("Falling back to Anthropic for title generation")
-                        else:
-                            raise Exception("No valid API clients available for title generation")
-
-                # Generate title - make sure we're using the right client for the model
-                print(f"Calling generate_conversation_title with model: {model}")
-                log(f"Calling generate_conversation_title with model: {model}")
-                debug_log(f"Calling generate_conversation_title with model: {model}, client type: {type(client).__name__}")
-                
-                # Double-check that we're using the right client for this model
-                expected_client_type = BaseModelClient.get_client_type_for_model(model)
-                if expected_client_type and not isinstance(client, expected_client_type):
-                    debug_log(f"Warning: Client type mismatch. Expected {expected_client_type.__name__}, got {type(client).__name__}")
-                    debug_log("Creating new client with correct type")
-                    client = await BaseModelClient.get_client_for_model(model)
-                
-                title = await generate_conversation_title(content, model, client)
-                debug_log(f"Generated title: {title}")
-                log(f"Generated title: {title}")
-                print(f"Generated title: {title}")
-
-                # Update conversation title in database
-                self.db.update_conversation(
-                    self.current_conversation.id,
-                    title=title
-                )
-
-                # Update UI title
-                title_widget = self.query_one("#conversation-title", Static)
-                title_widget.update(title)
-
-                # Update conversation object
-                self.current_conversation.title = title
-                
-                # DO NOT update the selected model here - keep the user's original selection
-                # This was causing issues with model mixing
-                debug_log(f"Keeping original selected model: '{self.selected_model}'")
-
-                self.notify(f"Conversation title set to: {title}", severity="information", timeout=3)
-
-            except Exception as e:
-                debug_log(f"Failed to generate title: {str(e)}")
-                log.error(f"Failed to generate title: {str(e)}")
-                print(f"Failed to generate title: {str(e)}")
-                self.notify(f"Failed to generate title: {str(e)}", severity="warning")
-            finally:
-                # Hide loading indicator *only if* AI response generation isn't about to start
-                if not self.is_generating:
-                     loading.add_class("hidden")
-                     
-                # Small delay to ensure state is updated
-                await asyncio.sleep(0.1)
-                
-        # Log just before generate_response call
+        # Start main response generation immediately
         debug_log(f"About to call generate_response with model: '{self.selected_model}'")
-                
-        # Generate AI response (will set self.is_generating and handle loading indicator)
         await self.generate_response()
 
         # Focus back on input
         input_widget.focus()
+
+    async def _generate_title_background(self, content: str) -> None:
+        """Generates the conversation title in the background."""
+        if not self.current_conversation or not CONFIG.get("generate_dynamic_titles", True):
+            return
+
+        log("Starting background title generation...")
+        debug_log(f"Background title generation started for content: {content[:30]}...")
+
+        try:
+            # Use the logic from generate_conversation_title in utils.py
+            # It already prioritizes faster models (OpenAI/Anthropic)
+            # We need a client instance here. Let's get one based on priority.
+            title_client = None
+            title_model = None
+            from app.config import OPENAI_API_KEY, ANTHROPIC_API_KEY
+            from app.api.base import BaseModelClient
+
+            # Determine title client and model based on available keys
+            if OPENAI_API_KEY:
+                from app.api.openai import OpenAIClient
+                title_client = await OpenAIClient.create()
+                title_model = "gpt-3.5-turbo"
+                debug_log("Using OpenAI for background title generation")
+            elif ANTHROPIC_API_KEY:
+                from app.api.anthropic import AnthropicClient
+                title_client = await AnthropicClient.create()
+                title_model = "claude-3-haiku-20240307"
+                debug_log("Using Anthropic for background title generation")
+            else:
+                # Fallback to the currently selected model's client if no API keys
+                selected_model_resolved = resolve_model_id(self.selected_model)
+                title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
+                title_model = selected_model_resolved
+                debug_log(f"Using selected model's client ({type(title_client).__name__}) for background title generation")
+
+            if not title_client or not title_model:
+                raise Exception("Could not determine a client/model for title generation.")
+
+            # Call the utility function
+            from app.utils import generate_conversation_title # Import locally if needed
+            new_title = await generate_conversation_title(content, title_model, title_client)
+            debug_log(f"Background generated title: {new_title}")
+
+            # Check if title generation returned the default or a real title
+            if new_title and not new_title.startswith("Conversation ("):
+                # Update conversation title in database
+                self.db.update_conversation(
+                    self.current_conversation.id,
+                    title=new_title
+                )
+
+                # Update UI title (if conversation hasn't changed)
+                # Check if the current conversation ID still matches
+                # Need to fetch the conversation again to be sure, or check against self.current_conversation.id
+                current_conv_id = self.current_conversation.id if self.current_conversation else None
+                if current_conv_id and self.db.get_conversation(current_conv_id): # Check if conversation still exists
+                    # Check if the app's current conversation is still the same one
+                    if self.current_conversation and self.current_conversation.id == current_conv_id:
+                        title_widget = self.query_one("#conversation-title", Static)
+                        title_widget.update(new_title)
+                        self.current_conversation.title = new_title # Update local object too
+                        log(f"Background title update successful: {new_title}")
+                        # Maybe a subtle notification? Optional.
+                        # self.notify(f"Title set: {new_title}", severity="information", timeout=2)
+                    else:
+                        log("Conversation changed before background title update could apply.")
+                else:
+                    log(f"Conversation with ID {current_conv_id} no longer exists. Skipping title update.")
+            else:
+                log(f"Background title generation resulted in default or empty title: '{new_title}'. Not updating.")
+
+        except Exception as e:
+            debug_log(f"Background title generation failed: {str(e)}")
+            log.error(f"Background title generation failed: {str(e)}")
+            # Do not notify the user, just log the error.
 
     async def generate_response(self) -> None:
         """Generate an AI response using a non-blocking worker with fallback."""

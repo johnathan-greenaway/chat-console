@@ -33,15 +33,15 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     # Try-except the entire function to ensure we always return a title
     try:
         # Pick a reliable title generation model - prefer OpenAI if available
-        from ..config import OPENAI_API_KEY, ANTHROPIC_API_KEY
+        from app.config import OPENAI_API_KEY, ANTHROPIC_API_KEY
         
         if OPENAI_API_KEY:
-            from ..api.openai import OpenAIClient
+            from app.api.openai import OpenAIClient
             title_client = await OpenAIClient.create()
             title_model = "gpt-3.5-turbo"
             debug_log("Using OpenAI for title generation")
         elif ANTHROPIC_API_KEY:
-            from ..api.anthropic import AnthropicClient
+            from app.api.anthropic import AnthropicClient
             title_client = await AnthropicClient.create() 
             title_model = "claude-3-haiku-20240307"
             debug_log("Using Anthropic for title generation")
