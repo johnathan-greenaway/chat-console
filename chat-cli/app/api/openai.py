@@ -53,12 +53,18 @@ class OpenAIClient(BaseModelClient):
         """Generate a text completion using OpenAI"""
         processed_messages = self._prepare_messages(messages, style)
         
-        response = await self.client.chat.completions.create(
-            model=model,
-            messages=processed_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        # Create parameters dict, omitting max_tokens if it's None
+        params = {
+            "model": model,
+            "messages": processed_messages,
+            "temperature": temperature,
+        }
+        
+        # Only add max_tokens if it's not None
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+        
+        response = await self.client.chat.completions.create(**params)
         
         return response.choices[0].message.content
     
@@ -113,13 +119,20 @@ class OpenAIClient(BaseModelClient):
             
             while retry_count <= max_retries:
                 try:
-                    stream = await self.client.chat.completions.create(
-                        model=model,
-                        messages=api_messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        stream=True,
-                    )
+                    # Create parameters dict, omitting max_tokens if it's None
+                    params = {
+                        "model": model,
+                        "messages": api_messages,
+                        "temperature": temperature,
+                        "stream": True,
+                    }
+                    
+                    # Only add max_tokens if it's not None
+                    if max_tokens is not None:
+                        params["max_tokens"] = max_tokens
+                    
+                    debug_log(f"OpenAI: creating stream with params: {params}")
+                    stream = await self.client.chat.completions.create(**params)
                     
                     # Store the stream for potential cancellation
                     self._active_stream = stream
