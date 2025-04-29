@@ -33,15 +33,15 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     # Try-except the entire function to ensure we always return a title
     try:
         # Pick a reliable title generation model - prefer OpenAI if available
-        from ..config import OPENAI_API_KEY, ANTHROPIC_API_KEY
+        from app.config import OPENAI_API_KEY, ANTHROPIC_API_KEY
         
         if OPENAI_API_KEY:
-            from ..api.openai import OpenAIClient
+            from app.api.openai import OpenAIClient
             title_client = await OpenAIClient.create()
             title_model = "gpt-3.5-turbo"
             debug_log("Using OpenAI for title generation")
         elif ANTHROPIC_API_KEY:
-            from ..api.anthropic import AnthropicClient
+            from app.api.anthropic import AnthropicClient
             title_client = await AnthropicClient.create() 
             title_model = "claude-3-haiku-20240307"
             debug_log("Using Anthropic for title generation")
@@ -773,6 +773,13 @@ def resolve_model_id(model_id_or_name: str) -> str:
         "o4-preview": "04-preview",
         "o4-vision": "04-vision"
     }
+    
+    # Check for more complex typo patterns with dates
+    if input_lower.startswith("o1-") and "-202" in input_lower:
+        corrected = "01" + input_lower[2:]
+        logger.info(f"Converting '{input_lower}' to '{corrected}' (letter 'o' to zero '0')")
+        input_lower = corrected
+        model_id_or_name = corrected
     
     if input_lower in typo_corrections:
         corrected = typo_corrections[input_lower]

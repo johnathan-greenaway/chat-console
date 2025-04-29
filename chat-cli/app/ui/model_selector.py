@@ -251,6 +251,11 @@ class ModelSelector(Container):
             # IMPORTANT: Clear any cached client
             if hasattr(self.app, 'cached_client'):
                 self.app.cached_client = None
+            
+            # Store the selected provider in the app instance for client resolution
+            if hasattr(self.app, 'selected_provider'):
+                self.app.selected_provider = self.selected_provider
+                logger.info(f"Updated app.selected_provider to: {self.selected_provider}")
                 
             # Update model options
             model_select = self.query_one("#model-select", Select)

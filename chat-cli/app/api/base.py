@@ -61,6 +61,26 @@ class BaseModelClient(ABC):
             logger.info(f"Found model in config with provider: {provider}")
         # For custom models, try to infer provider
         else:
+            # Check if this model was selected from a specific provider in the UI
+            # This would be stored in a temporary attribute on the app instance
+            try:
+                from ..main import SimpleChatApp
+                import inspect
+                frame = inspect.currentframe()
+                while frame:
+                    if 'self' in frame.f_locals and isinstance(frame.f_locals['self'], SimpleChatApp):
+                        app_instance = frame.f_locals['self']
+                        if hasattr(app_instance, 'selected_provider'):
+                            provider = app_instance.selected_provider
+                            logger.info(f"Using provider from UI selection: {provider}")
+                            return OllamaClient if provider == "ollama" else (
+                                   OpenAIClient if provider == "openai" else 
+                                   AnthropicClient if provider == "anthropic" else None)
+                    frame = frame.f_back
+            except Exception as e:
+                logger.error(f"Error checking for UI provider selection: {str(e)}")
+            
+            # If we couldn't get the provider from the UI, infer it from the model name
             # Check for common OpenAI model patterns or prefixes
             if (model_name_lower.startswith(("gpt-", "text-", "davinci")) or 
                 "gpt" in model_name_lower or 
@@ -122,34 +142,57 @@ class BaseModelClient(ABC):
                 raise Exception(f"Provider '{provider}' is not available. Please check your configuration.")
         # For custom models, try to infer provider
         else:
-            # Check for common OpenAI model patterns or prefixes
-            if (model_name_lower.startswith(("gpt-", "text-", "davinci")) or 
-                "gpt" in model_name_lower or 
-                model_name_lower in ["04-mini", "04", "04-turbo", "04-vision"]):
-                if not AVAILABLE_PROVIDERS["openai"]:
-                    raise Exception("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
-                provider = "openai"
-                logger.info(f"Identified {model_name} as an OpenAI model")
-            # Then check for Anthropic models - these should ALWAYS use Anthropic client
-            elif any(name in model_name_lower for name in ["claude", "anthropic"]):
-                if not AVAILABLE_PROVIDERS["anthropic"]:
-                    raise Exception("Anthropic API key not found. Please set ANTHROPIC_API_KEY environment variable.")
-                provider = "anthropic"
-                logger.info(f"Identified as Anthropic model: {model_name}")
-            # Then try Ollama for known model names or if selected from Ollama UI
-            elif (any(name in model_name_lower for name in ["llama", "mistral", "codellama", "gemma"]) or
-                  model_name in [m["id"] for m in CONFIG.get("ollama_models", [])]):
-                if not AVAILABLE_PROVIDERS["ollama"]:
-                    raise Exception("Ollama server is not running. Please start Ollama and try again.")
-                provider = "ollama"
-                logger.info(f"Identified as Ollama model: {model_name}")
-            else:
-                # Default to Ollama for unknown models
-                if AVAILABLE_PROVIDERS["ollama"]:
+            # Check if this model was selected from a specific provider in the UI
+            provider = None
+            try:
+                from ..main import SimpleChatApp
+                import inspect
+                frame = inspect.currentframe()
+                while frame:
+                    if 'self' in frame.f_locals and isinstance(frame.f_locals['self'], SimpleChatApp):
+                        app_instance = frame.f_locals['self']
+                        if hasattr(app_instance, 'selected_provider'):
+                            provider = app_instance.selected_provider
+                            logger.info(f"Using provider from UI selection: {provider}")
+                            break
+                    frame = frame.f_back
+            except Exception as e:
+                logger.error(f"Error checking for UI provider selection: {str(e)}")
+            
+            # If we couldn't get the provider from the UI, infer it from the model name
+            if not provider:
+                # Check for common OpenAI model patterns or prefixes
+                if (model_name_lower.startswith(("gpt-", "text-", "davinci")) or 
+                    "gpt" in model_name_lower or 
+                    model_name_lower in ["04-mini", "04", "04-turbo", "04-vision"]):
+                    if not AVAILABLE_PROVIDERS["openai"]:
+                        raise Exception("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
+                    provider = "openai"
+                    logger.info(f"Identified {model_name} as an OpenAI model")
+                # Then check for Anthropic models - these should ALWAYS use Anthropic client
+                elif any(name in model_name_lower for name in ["claude", "anthropic"]):
+                    if not AVAILABLE_PROVIDERS["anthropic"]:
+                        raise Exception("Anthropic API key not found. Please set ANTHROPIC_API_KEY environment variable.")
+                    provider = "anthropic"
+                    logger.info(f"Identified as Anthropic model: {model_name}")
+                # Then try Ollama for known model names or if selected from Ollama UI
+                elif (any(name in model_name_lower for name in ["llama", "mistral", "codellama", "gemma"]) or
+                      model_name in [m["id"] for m in CONFIG.get("ollama_models", [])]):
+                    if not AVAILABLE_PROVIDERS["ollama"]:
+                        raise Exception("Ollama server is not running. Please start Ollama and try again.")
                     provider = "ollama"
-                    logger.info(f"Unknown model type, defaulting to Ollama: {model_name}")
+                    logger.info(f"Identified as Ollama model: {model_name}")
                 else:
-                    raise Exception(f"Unknown model: {model_name}")
+                    # Default to Ollama for unknown models
+                    if AVAILABLE_PROVIDERS["ollama"]:
+                        provider = "ollama"
+                        logger.info(f"Unknown model type, defaulting to Ollama: {model_name}")
+                    else:
+                        raise Exception(f"Unknown model: {model_name}")
+            
+            # Verify the selected provider is available
+            if provider and not AVAILABLE_PROVIDERS.get(provider, False):
+                raise Exception(f"Provider '{provider}' is not available. Please check your configuration.")
         
         # Return appropriate client
         if provider == "ollama":
