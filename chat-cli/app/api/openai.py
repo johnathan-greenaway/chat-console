@@ -53,14 +53,38 @@ class OpenAIClient(BaseModelClient):
         """Generate a text completion using OpenAI"""
         processed_messages = self._prepare_messages(messages, style)
         
-        response = await self.client.chat.completions.create(
-            model=model,
-            messages=processed_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        # Check if this is a reasoning model (o-series)
+        is_reasoning_model = model.startswith(("o1", "o3", "o4")) or model in ["o1", "o3", "o4-mini"]
         
-        return response.choices[0].message.content
+        # Use the Responses API for reasoning models
+        if is_reasoning_model:
+            # Create parameters dict for the Responses API
+            params = {
+                "model": model,
+                "input": processed_messages,
+                "reasoning": {"effort": "medium"},  # Default to medium effort
+            }
+            
+            # Only add max_tokens if it's not None
+            if max_tokens is not None:
+                params["max_output_tokens"] = max_tokens
+            
+            response = await self.client.responses.create(**params)
+            return response.output_text
+        else:
+            # Use the Chat Completions API for non-reasoning models
+            params = {
+                "model": model,
+                "messages": processed_messages,
+                "temperature": temperature,
+            }
+            
+            # Only add max_tokens if it's not None
+            if max_tokens is not None:
+                params["max_tokens"] = max_tokens
+            
+            response = await self.client.chat.completions.create(**params)
+            return response.choices[0].message.content
     
     async def generate_stream(self, messages: List[Dict[str, str]], 
                             model: str, 
@@ -76,6 +100,9 @@ class OpenAIClient(BaseModelClient):
             debug_log = lambda msg: None
             
         processed_messages = self._prepare_messages(messages, style)
+        
+        # Check if this is a reasoning model (o-series)
+        is_reasoning_model = model.startswith(("o1", "o3", "o4")) or model in ["o1", "o3", "o4-mini"]
         
         try:
             debug_log(f"OpenAI: preparing {len(processed_messages)} messages for stream")
@@ -113,13 +140,37 @@ class OpenAIClient(BaseModelClient):
             
             while retry_count <= max_retries:
                 try:
-                    stream = await self.client.chat.completions.create(
-                        model=model,
-                        messages=api_messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        stream=True,
-                    )
+                    # Create parameters dict based on model type
+                    if is_reasoning_model:
+                        # Use the Responses API for reasoning models
+                        params = {
+                            "model": model,
+                            "input": api_messages,
+                            "reasoning": {"effort": "medium"},  # Default to medium effort
+                            "stream": True,
+                        }
+                        
+                        # Only add max_tokens if it's not None
+                        if max_tokens is not None:
+                            params["max_output_tokens"] = max_tokens
+                        
+                        debug_log(f"OpenAI: creating reasoning model stream with params: {params}")
+                        stream = await self.client.responses.create(**params)
+                    else:
+                        # Use the Chat Completions API for non-reasoning models
+                        params = {
+                            "model": model,
+                            "messages": api_messages,
+                            "temperature": temperature,
+                            "stream": True,
+                        }
+                        
+                        # Only add max_tokens if it's not None
+                        if max_tokens is not None:
+                            params["max_tokens"] = max_tokens
+                        
+                        debug_log(f"OpenAI: creating chat completion stream with params: {params}")
+                        stream = await self.client.chat.completions.create(**params)
                     
                     # Store the stream for potential cancellation
                     self._active_stream = stream
@@ -144,17 +195,28 @@ class OpenAIClient(BaseModelClient):
                             
                         chunk_count += 1
                         try:
-                            if chunk.choices and hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                                content = chunk.choices[0].delta.content
-                                if content is not None:
-                                    # Ensure we're returning a string
-                                    text = str(content)
-                                    debug_log(f"OpenAI: yielding chunk {chunk_count} of length: {len(text)}")
+                            # Handle different response formats based on model type
+                            if is_reasoning_model:
+                                # For reasoning models using the Responses API
+                                if hasattr(chunk, 'output_text') and chunk.output_text is not None:
+                                    text = str(chunk.output_text)
+                                    debug_log(f"OpenAI reasoning: yielding chunk {chunk_count} of length: {len(text)}")
                                     yield text
                                 else:
-                                    debug_log(f"OpenAI: skipping None content chunk {chunk_count}")
+                                    debug_log(f"OpenAI reasoning: skipping chunk {chunk_count} with missing content")
                             else:
-                                debug_log(f"OpenAI: skipping chunk {chunk_count} with missing content")
+                                # For regular models using the Chat Completions API
+                                if chunk.choices and hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
+                                    content = chunk.choices[0].delta.content
+                                    if content is not None:
+                                        # Ensure we're returning a string
+                                        text = str(content)
+                                        debug_log(f"OpenAI: yielding chunk {chunk_count} of length: {len(text)}")
+                                        yield text
+                                    else:
+                                        debug_log(f"OpenAI: skipping None content chunk {chunk_count}")
+                                else:
+                                    debug_log(f"OpenAI: skipping chunk {chunk_count} with missing content")
                         except Exception as chunk_error:
                             debug_log(f"OpenAI: error processing chunk {chunk_count}: {str(chunk_error)}")
                             # Skip problematic chunks but continue processing
@@ -208,11 +270,32 @@ class OpenAIClient(BaseModelClient):
             for model in models_response.data:
                 # Use 'id' as both id and name for now; can enhance with more info if needed
                 models.append({"id": model.id, "name": model.id})
+            
+            # Add reasoning models which might not be in the models list
+            reasoning_models = [
+                {"id": "o1", "name": "o1 (Reasoning)"},
+                {"id": "o1-mini", "name": "o1-mini (Reasoning)"},
+                {"id": "o3", "name": "o3 (Reasoning)"},
+                {"id": "o3-mini", "name": "o3-mini (Reasoning)"},
+                {"id": "o4-mini", "name": "o4-mini (Reasoning)"}
+            ]
+            
+            # Add reasoning models if they're not already in the list
+            existing_ids = {model["id"] for model in models}
+            for reasoning_model in reasoning_models:
+                if reasoning_model["id"] not in existing_ids:
+                    models.append(reasoning_model)
+                    
             return models
         except Exception as e:
             # Fallback to a static list if API call fails
             return [
                 {"id": "gpt-3.5-turbo", "name": "gpt-3.5-turbo"},
                 {"id": "gpt-4", "name": "gpt-4"},
-                {"id": "gpt-4-turbo", "name": "gpt-4-turbo"}
+                {"id": "gpt-4-turbo", "name": "gpt-4-turbo"},
+                {"id": "o1", "name": "o1 (Reasoning)"},
+                {"id": "o1-mini", "name": "o1-mini (Reasoning)"},
+                {"id": "o3", "name": "o3 (Reasoning)"},
+                {"id": "o3-mini", "name": "o3-mini (Reasoning)"},
+                {"id": "o4-mini", "name": "o4-mini (Reasoning)"}
             ]
