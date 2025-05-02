@@ -65,12 +65,25 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
         
         # Generate title
         debug_log(f"Sending title generation request to {title_model}")
-        title = await title_client.generate_completion(
-            messages=title_prompt,
-            model=title_model,
-            temperature=0.7,
-            max_tokens=60
-        )
+        
+        # Check if this is a reasoning model (o-series)
+        is_reasoning_model = title_model.startswith(("o1", "o3", "o4")) or title_model in ["o1", "o3", "o4-mini"]
+        
+        if is_reasoning_model:
+            # For reasoning models, don't include temperature
+            title = await title_client.generate_completion(
+                messages=title_prompt,
+                model=title_model,
+                max_tokens=60
+            )
+        else:
+            # For non-reasoning models, include temperature
+            title = await title_client.generate_completion(
+                messages=title_prompt,
+                model=title_model,
+                temperature=0.7,
+                max_tokens=60
+            )
         
         # Sanitize the title
         title = title.strip().strip('"\'').strip()
@@ -755,7 +768,13 @@ def resolve_model_id(model_id_or_name: str) -> str:
         "35-turbo": "gpt-3.5-turbo",
         "35": "gpt-3.5-turbo",
         "4.1-mini": "gpt-4.1-mini",  # Add support for gpt-4.1-mini
-        "4.1": "gpt-4.1"  # Add support for gpt-4.1
+        "4.1": "gpt-4.1",  # Add support for gpt-4.1
+        # Add support for reasoning models
+        "o1": "o1",
+        "o1-mini": "o1-mini",
+        "o3": "o3",
+        "o3-mini": "o3-mini",
+        "o4-mini": "o4-mini"
     }
     
     if input_lower in openai_model_aliases:
@@ -765,23 +784,26 @@ def resolve_model_id(model_id_or_name: str) -> str:
     
     # Special case handling for common typos and model name variations
     typo_corrections = {
-        "o4-mini": "04-mini",
-        "o1": "01",
-        "o1-mini": "01-mini",
-        "o1-preview": "01-preview",
-        "o4": "04",
-        "o4-preview": "04-preview",
-        "o4-vision": "04-vision"
+        # Keep reasoning models as-is, don't convert 'o' to '0'
+        # "o4-mini": "04-mini",
+        # "o1": "01",
+        # "o1-mini": "01-mini",
+        # "o1-preview": "01-preview",
+        # "o4": "04",
+        # "o4-preview": "04-preview",
+        # "o4-vision": "04-vision"
     }
     
+    # Don't convert reasoning model IDs that start with 'o'
     # Check for more complex typo patterns with dates
-    if input_lower.startswith("o1-") and "-202" in input_lower:
+    if input_lower.startswith("o1-") and "-202" in input_lower and not any(input_lower == model_id for model_id in ["o1", "o1-mini", "o3", "o3-mini", "o4-mini"]):
         corrected = "01" + input_lower[2:]
         logger.info(f"Converting '{input_lower}' to '{corrected}' (letter 'o' to zero '0')")
         input_lower = corrected
         model_id_or_name = corrected
     
-    if input_lower in typo_corrections:
+    # Only apply typo corrections if not a reasoning model
+    if input_lower in typo_corrections and not any(input_lower == model_id for model_id in ["o1", "o1-mini", "o3", "o3-mini", "o4-mini"]):
         corrected = typo_corrections[input_lower]
         logger.info(f"Converting '{input_lower}' to '{corrected}' (letter 'o' to zero '0')")
         input_lower = corrected
