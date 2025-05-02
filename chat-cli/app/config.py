@@ -52,6 +52,31 @@ DEFAULT_CONFIG = {
             "max_tokens": 8192,
             "display_name": "GPT-4"
         },
+        "o1": {
+            "provider": "openai",
+            "max_tokens": 128000,
+            "display_name": "o1 (Reasoning)"
+        },
+        "o1-mini": {
+            "provider": "openai",
+            "max_tokens": 128000,
+            "display_name": "o1-mini (Reasoning)"
+        },
+        "o3": {
+            "provider": "openai",
+            "max_tokens": 128000,
+            "display_name": "o3 (Reasoning)"
+        },
+        "o3-mini": {
+            "provider": "openai",
+            "max_tokens": 128000,
+            "display_name": "o3-mini (Reasoning)"
+        },
+        "o4-mini": {
+            "provider": "openai",
+            "max_tokens": 128000,
+            "display_name": "o4-mini (Reasoning)"
+        },
         # Use the corrected keys from anthropic.py
         "claude-3-opus-20240229": {
             "provider": "anthropic",

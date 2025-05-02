@@ -1,4 +1,5 @@
-# Chat CLI
+
+c# Chat CLI
 
 A comprehensive command-line interface for chatting with various AI language models. This application allows you to interact with different LLM providers through an intuitive terminal-based interface.
 
@@ -7,6 +8,7 @@ A comprehensive command-line interface for chatting with various AI language mod
 - Interactive terminal UI with Textual library
 - Support for multiple AI models:
   - OpenAI models (GPT-3.5, GPT-4)
+  - OpenAI reasoning models (o1, o1-mini, o3, o3-mini, o4-mini)
   - Anthropic models (Claude 3 Opus, Sonnet, Haiku)
 - Conversation history with search functionality
 - Customizable response styles (concise, detailed, technical, friendly)
@@ -40,6 +42,26 @@ Run the application:
 ```
 chat-cli
 ```
+
+### Testing Reasoning Models
+
+To test the OpenAI reasoning models implementation, you can use the included test script:
+```
+./test_reasoning.py
+```
+
+This script will test both completion and streaming with the available reasoning models.
+
+### About OpenAI Reasoning Models
+
+OpenAI's reasoning models (o1, o3, o4-mini, etc.) are LLMs trained with reinforcement learning to perform reasoning. These models:
+
+- Think before they answer, producing a long internal chain of thought
+- Excel in complex problem solving, coding, scientific reasoning, and multi-step planning
+- Use "reasoning tokens" to work through problems step by step before providing a response
+- Support different reasoning effort levels (low, medium, high)
+
+The implementation in this CLI supports both standard completions and streaming with these models.
 
 ### Keyboard Shortcuts
 

@@ -82,9 +82,9 @@ class BaseModelClient(ABC):
             
             # If we couldn't get the provider from the UI, infer it from the model name
             # Check for common OpenAI model patterns or prefixes
-            if (model_name_lower.startswith(("gpt-", "text-", "davinci")) or 
+            if (model_name_lower.startswith(("gpt-", "text-", "davinci", "o1", "o3", "o4")) or 
                 "gpt" in model_name_lower or 
-                model_name_lower in ["04-mini", "04", "04-turbo", "04-vision"]):
+                model_name_lower in ["04-mini", "04", "04-turbo", "04-vision", "o1", "o3", "o4-mini"]):
                 provider = "openai"
                 logger.info(f"Identified {model_name} as an OpenAI model")
             # Then check for Anthropic models - these should ALWAYS use Anthropic client
@@ -162,9 +162,9 @@ class BaseModelClient(ABC):
             # If we couldn't get the provider from the UI, infer it from the model name
             if not provider:
                 # Check for common OpenAI model patterns or prefixes
-                if (model_name_lower.startswith(("gpt-", "text-", "davinci")) or 
+                if (model_name_lower.startswith(("gpt-", "text-", "davinci", "o1", "o3", "o4")) or 
                     "gpt" in model_name_lower or 
-                    model_name_lower in ["04-mini", "04", "04-turbo", "04-vision"]):
+                    model_name_lower in ["04-mini", "04", "04-turbo", "04-vision", "o1", "o3", "o4-mini"]):
                     if not AVAILABLE_PROVIDERS["openai"]:
                         raise Exception("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
                     provider = "openai"
