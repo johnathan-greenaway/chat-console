@@ -32,6 +32,11 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     
     # Try-except the entire function to ensure we always return a title
     try:
+        # Check if we're using an Ollama client
+        from app.api.ollama import OllamaClient
+        is_ollama_client = isinstance(client, OllamaClient)
+        debug_log(f"Client is Ollama: {is_ollama_client}")
+        
         # Pick a reliable title generation model - prefer OpenAI if available
         from app.config import OPENAI_API_KEY, ANTHROPIC_API_KEY
         
@@ -46,10 +51,16 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
             title_model = "claude-3-haiku-20240307"
             debug_log("Using Anthropic for title generation")
         else:
-            # Use the passed client if no API keys available
-            title_client = client
-            title_model = model
-            debug_log(f"Using provided {type(client).__name__} for title generation")
+            # For Ollama clients, ensure we have a clean instance to avoid conflicts with preloaded models
+            if is_ollama_client:
+                debug_log("Creating fresh Ollama client instance for title generation")
+                title_client = await OllamaClient.create()
+                title_model = model
+            else:
+                # Use the passed client for other providers
+                title_client = client
+                title_model = model
+            debug_log(f"Using {type(title_client).__name__} for title generation with model {title_model}")
         
         # Create a special prompt for title generation
         title_prompt = [

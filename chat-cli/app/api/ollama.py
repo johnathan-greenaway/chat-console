@@ -149,7 +149,29 @@ class OllamaClient(BaseModelClient):
             style_instructions = self._get_style_instructions(style)
             debug_log(f"Adding style instructions: {style_instructions[:50]}...")
             formatted_messages.append(style_instructions)
+            
+        # Special case for title generation - check if this is a title generation message
+        is_title_generation = False
+        for msg in messages:
+            if msg.get("role") == "system" and "generate a brief, descriptive title" in msg.get("content", "").lower():
+                is_title_generation = True
+                debug_log("Detected title generation prompt")
+                break
         
+        # For title generation, use a direct approach
+        if is_title_generation:
+            debug_log("Using specialized formatting for title generation")
+            # Find the user message containing the input for title generation
+            user_msg = next((msg for msg in messages if msg.get("role") == "user"), None)
+            if user_msg and "content" in user_msg:
+                # Create a direct prompt
+                prompt = "Generate a short descriptive title (maximum 40 characters) for this conversation. ONLY RESPOND WITH THE TITLE FOR THE FOLLOWING MESSAGE:\n\n" + user_msg["content"]
+                debug_log(f"Created title generation prompt: {prompt[:100]}...")
+                return prompt
+            else:
+                debug_log("Could not find user message for title generation, using standard formatting")
+        
+        # Standard processing for normal chat messages
         # Add message content, preserving conversation flow
         for i, msg in enumerate(messages):
             try:

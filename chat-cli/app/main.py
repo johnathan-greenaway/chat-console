@@ -686,29 +686,87 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
             # Determine title client and model based on available keys
             if OPENAI_API_KEY:
+                # For highest success rate, use OpenAI for title generation when available
                 from app.api.openai import OpenAIClient
                 title_client = await OpenAIClient.create()
                 title_model = "gpt-3.5-turbo"
                 debug_log("Using OpenAI for background title generation")
             elif ANTHROPIC_API_KEY:
+                # Next best option is Anthropic
                 from app.api.anthropic import AnthropicClient
                 title_client = await AnthropicClient.create()
                 title_model = "claude-3-haiku-20240307"
                 debug_log("Using Anthropic for background title generation")
             else:
                 # Fallback to the currently selected model's client if no API keys
+                # Get client type first to ensure we correctly identify Ollama models
+                from app.api.ollama import OllamaClient
                 selected_model_resolved = resolve_model_id(self.selected_model)
-                title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
-                title_model = selected_model_resolved
-                debug_log(f"Using selected model's client ({type(title_client).__name__}) for background title generation")
+                client_type = BaseModelClient.get_client_type_for_model(selected_model_resolved)
+                
+                # For Ollama models, special handling is required
+                if client_type == OllamaClient:
+                    debug_log(f"Title generation with Ollama model detected: {selected_model_resolved}")
+                    
+                    # Try common small/fast models first if they exist
+                    try:
+                        # Check if we have any smaller models available for faster title generation
+                        ollama_client = await OllamaClient.create()
+                        available_models = await ollama_client.get_available_models()
+                        small_model_options = ["gemma:2b", "phi3:mini", "llama3:8b", "orca-mini:3b", "phi2"]
+                        
+                        small_model_found = False
+                        for model_name in small_model_options:
+                            if any(model["id"] == model_name for model in available_models):
+                                debug_log(f"Found smaller Ollama model for title generation: {model_name}")
+                                title_model = model_name
+                                small_model_found = True
+                                break
+                                
+                        if not small_model_found:
+                            # Use the current model if no smaller models found
+                            title_model = selected_model_resolved
+                            debug_log(f"No smaller models found, using current model: {title_model}")
+                            
+                        # Always create a fresh client instance to avoid interference with model preloading
+                        title_client = ollama_client
+                        debug_log(f"Created dedicated Ollama client for title generation with model: {title_model}")
+                    except Exception as e:
+                        debug_log(f"Error finding optimized Ollama model for title generation: {str(e)}")
+                        # Fallback to standard approach
+                        title_client = await OllamaClient.create()
+                        title_model = selected_model_resolved
+                else:
+                    # For other providers, use normal client acquisition
+                    title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
+                    title_model = selected_model_resolved
+                    debug_log(f"Using selected model's client ({type(title_client).__name__}) for background title generation")
 
             if not title_client or not title_model:
                 raise Exception("Could not determine a client/model for title generation.")
 
             # Call the utility function
             from app.utils import generate_conversation_title # Import locally if needed
-            new_title = await generate_conversation_title(content, title_model, title_client)
-            debug_log(f"Background generated title: {new_title}")
+            
+            # Add timeout handling for title generation to prevent hangs
+            try:
+                # Create a task with timeout
+                import asyncio
+                title_generation_task = asyncio.create_task(
+                    generate_conversation_title(content, title_model, title_client)
+                )
+                
+                # Wait for completion with timeout (30 seconds)
+                new_title = await asyncio.wait_for(title_generation_task, timeout=30)
+                debug_log(f"Background generated title: {new_title}")
+            except asyncio.TimeoutError:
+                debug_log("Title generation timed out after 30 seconds")
+                # Use default title in case of timeout
+                new_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                # Try to cancel the task
+                if not title_generation_task.done():
+                    title_generation_task.cancel()
+                    debug_log("Cancelled timed out title generation task")
 
             # Check if title generation returned the default or a real title
             if new_title and not new_title.startswith("Conversation ("):
@@ -729,8 +787,8 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         title_widget.update(new_title)
                         self.current_conversation.title = new_title # Update local object too
                         log(f"Background title update successful: {new_title}")
-                        # Maybe a subtle notification? Optional.
-                        # self.notify(f"Title set: {new_title}", severity="information", timeout=2)
+                        # Subtle notification to show title was updated
+                        self.notify(f"Conversation titled: {new_title}", severity="information", timeout=2)
                     else:
                         log("Conversation changed before background title update could apply.")
                 else:
