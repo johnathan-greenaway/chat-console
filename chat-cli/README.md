@@ -1,5 +1,5 @@
 
-c# Chat CLI
+# Chat CLI
 
 A comprehensive command-line interface for chatting with various AI language models. This application allows you to interact with different LLM providers through an intuitive terminal-based interface.
 
