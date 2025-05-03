@@ -151,7 +151,9 @@ DEFAULT_CONFIG = {
     "max_history_items": 100,
     "highlight_code": True,
     "auto_save": True,
-    "generate_dynamic_titles": True
+    "generate_dynamic_titles": True,
+    "ollama_model_preload": True,
+    "ollama_inactive_timeout_minutes": 30
 }
 
 def validate_config(config):

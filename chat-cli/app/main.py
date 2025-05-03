@@ -363,7 +363,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         self.selected_model = resolve_model_id(default_model_from_config)
         self.selected_style = CONFIG["default_style"] # Keep SimpleChatApp __init__
         self.initial_text = initial_text # Keep SimpleChatApp __init__
-        # Removed self.input_widget instance variable
+        
+        # Task for model cleanup
+        self._model_cleanup_task = None
+        
+        # Inactivity threshold in minutes before releasing model resources
+        # Read from config, default to 30 minutes
+        self.MODEL_INACTIVITY_THRESHOLD = CONFIG.get("ollama_inactive_timeout_minutes", 30)
 
     def compose(self) -> ComposeResult: # Modify SimpleChatApp compose
         """Create the simplified application layout."""
@@ -420,6 +426,11 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             pass # Silently ignore if widget not found yet
 
         self.update_app_info()  # Update the model info
+        
+        # Start the background task for model cleanup if model preloading is enabled
+        if CONFIG.get("ollama_model_preload", True):
+            self._model_cleanup_task = asyncio.create_task(self._check_inactive_models())
+            debug_log("Started background task for model cleanup")
 
         # Check API keys and services # Keep SimpleChatApp on_mount
         api_issues = [] # Keep SimpleChatApp on_mount
@@ -1226,6 +1237,94 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             log(f"Stored selected provider: {self.selected_provider} for model: {self.selected_model}")
         
         self.update_app_info()  # Update the displayed model info
+        
+        # Preload the model if it's an Ollama model and preloading is enabled
+        if self.selected_provider == "ollama" and CONFIG.get("ollama_model_preload", True):
+            # Start the background task to preload the model
+            debug_log(f"Starting background task to preload Ollama model: {self.selected_model}")
+            asyncio.create_task(self._preload_ollama_model(self.selected_model))
+    
+    async def _preload_ollama_model(self, model_id: str) -> None:
+        """Preload an Ollama model in the background"""
+        from app.api.ollama import OllamaClient
+        
+        debug_log(f"Preloading Ollama model: {model_id}")
+        # Show a subtle notification to the user
+        self.notify("Preparing model for use...", severity="information", timeout=3)
+        
+        try:
+            # Initialize the client
+            client = await OllamaClient.create()
+            
+            # Update the loading indicator to show model loading
+            loading = self.query_one("#loading-indicator")
+            loading.remove_class("hidden")
+            loading.add_class("model-loading")
+            loading.update(f"⚙️ Loading Ollama model...")
+            
+            # Preload the model
+            success = await client.preload_model(model_id)
+            
+            # Hide the loading indicator
+            loading.add_class("hidden")
+            loading.remove_class("model-loading")
+            
+            if success:
+                debug_log(f"Successfully preloaded model: {model_id}")
+                self.notify(f"Model ready for use", severity="success", timeout=2)
+            else:
+                debug_log(f"Failed to preload model: {model_id}")
+                # No need to notify the user about failure - will happen naturally on first use
+        except Exception as e:
+            debug_log(f"Error preloading model: {str(e)}")
+            # Make sure to hide the loading indicator
+            try:
+                loading = self.query_one("#loading-indicator")
+                loading.add_class("hidden")
+                loading.remove_class("model-loading")
+            except Exception:
+                pass
+                
+    async def _check_inactive_models(self) -> None:
+        """Background task to check for and release inactive models"""
+        from app.api.ollama import OllamaClient
+        
+        # How often to check for inactive models (in seconds)
+        CHECK_INTERVAL = 600  # 10 minutes
+        
+        debug_log(f"Starting inactive model check task with interval {CHECK_INTERVAL}s")
+        
+        try:
+            while True:
+                await asyncio.sleep(CHECK_INTERVAL)
+                
+                debug_log("Checking for inactive models...")
+                
+                try:
+                    # Initialize the client
+                    client = await OllamaClient.create()
+                    
+                    # Get the threshold from instance variable
+                    threshold = getattr(self, "MODEL_INACTIVITY_THRESHOLD", 30)
+                    
+                    # Check and release inactive models
+                    released_models = await client.release_inactive_models(threshold)
+                    
+                    if released_models:
+                        debug_log(f"Released {len(released_models)} inactive models: {released_models}")
+                    else:
+                        debug_log("No inactive models to release")
+                        
+                except Exception as e:
+                    debug_log(f"Error checking for inactive models: {str(e)}")
+                    # Continue loop even if this check fails
+                    
+        except asyncio.CancelledError:
+            debug_log("Model cleanup task cancelled")
+            # Normal task cancellation, clean exit
+        except Exception as e:
+            debug_log(f"Unexpected error in model cleanup task: {str(e)}")
+            # Log but don't crash
 
     def on_style_selector_style_selected(self, event: StyleSelector.StyleSelected) -> None: # Keep SimpleChatApp on_style_selector_style_selected
         """Handle style selection""" # Keep SimpleChatApp on_style_selector_style_selected docstring

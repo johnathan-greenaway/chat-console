@@ -31,8 +31,96 @@ class OllamaClient(BaseModelClient):
         # Track model loading state
         self._model_loading = False
         
+        # Track preloaded models and their last use timestamp
+        self._preloaded_models = {}
+        
+        # Default timeout values (in seconds)
+        self.DEFAULT_TIMEOUT = 30
+        self.MODEL_LOAD_TIMEOUT = 120
+        self.MODEL_PULL_TIMEOUT = 3600  # 1 hour for large models
+        
         # Path to the cached models file
         self.models_cache_path = Path(__file__).parent.parent / "data" / "ollama-models.json"
+        
+    def get_timeout_for_model(self, model_id: str, operation: str = "generate") -> int:
+        """
+        Calculate an appropriate timeout based on model size
+        
+        Parameters:
+        - model_id: The model identifier
+        - operation: The operation type ('generate', 'load', 'pull')
+        
+        Returns:
+        - Timeout in seconds
+        """
+        # Default timeouts by operation
+        default_timeouts = {
+            "generate": self.DEFAULT_TIMEOUT,      # 30s
+            "load": self.MODEL_LOAD_TIMEOUT,       # 2min 
+            "pull": self.MODEL_PULL_TIMEOUT,       # 1h
+            "list": 5,                             # 5s
+            "test": 2                              # 2s
+        }
+        
+        # Parameter size multipliers
+        size_multipliers = {
+            # For models < 3B
+            "1b": 0.5,
+            "2b": 0.7,
+            "3b": 1.0,
+            # For models 3B-10B
+            "5b": 1.2,
+            "6b": 1.3,
+            "7b": 1.5,
+            "8b": 1.7,
+            "9b": 1.8,
+            # For models 10B-20B
+            "13b": 2.0,
+            "14b": 2.0,
+            # For models 20B-50B
+            "27b": 3.0,
+            "34b": 3.5,
+            "40b": 4.0,
+            # For models 50B+
+            "70b": 5.0,
+            "80b": 6.0,
+            "100b": 7.0,
+            "400b": 10.0,
+            "405b": 10.0,
+        }
+        
+        # Get the base timeout for the operation
+        base_timeout = default_timeouts.get(operation, self.DEFAULT_TIMEOUT)
+        
+        # Try to determine the model size from the model ID
+        model_size = "7b"  # Default assumption is 7B parameters
+        model_lower = model_id.lower()
+        
+        # Check for size indicators in the model name
+        for size in size_multipliers.keys():
+            if size in model_lower:
+                model_size = size
+                break
+                
+        # If it's a known large model without size in name
+        if "llama3.1" in model_lower and not any(size in model_lower for size in size_multipliers.keys()):
+            model_size = "8b"  # Default for llama3.1 without size specified
+            
+        # For first generation after model selection, if preloaded, use shorter timeout
+        if operation == "generate" and model_id in self._preloaded_models:
+            # For preloaded models, use a shorter timeout
+            return max(int(base_timeout * 0.7), 20)  # Min 20 seconds
+        
+        # Calculate final timeout with multiplier
+        multiplier = size_multipliers.get(model_size, 1.0)
+        timeout = int(base_timeout * multiplier)
+        
+        # For pull operation, ensure we have a reasonable maximum
+        if operation == "pull":
+            return min(timeout, 7200)  # Max 2 hours
+            
+        logger.info(f"Calculated timeout for {model_id} ({operation}): {timeout}s (base: {base_timeout}s, multiplier: {multiplier})")
+        return timeout
 
     @classmethod
     async def create(cls) -> 'OllamaClient':
@@ -185,6 +273,7 @@ class OllamaClient(BaseModelClient):
             try:
                 async with aiohttp.ClientSession() as session:
                     logger.debug(f"Sending request to {self.base_url}/api/generate")
+                    gen_timeout = self.get_timeout_for_model(model, "generate")
                     async with session.post(
                         f"{self.base_url}/api/generate",
                         json={
@@ -193,12 +282,16 @@ class OllamaClient(BaseModelClient):
                             "temperature": temperature,
                             "stream": False
                         },
-                        timeout=30
+                        timeout=gen_timeout
                     ) as response:
                         response.raise_for_status()
                         data = await response.json()
                         if "response" not in data:
                             raise Exception("Invalid response format from Ollama server")
+                            
+                        # Update the model usage timestamp to keep it hot
+                        self.update_model_usage(model)
+                        
                         return data["response"]
                         
             except aiohttp.ClientConnectorError:
@@ -324,10 +417,11 @@ class OllamaClient(BaseModelClient):
                                 "stream": False
                             }
                             
+                        test_timeout = self.get_timeout_for_model(model, "test")
                         async with session.post(
                             f"{self.base_url}/api/generate",
                             json=test_payload,
-                            timeout=2
+                            timeout=test_timeout
                         ) as response:
                             if response.status != 200:
                                 logger.warning(f"Model test request failed with status {response.status}")
@@ -361,10 +455,11 @@ class OllamaClient(BaseModelClient):
                             debug_log(f"Error preparing pull payload: {str(pull_err)}, using default")
                             pull_payload = {"name": "gemma:2b"}  # Safe default
                             
+                        pull_timeout = self.get_timeout_for_model(model, "pull")
                         async with session.post(
                             f"{self.base_url}/api/pull",
                             json=pull_payload,
-                            timeout=60
+                            timeout=pull_timeout
                         ) as pull_response:
                             if pull_response.status != 200:
                                 logger.error("Failed to pull model")
@@ -415,16 +510,20 @@ class OllamaClient(BaseModelClient):
                         }
                     
                     debug_log(f"Sending request to Ollama API")
+                    gen_timeout = self.get_timeout_for_model(model, "generate")
                     response = await session.post(
                         f"{self.base_url}/api/generate",
                         json=request_payload,
-                        timeout=60  # Longer timeout for actual generation
+                        timeout=gen_timeout
                     )
                     response.raise_for_status()
                     debug_log(f"Response status: {response.status}")
                     
                     # Use a simpler async iteration pattern that's less error-prone
                     debug_log("Starting to process response stream")
+                    
+                    # Update the model usage timestamp to keep it hot
+                    self.update_model_usage(model)
                     
                     # Set a flag to track if we've yielded any content
                     has_yielded_content = False
@@ -535,6 +634,123 @@ class OllamaClient(BaseModelClient):
     def is_loading_model(self) -> bool:
         """Check if Ollama is currently loading a model"""
         return self._model_loading
+    
+    async def preload_model(self, model_id: str) -> bool:
+        """
+        Preload a model to keep it hot/ready for use
+        Returns True if successful, False otherwise
+        """
+        from datetime import datetime
+        import asyncio
+        
+        logger.info(f"Preloading model: {model_id}")
+        
+        # First, check if the model is already preloaded
+        if model_id in self._preloaded_models:
+            # Update timestamp if already preloaded
+            self._preloaded_models[model_id] = datetime.now()
+            logger.info(f"Model {model_id} already preloaded, updated timestamp")
+            return True
+        
+        try:
+            # We'll use a minimal prompt to load the model
+            warm_up_prompt = "hello"
+            
+            # Set model loading state
+            old_loading_state = self._model_loading
+            self._model_loading = True
+            
+            async with aiohttp.ClientSession() as session:
+                # First try pulling the model if needed
+                try:
+                    logger.info(f"Ensuring model {model_id} is pulled")
+                    pull_payload = {"name": model_id}
+                    pull_timeout = self.get_timeout_for_model(model_id, "pull")
+                    async with session.post(
+                        f"{self.base_url}/api/pull",
+                        json=pull_payload,
+                        timeout=pull_timeout
+                    ) as pull_response:
+                        # We don't need to process the full pull, just initiate it
+                        if pull_response.status != 200:
+                            logger.warning(f"Pull request for model {model_id} failed with status {pull_response.status}")
+                except Exception as e:
+                    logger.warning(f"Error during model pull check: {str(e)}")
+                
+                # Now send a small generation request to load the model into memory
+                logger.info(f"Sending warm-up request for model {model_id}")
+                gen_timeout = self.get_timeout_for_model(model_id, "load")
+                async with session.post(
+                    f"{self.base_url}/api/generate",
+                    json={
+                        "model": model_id,
+                        "prompt": warm_up_prompt,
+                        "temperature": 0.7,
+                        "stream": False
+                    },
+                    timeout=gen_timeout
+                ) as response:
+                    if response.status != 200:
+                        logger.error(f"Failed to preload model {model_id}, status: {response.status}")
+                        self._model_loading = old_loading_state
+                        return False
+                    
+                    # Read the response to ensure the model is fully loaded
+                    await response.json()
+                    
+                    # Update preloaded models with timestamp
+                    self._preloaded_models[model_id] = datetime.now()
+                    logger.info(f"Successfully preloaded model {model_id}")
+                    return True
+        except Exception as e:
+            logger.error(f"Error preloading model {model_id}: {str(e)}")
+            return False
+        finally:
+            # Reset model loading state
+            self._model_loading = old_loading_state
+    
+    def get_preloaded_models(self) -> Dict[str, datetime]:
+        """Return the dict of preloaded models and their last use times"""
+        return self._preloaded_models
+    
+    def update_model_usage(self, model_id: str) -> None:
+        """Update the timestamp for a model that is being used"""
+        if model_id and model_id in self._preloaded_models:
+            from datetime import datetime
+            self._preloaded_models[model_id] = datetime.now()
+            logger.info(f"Updated usage timestamp for model {model_id}")
+    
+    async def release_inactive_models(self, max_inactive_minutes: int = 30) -> List[str]:
+        """
+        Release models that have been inactive for more than the specified time
+        Returns a list of model IDs that were released
+        """
+        from datetime import datetime, timedelta
+        
+        if not self._preloaded_models:
+            return []
+            
+        now = datetime.now()
+        inactive_threshold = timedelta(minutes=max_inactive_minutes)
+        models_to_release = []
+        
+        # Find models that have been inactive for too long
+        for model_id, last_used in list(self._preloaded_models.items()):
+            if now - last_used > inactive_threshold:
+                models_to_release.append(model_id)
+                
+        # Release the models
+        released_models = []
+        for model_id in models_to_release:
+            try:
+                logger.info(f"Releasing inactive model: {model_id} (inactive for {(now - self._preloaded_models[model_id]).total_seconds() / 60:.1f} minutes)")
+                # We don't have an explicit "unload" API in Ollama, but we can remove it from our tracking
+                del self._preloaded_models[model_id]
+                released_models.append(model_id)
+            except Exception as e:
+                logger.error(f"Error releasing model {model_id}: {str(e)}")
+                
+        return released_models
             
     async def get_model_details(self, model_id: str) -> Dict[str, Any]:
         """Get detailed information about a specific Ollama model"""
