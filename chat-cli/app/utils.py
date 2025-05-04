@@ -32,6 +32,11 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
     
     # Try-except the entire function to ensure we always return a title
     try:
+        # Check if we're using an Ollama client
+        from app.api.ollama import OllamaClient
+        is_ollama_client = isinstance(client, OllamaClient)
+        debug_log(f"Client is Ollama: {is_ollama_client}")
+        
         # Pick a reliable title generation model - prefer OpenAI if available
         from app.config import OPENAI_API_KEY, ANTHROPIC_API_KEY
         
@@ -46,16 +51,22 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
             title_model = "claude-3-haiku-20240307"
             debug_log("Using Anthropic for title generation")
         else:
-            # Use the passed client if no API keys available
-            title_client = client
-            title_model = model
-            debug_log(f"Using provided {type(client).__name__} for title generation")
+            # For Ollama clients, ensure we have a clean instance to avoid conflicts with preloaded models
+            if is_ollama_client:
+                debug_log("Creating fresh Ollama client instance for title generation")
+                title_client = await OllamaClient.create()
+                title_model = model
+            else:
+                # Use the passed client for other providers
+                title_client = client
+                title_model = model
+            debug_log(f"Using {type(title_client).__name__} for title generation with model {title_model}")
         
         # Create a special prompt for title generation
         title_prompt = [
             {
                 "role": "system", 
-                "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. Return only the title text with no additional explanation or formatting."
+                "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. ONLY output the title text. DO NOT include phrases like 'Sure, here's a title' or any additional formatting, explanation, or quotes."
             },
             {
                 "role": "user",
@@ -85,12 +96,31 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
                 max_tokens=60
             )
         
-        # Sanitize the title
+        # Sanitize the title - remove quotes, extra spaces and unwanted prefixes
         title = title.strip().strip('"\'').strip()
+        
+        # Remove common LLM prefixes like "Title:", "Sure, here's a title:", etc.
+        prefixes_to_remove = [
+            "title:", "here's a title:", "here is a title:", 
+            "a title for this conversation:", "sure,", "certainly,",
+            "the title is:", "suggested title:"
+        ]
+        
+        # Case-insensitive prefix removal
+        title_lower = title.lower()
+        for prefix in prefixes_to_remove:
+            if title_lower.startswith(prefix):
+                title = title[len(prefix):].strip()
+                title_lower = title.lower()  # Update lowercase version after removal
+        
+        # Remove any remaining quotes
+        title = title.strip('"\'').strip()
+        
+        # Enforce length limit
         if len(title) > 40:
             title = title[:37] + "..."
             
-        debug_log(f"Generated title: {title}")
+        debug_log(f"Generated title (after sanitization): {title}")
         return title
         
     except Exception as e:
