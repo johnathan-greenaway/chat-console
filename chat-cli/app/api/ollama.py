@@ -165,7 +165,7 @@ class OllamaClient(BaseModelClient):
             user_msg = next((msg for msg in messages if msg.get("role") == "user"), None)
             if user_msg and "content" in user_msg:
                 # Create a direct prompt
-                prompt = "Generate a short descriptive title (maximum 40 characters) for this conversation. ONLY RESPOND WITH THE TITLE FOR THE FOLLOWING MESSAGE:\n\n" + user_msg["content"]
+                prompt = "You must generate a short, descriptive title (maximum 40 characters) for this conversation. ONLY output the title with no additional text, no quotes, and no explanation. Do not start with phrases like 'Here's a title' or 'Title:'. RESPOND ONLY WITH THE TITLE TEXT for the following message:\n\n" + user_msg["content"]
                 debug_log(f"Created title generation prompt: {prompt[:100]}...")
                 return prompt
             else:

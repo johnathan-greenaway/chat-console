@@ -708,21 +708,32 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 if client_type == OllamaClient:
                     debug_log(f"Title generation with Ollama model detected: {selected_model_resolved}")
                     
-                    # Try common small/fast models first if they exist
+                    # Always try to use smalllm2:135m first, then fall back to other small models
                     try:
-                        # Check if we have any smaller models available for faster title generation
+                        # Check if we have smalllm2:135m or other smaller models available
                         ollama_client = await OllamaClient.create()
                         available_models = await ollama_client.get_available_models()
-                        small_model_options = ["gemma:2b", "phi3:mini", "llama3:8b", "orca-mini:3b", "phi2"]
                         
+                        # Use smalllm2:135m if available (extremely small and fast)
+                        preferred_model = "smalllm2:135m"
+                        fallback_models = ["tinyllama", "gemma:2b", "phi3:mini", "llama3:8b", "orca-mini:3b", "phi2"]
+                        
+                        # First check for our preferred smallest model
                         small_model_found = False
-                        for model_name in small_model_options:
-                            if any(model["id"] == model_name for model in available_models):
-                                debug_log(f"Found smaller Ollama model for title generation: {model_name}")
-                                title_model = model_name
-                                small_model_found = True
-                                break
-                                
+                        if any(model["id"] == preferred_model for model in available_models):
+                            debug_log(f"Found optimal small model for title generation: {preferred_model}")
+                            title_model = preferred_model
+                            small_model_found = True
+                        
+                        # If not found, try fallbacks in order
+                        if not small_model_found:
+                            for model_name in fallback_models:
+                                if any(model["id"] == model_name for model in available_models):
+                                    debug_log(f"Found alternative small model for title generation: {model_name}")
+                                    title_model = model_name
+                                    small_model_found = True
+                                    break
+                                    
                         if not small_model_found:
                             # Use the current model if no smaller models found
                             title_model = selected_model_resolved

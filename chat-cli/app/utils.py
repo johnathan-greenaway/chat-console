@@ -66,7 +66,7 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
         title_prompt = [
             {
                 "role": "system", 
-                "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. Return only the title text with no additional explanation or formatting."
+                "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. ONLY output the title text. DO NOT include phrases like 'Sure, here's a title' or any additional formatting, explanation, or quotes."
             },
             {
                 "role": "user",
@@ -96,12 +96,31 @@ async def generate_conversation_title(message: str, model: str, client: Any) -> 
                 max_tokens=60
             )
         
-        # Sanitize the title
+        # Sanitize the title - remove quotes, extra spaces and unwanted prefixes
         title = title.strip().strip('"\'').strip()
+        
+        # Remove common LLM prefixes like "Title:", "Sure, here's a title:", etc.
+        prefixes_to_remove = [
+            "title:", "here's a title:", "here is a title:", 
+            "a title for this conversation:", "sure,", "certainly,",
+            "the title is:", "suggested title:"
+        ]
+        
+        # Case-insensitive prefix removal
+        title_lower = title.lower()
+        for prefix in prefixes_to_remove:
+            if title_lower.startswith(prefix):
+                title = title[len(prefix):].strip()
+                title_lower = title.lower()  # Update lowercase version after removal
+        
+        # Remove any remaining quotes
+        title = title.strip('"\'').strip()
+        
+        # Enforce length limit
         if len(title) > 40:
             title = title[:37] + "..."
             
-        debug_log(f"Generated title: {title}")
+        debug_log(f"Generated title (after sanitization): {title}")
         return title
         
     except Exception as e:
