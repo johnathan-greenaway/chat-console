@@ -363,7 +363,13 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         self.selected_model = resolve_model_id(default_model_from_config)
         self.selected_style = CONFIG["default_style"] # Keep SimpleChatApp __init__
         self.initial_text = initial_text # Keep SimpleChatApp __init__
-        # Removed self.input_widget instance variable
+        
+        # Task for model cleanup
+        self._model_cleanup_task = None
+        
+        # Inactivity threshold in minutes before releasing model resources
+        # Read from config, default to 30 minutes
+        self.MODEL_INACTIVITY_THRESHOLD = CONFIG.get("ollama_inactive_timeout_minutes", 30)
 
     def compose(self) -> ComposeResult: # Modify SimpleChatApp compose
         """Create the simplified application layout."""
@@ -420,6 +426,11 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             pass # Silently ignore if widget not found yet
 
         self.update_app_info()  # Update the model info
+        
+        # Start the background task for model cleanup if model preloading is enabled
+        if CONFIG.get("ollama_model_preload", True):
+            self._model_cleanup_task = asyncio.create_task(self._check_inactive_models())
+            debug_log("Started background task for model cleanup")
 
         # Check API keys and services # Keep SimpleChatApp on_mount
         api_issues = [] # Keep SimpleChatApp on_mount
@@ -675,29 +686,98 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
             # Determine title client and model based on available keys
             if OPENAI_API_KEY:
+                # For highest success rate, use OpenAI for title generation when available
                 from app.api.openai import OpenAIClient
                 title_client = await OpenAIClient.create()
                 title_model = "gpt-3.5-turbo"
                 debug_log("Using OpenAI for background title generation")
             elif ANTHROPIC_API_KEY:
+                # Next best option is Anthropic
                 from app.api.anthropic import AnthropicClient
                 title_client = await AnthropicClient.create()
                 title_model = "claude-3-haiku-20240307"
                 debug_log("Using Anthropic for background title generation")
             else:
                 # Fallback to the currently selected model's client if no API keys
+                # Get client type first to ensure we correctly identify Ollama models
+                from app.api.ollama import OllamaClient
                 selected_model_resolved = resolve_model_id(self.selected_model)
-                title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
-                title_model = selected_model_resolved
-                debug_log(f"Using selected model's client ({type(title_client).__name__}) for background title generation")
+                client_type = BaseModelClient.get_client_type_for_model(selected_model_resolved)
+                
+                # For Ollama models, special handling is required
+                if client_type == OllamaClient:
+                    debug_log(f"Title generation with Ollama model detected: {selected_model_resolved}")
+                    
+                    # Always try to use smalllm2:135m first, then fall back to other small models
+                    try:
+                        # Check if we have smalllm2:135m or other smaller models available
+                        ollama_client = await OllamaClient.create()
+                        available_models = await ollama_client.get_available_models()
+                        
+                        # Use smalllm2:135m if available (extremely small and fast)
+                        preferred_model = "smalllm2:135m"
+                        fallback_models = ["tinyllama", "gemma:2b", "phi3:mini", "llama3:8b", "orca-mini:3b", "phi2"]
+                        
+                        # First check for our preferred smallest model
+                        small_model_found = False
+                        if any(model["id"] == preferred_model for model in available_models):
+                            debug_log(f"Found optimal small model for title generation: {preferred_model}")
+                            title_model = preferred_model
+                            small_model_found = True
+                        
+                        # If not found, try fallbacks in order
+                        if not small_model_found:
+                            for model_name in fallback_models:
+                                if any(model["id"] == model_name for model in available_models):
+                                    debug_log(f"Found alternative small model for title generation: {model_name}")
+                                    title_model = model_name
+                                    small_model_found = True
+                                    break
+                                    
+                        if not small_model_found:
+                            # Use the current model if no smaller models found
+                            title_model = selected_model_resolved
+                            debug_log(f"No smaller models found, using current model: {title_model}")
+                            
+                        # Always create a fresh client instance to avoid interference with model preloading
+                        title_client = ollama_client
+                        debug_log(f"Created dedicated Ollama client for title generation with model: {title_model}")
+                    except Exception as e:
+                        debug_log(f"Error finding optimized Ollama model for title generation: {str(e)}")
+                        # Fallback to standard approach
+                        title_client = await OllamaClient.create()
+                        title_model = selected_model_resolved
+                else:
+                    # For other providers, use normal client acquisition
+                    title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
+                    title_model = selected_model_resolved
+                    debug_log(f"Using selected model's client ({type(title_client).__name__}) for background title generation")
 
             if not title_client or not title_model:
                 raise Exception("Could not determine a client/model for title generation.")
 
             # Call the utility function
             from app.utils import generate_conversation_title # Import locally if needed
-            new_title = await generate_conversation_title(content, title_model, title_client)
-            debug_log(f"Background generated title: {new_title}")
+            
+            # Add timeout handling for title generation to prevent hangs
+            try:
+                # Create a task with timeout
+                import asyncio
+                title_generation_task = asyncio.create_task(
+                    generate_conversation_title(content, title_model, title_client)
+                )
+                
+                # Wait for completion with timeout (30 seconds)
+                new_title = await asyncio.wait_for(title_generation_task, timeout=30)
+                debug_log(f"Background generated title: {new_title}")
+            except asyncio.TimeoutError:
+                debug_log("Title generation timed out after 30 seconds")
+                # Use default title in case of timeout
+                new_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                # Try to cancel the task
+                if not title_generation_task.done():
+                    title_generation_task.cancel()
+                    debug_log("Cancelled timed out title generation task")
 
             # Check if title generation returned the default or a real title
             if new_title and not new_title.startswith("Conversation ("):
@@ -718,8 +798,8 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                         title_widget.update(new_title)
                         self.current_conversation.title = new_title # Update local object too
                         log(f"Background title update successful: {new_title}")
-                        # Maybe a subtle notification? Optional.
-                        # self.notify(f"Title set: {new_title}", severity="information", timeout=2)
+                        # Subtle notification to show title was updated
+                        self.notify(f"Conversation titled: {new_title}", severity="information", timeout=2)
                     else:
                         log("Conversation changed before background title update could apply.")
                 else:
@@ -1226,6 +1306,94 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             log(f"Stored selected provider: {self.selected_provider} for model: {self.selected_model}")
         
         self.update_app_info()  # Update the displayed model info
+        
+        # Preload the model if it's an Ollama model and preloading is enabled
+        if self.selected_provider == "ollama" and CONFIG.get("ollama_model_preload", True):
+            # Start the background task to preload the model
+            debug_log(f"Starting background task to preload Ollama model: {self.selected_model}")
+            asyncio.create_task(self._preload_ollama_model(self.selected_model))
+    
+    async def _preload_ollama_model(self, model_id: str) -> None:
+        """Preload an Ollama model in the background"""
+        from app.api.ollama import OllamaClient
+        
+        debug_log(f"Preloading Ollama model: {model_id}")
+        # Show a subtle notification to the user
+        self.notify("Preparing model for use...", severity="information", timeout=3)
+        
+        try:
+            # Initialize the client
+            client = await OllamaClient.create()
+            
+            # Update the loading indicator to show model loading
+            loading = self.query_one("#loading-indicator")
+            loading.remove_class("hidden")
+            loading.add_class("model-loading")
+            loading.update(f"⚙️ Loading Ollama model...")
+            
+            # Preload the model
+            success = await client.preload_model(model_id)
+            
+            # Hide the loading indicator
+            loading.add_class("hidden")
+            loading.remove_class("model-loading")
+            
+            if success:
+                debug_log(f"Successfully preloaded model: {model_id}")
+                self.notify(f"Model ready for use", severity="success", timeout=2)
+            else:
+                debug_log(f"Failed to preload model: {model_id}")
+                # No need to notify the user about failure - will happen naturally on first use
+        except Exception as e:
+            debug_log(f"Error preloading model: {str(e)}")
+            # Make sure to hide the loading indicator
+            try:
+                loading = self.query_one("#loading-indicator")
+                loading.add_class("hidden")
+                loading.remove_class("model-loading")
+            except Exception:
+                pass
+                
+    async def _check_inactive_models(self) -> None:
+        """Background task to check for and release inactive models"""
+        from app.api.ollama import OllamaClient
+        
+        # How often to check for inactive models (in seconds)
+        CHECK_INTERVAL = 600  # 10 minutes
+        
+        debug_log(f"Starting inactive model check task with interval {CHECK_INTERVAL}s")
+        
+        try:
+            while True:
+                await asyncio.sleep(CHECK_INTERVAL)
+                
+                debug_log("Checking for inactive models...")
+                
+                try:
+                    # Initialize the client
+                    client = await OllamaClient.create()
+                    
+                    # Get the threshold from instance variable
+                    threshold = getattr(self, "MODEL_INACTIVITY_THRESHOLD", 30)
+                    
+                    # Check and release inactive models
+                    released_models = await client.release_inactive_models(threshold)
+                    
+                    if released_models:
+                        debug_log(f"Released {len(released_models)} inactive models: {released_models}")
+                    else:
+                        debug_log("No inactive models to release")
+                        
+                except Exception as e:
+                    debug_log(f"Error checking for inactive models: {str(e)}")
+                    # Continue loop even if this check fails
+                    
+        except asyncio.CancelledError:
+            debug_log("Model cleanup task cancelled")
+            # Normal task cancellation, clean exit
+        except Exception as e:
+            debug_log(f"Unexpected error in model cleanup task: {str(e)}")
+            # Log but don't crash
 
     def on_style_selector_style_selected(self, event: StyleSelector.StyleSelected) -> None: # Keep SimpleChatApp on_style_selector_style_selected
         """Handle style selection""" # Keep SimpleChatApp on_style_selector_style_selected docstring
