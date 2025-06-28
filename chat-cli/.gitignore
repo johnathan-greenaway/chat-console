@@ -39,3 +39,4 @@ ENV/
 .terminalchat/
 *.db
 *.log
+env/*

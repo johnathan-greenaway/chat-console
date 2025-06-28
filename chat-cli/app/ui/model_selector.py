@@ -17,18 +17,20 @@ logger = logging.getLogger(__name__)
 class ModelSelector(Container):
     """Widget for selecting the AI model to use"""
     
+    # Rams-inspired selector styling
     DEFAULT_CSS = """
     ModelSelector {
         width: 100%;
         height: auto;
-        padding: 0;
-        background: $surface-darken-1;
+        padding: 1;
+        background: #0C0C0C;
+        border: solid #333333 1;
     }
     
     #selector-container {
         width: 100%;
         layout: horizontal;
-        height: 3;
+        height: auto;
         padding: 0;
     }
     
@@ -36,11 +38,17 @@ class ModelSelector(Container):
         width: 30%;
         height: 3;
         margin-right: 1;
+        background: #0C0C0C;
+        color: #E8E8E8;
+        border: solid #333333 1;
     }
     
     #model-select, #custom-model-input {
         width: 1fr;
         height: 3;
+        background: #0C0C0C;
+        color: #E8E8E8;
+        border: solid #333333 1;
     }
 
     #custom-model-input {

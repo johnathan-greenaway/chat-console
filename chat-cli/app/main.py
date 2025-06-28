@@ -179,173 +179,276 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
     os.makedirs(log_dir, exist_ok=True)
     LOG_FILE = os.path.join(log_dir, "textual.log") # Use absolute path
 
-    CSS = """ # Keep SimpleChatApp CSS start
-    #main-content { # Keep SimpleChatApp CSS
+    # Rams-inspired CSS following "As little design as possible"
+    CSS = """
+    /* Main layout - Clean foundation */
+    #main-content {
         width: 100%;
         height: 100%;
-        padding: 0 1;
+        padding: 0;
+        background: #0C0C0C;
     }
 
+    /* App header with ASCII border aesthetic */
     #app-info-bar {
         width: 100%;
-        height: 1;
-        background: $surface-darken-3;
-        color: $text-muted;
-        padding: 0 1;
+        height: 3;
+        background: #0C0C0C;
+        color: #E8E8E8;
+        padding: 1 2;
+        border-bottom: solid #333333 1;
     }
 
     #version-info {
         width: auto;
         text-align: left;
+        color: #E8E8E8;
     }
 
     #model-info {
         width: 1fr;
         text-align: right;
+        color: #666666;
     }
 
-    #conversation-title { # Keep SimpleChatApp CSS
-        width: 100%; # Keep SimpleChatApp CSS
-        height: 2;
-        background: $surface-darken-2;
-        color: $text;
-        content-align: center middle;
-        text-align: center;
-        border-bottom: solid $primary-darken-2;
+    /* Conversation title - Functional hierarchy */
+    #conversation-title {
+        width: 100%;
+        height: 3;
+        background: #0C0C0C;
+        color: #E8E8E8;
+        content-align: left middle;
+        text-align: left;
+        padding: 0 2;
+        border-bottom: solid #333333 1;
     }
 
+    /* Action buttons - Minimal design */
     #action-buttons {
         width: 100%;
         height: auto;
-        padding: 0 1; /* Corrected padding: 0 vertical, 1 horizontal */
-        align-horizontal: center;
-        background: $surface-darken-1;
+        padding: 2;
+        align-horizontal: left;
+        background: #0C0C0C;
+        border-bottom: solid #333333 1;
     }
 
     #new-chat-button, #change-title-button {
-        margin: 0 1;
-        min-width: 15;
+        margin: 0 1 0 0;
+        min-width: 12;
+        background: transparent;
+        color: #E8E8E8;
+        border: solid #333333 1;
+        padding: 1 2;
     }
 
-    #messages-container { # Keep SimpleChatApp CSS
-        width: 100%; # Keep SimpleChatApp CSS
+    #new-chat-button:hover, #change-title-button:hover {
+        background: #1A1A1A;
+        border: solid #33FF33 1;
+    }
+
+    /* Messages container - Purposeful spacing */
+    #messages-container {
+        width: 100%;
         height: 1fr;
-        min-height: 10;
-        border-bottom: solid $primary-darken-2;
+        min-height: 15;
         overflow: auto;
-        padding: 0 1;
+        padding: 2;
+        background: #0C0C0C;
+        border-bottom: solid #333333 1;
     }
 
-    #loading-indicator { # Keep SimpleChatApp CSS
-        width: 100%; # Keep SimpleChatApp CSS
-        height: 1;
-        background: $primary-darken-1;
-        color: $text;
+    /* Loading indicator - Unobtrusive */
+    #loading-indicator {
+        width: 100%;
+        height: 2;
+        background: #0C0C0C;
+        color: #666666;
         content-align: center middle;
         text-align: center;
-        text-style: bold;
+        border-bottom: solid #333333 1;
+        padding: 0 2;
     }
 
-    #loading-indicator.hidden { # Keep SimpleChatApp CSS
+    #loading-indicator.hidden {
         display: none;
     }
     
     #loading-indicator.model-loading {
-        background: $warning;
-        color: $text;
+        color: #33FF33;
     }
 
-    #input-area { # Keep SimpleChatApp CSS
-        width: 100%; # Keep SimpleChatApp CSS
+    /* Input area - Clean and functional */
+    #input-area {
+        width: 100%;
         height: auto;
-        min-height: 4;
-        max-height: 10;
+        min-height: 5;
+        max-height: 12;
+        padding: 2;
+        background: #0C0C0C;
+    }
+
+    #message-input {
+        width: 1fr;
+        min-height: 3;
+        height: auto;
+        margin-right: 1;
+        border: solid #333333 1;
+        background: #0C0C0C;
+        color: #E8E8E8;
         padding: 1;
     }
 
-    #message-input { # Keep SimpleChatApp CSS
-        width: 1fr; # Keep SimpleChatApp CSS
-        min-height: 2;
-        height: auto;
-        margin-right: 1;
-        border: solid $primary-darken-2;
-    }
-
-    #message-input:focus { # Keep SimpleChatApp CSS
-        border: solid $primary;
+    #message-input:focus {
+        border: solid #33FF33 1;
+        outline: none;
     }
 
     /* Removed CSS for #send-button, #new-chat-button, #view-history-button, #settings-button */ # Keep SimpleChatApp CSS comment
     /* Removed CSS for #button-row */ # Keep SimpleChatApp CSS comment
 
-    #settings-panel { /* Add CSS for the new settings panel */
-        display: none; /* Hidden by default */
+    /* Settings panel - Clean modal design */
+    #settings-panel {
+        display: none;
         align: center middle;
         width: 60;
         height: auto;
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-        layer: settings; /* Ensure it's above other elements */
+        background: #0C0C0C;
+        border: solid #333333 1;
+        padding: 2;
+        layer: settings;
     }
 
-    #settings-panel.visible { /* Class to show the panel */
+    #settings-panel.visible {
         display: block;
     }
 
     #settings-title {
         width: 100%;
-        content-align: center middle;
+        content-align: left middle;
         padding-bottom: 1;
-        border-bottom: thick $primary-darken-2; /* Correct syntax for bottom border */
+        border-bottom: solid #333333 1;
+        color: #E8E8E8;
+        margin-bottom: 2;
     }
 
     #settings-buttons {
         width: 100%;
         height: auto;
-        align: center middle;
-        padding-top: 1;
+        align: right middle;
+        padding-top: 2;
     }
 
-    /* --- Title Input Modal CSS --- */
+    #settings-save-button, #settings-cancel-button {
+        background: transparent;
+        color: #E8E8E8;
+        border: solid #333333 1;
+        margin-left: 1;
+        padding: 1 2;
+    }
+
+    #settings-save-button:hover {
+        background: #1A1A1A;
+        border: solid #33FF33 1;
+    }
+
+    #settings-cancel-button:hover {
+        background: #1A1A1A;
+        border: solid #FF4444 1;
+    }
+
+    /* Title Input Modal - Minimal and focused */
     TitleInputModal {
         align: center middle;
         width: 60;
         height: auto;
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-        layer: modal; /* Ensure it's above other elements */
+        background: #0C0C0C;
+        border: solid #333333 1;
+        padding: 2;
+        layer: modal;
     }
 
     #modal-label {
         width: 100%;
-        content-align: center middle;
+        content-align: left middle;
         padding-bottom: 1;
+        color: #E8E8E8;
+        border-bottom: solid #333333 1;
+        margin-bottom: 2;
     }
 
     #title-input {
         width: 100%;
-        margin-bottom: 1;
+        margin-bottom: 2;
+        background: #0C0C0C;
+        color: #E8E8E8;
+        border: solid #333333 1;
+        padding: 1;
+    }
+
+    #title-input:focus {
+        border: solid #33FF33 1;
+        outline: none;
     }
 
     TitleInputModal Horizontal {
         width: 100%;
         height: auto;
-        align: center middle;
+        align: right middle;
+        padding-top: 2;
+    }
+
+    #update-button, #cancel-button {
+        background: transparent;
+        color: #E8E8E8;
+        border: solid #333333 1;
+        margin-left: 1;
+        padding: 1 2;
+    }
+
+    #update-button:hover {
+        background: #1A1A1A;
+        border: solid #33FF33 1;
+    }
+
+    #cancel-button:hover {
+        background: #1A1A1A;
+        border: solid #FF4444 1;
+    }
+
+    /* Message Display - Clean typography */
+    MessageDisplay {
+        width: 100%;
+        height: auto;
+        margin: 1 0;
+        padding: 2;
+        text-wrap: wrap;
+        background: transparent;
+    }
+    
+    MessageDisplay.user-message {
+        background: #1A1A1A;
+        border-left: solid #33FF33 2;
+        margin-left: 2;
+        margin-right: 8;
+    }
+    
+    MessageDisplay.assistant-message {
+        background: transparent;
+        border-left: solid #666666 1;
+        margin-right: 2;
+        margin-left: 8;
     }
     """
 
     BINDINGS = [ # Keep SimpleChatApp BINDINGS, ensure Enter is not globally bound for settings
         Binding("q", "quit", "Quit", show=True, key_display="q"),
-        # Removed binding for "n" (new chat) since there's a dedicated button
-        Binding("c", "action_new_conversation", "New Chat", show=False, key_display="c", priority=True), # Keep alias with priority
-        Binding("escape", "action_escape", "Cancel / Stop", show=True, key_display="esc"), # Updated to call our async method
+        Binding("c", "action_new_conversation", "New", show=True, key_display="c", priority=True),
+        Binding("escape", "action_escape", "Cancel", show=True, key_display="esc"),
         Binding("ctrl+c", "quit", "Quit", show=False),
-        Binding("h", "view_history", "History", show=True, key_display="h", priority=True), # Add priority
-        Binding("s", "settings", "Settings", show=True, key_display="s", priority=True),     # Add priority
-        # Removed binding for "t" (title update) since there's a dedicated button
-        Binding("m", "model_browser", "Model Browser", show=True, key_display="m", priority=True), # Add model browser binding
+        Binding("h", "view_history", "History", show=True, key_display="h", priority=True),
+        Binding("s", "settings", "Settings", show=True, key_display="s", priority=True),
+        Binding("m", "model_browser", "Models", show=True, key_display="m", priority=True),
     ] # Keep SimpleChatApp BINDINGS end
 
     current_conversation = reactive(None) # Keep SimpleChatApp reactive var
@@ -376,26 +479,26 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         yield Header()
 
         with Vertical(id="main-content"):
-            # Add app info bar with version and model info
+            # Clean app header following Rams principles
             with Horizontal(id="app-info-bar"):
-                yield Static(f"Chat Console v{__version__}", id="version-info") # Use imported version
-                yield Static(f"Model: {self.selected_model}", id="model-info")
+                yield Static(f"Chat Console v{__version__}", id="version-info")
+                yield Static(self.selected_model, id="model-info")
 
             # Conversation title
             yield Static("New Conversation", id="conversation-title")
 
-            # Add action buttons at the top for visibility
+            # Action buttons - Minimal and functional
             with Horizontal(id="action-buttons"):
-                yield Button("+ New Chat", id="new-chat-button", variant="success")
-                yield Button("✎ Change Title", id="change-title-button", variant="primary")
+                yield Button("●", id="new-chat-button")  # Solid circle for "new"
+                yield Button("✎", id="change-title-button")  # Pencil for "edit"
 
             # Messages area
             with ScrollableContainer(id="messages-container"):
                 # Will be populated with messages
                 pass
 
-            # Loading indicator
-            yield Static("▪▪▪ Generating response...", id="loading-indicator", classes="hidden", markup=False)
+            # Minimal loading indicator
+            yield Static("● Generating", id="loading-indicator", classes="hidden", markup=False)
 
             # Input area
             with Container(id="input-area"):
@@ -483,8 +586,8 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         model = self.selected_model # Keep SimpleChatApp create_new_conversation
         style = self.selected_style # Keep SimpleChatApp create_new_conversation
 
-        # Create a title for the new conversation # Keep SimpleChatApp create_new_conversation
-        title = f"New conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})" # Keep SimpleChatApp create_new_conversation
+        # Clean title following Rams principles
+        title = "New Conversation"
 
         # Create conversation in database using the correct method # Keep SimpleChatApp create_new_conversation
         log(f"Creating conversation with title: {title}, model: {model}, style: {style}") # Added log
@@ -580,22 +683,20 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             # Optionally add other escape behaviors here if needed
 
     def update_app_info(self) -> None:
-        """Update the displayed app information."""
+        """Update app info following clean information architecture"""
         try:
-            # Update model info
             model_info = self.query_one("#model-info", Static)
-            model_display = self.selected_model
-
-            # Try to get a more readable name from config if available
+            
+            # Clean model display - no unnecessary decoration
             if self.selected_model in CONFIG["available_models"]:
-                provider = CONFIG["available_models"][self.selected_model]["provider"]
                 display_name = CONFIG["available_models"][self.selected_model]["display_name"]
-                model_display = f"{display_name} ({provider.capitalize()})"
+                model_display = display_name
+            else:
+                model_display = self.selected_model
 
-            model_info.update(f"Model: {model_display}")
+            model_info.update(model_display)
         except Exception as e:
-            # Silently handle errors to prevent crashes
-            log.error(f"Error updating app info: {e}") # Log error instead of passing silently
+            log.error(f"Error updating app info: {e}")
             pass
 
     async def update_messages_ui(self) -> None: # Keep SimpleChatApp update_messages_ui
@@ -1513,49 +1614,37 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         self.push_screen(ModelBrowserScreen())
         
     async def _animate_loading_task(self, loading_widget: Static) -> None:
-        """Animate the loading indicator with a simple text animation"""
+        """Minimal loading animation following Rams principles"""
         try:
-            # Animation frames (simple text animation)
+            # Minimal loading frames - "Less but better"
             frames = [
-                "▪▫▫ Generating response...",
-                "▪▪▫ Generating response...",
-                "▪▪▪ Generating response...",
-                "▫▪▪ Generating response...",
-                "▫▫▪ Generating response...",
-                "▫▫▫ Generating response..."
+                "● Generating",
+                "○ Generating", 
+                "● Generating",
+                "○ Generating"
             ]
             
             while self.is_generating:
                 try:
-                    # Update the loading text with safety checks
-                    if frames and len(frames) > 0:
-                        frame_idx = self._loading_frame % len(frames)
-                        loading_widget.update(frames[frame_idx])
-                    else:
-                        # Fallback if frames is empty
-                        loading_widget.update("▪▪▪ Generating response...")
-                    
+                    frame_idx = self._loading_frame % len(frames)
+                    loading_widget.update(frames[frame_idx])
                     self._loading_frame += 1
-                    # Small delay between frames
-                    await asyncio.sleep(0.3)
+                    # Slower, less distracting animation
+                    await asyncio.sleep(0.8)
                 except Exception as e:
-                    # If any error occurs, use a simple fallback and continue
                     log.error(f"Animation frame error: {str(e)}")
                     try:
-                        loading_widget.update("▪▪▪ Generating response...")
+                        loading_widget.update("● Generating")
                     except:
                         pass
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.8)
                 
         except asyncio.CancelledError:
-            # Normal cancellation
             pass
         except Exception as e:
-            # Log any errors but don't crash
             log.error(f"Error in loading animation: {str(e)}")
-            # Reset to basic text
             try:
-                loading_widget.update("▪▪▪ Generating response...")
+                loading_widget.update("● Generating")
             except:
                 pass
 
@@ -1724,17 +1813,48 @@ class TitleInputModal(Static):
             self.notify(f"Failed to update title: {str(e)}", severity="error")
 
 
-def main(initial_text: Optional[str] = typer.Argument(None, help="Initial text to start the chat with")): # Keep main function
-    """Entry point for the chat-cli application""" # Keep main function docstring
-    # When no argument is provided, typer passes the ArgumentInfo object # Keep main function
-    # When an argument is provided, typer passes the actual value # Keep main function
-    if isinstance(initial_text, typer.models.ArgumentInfo): # Keep main function
-        initial_value = None  # No argument provided # Keep main function
-    else: # Keep main function
-        initial_value = str(initial_text) if initial_text is not None else None # Keep main function
+def main(
+    initial_text: Optional[str] = typer.Argument(None, help="Initial text to start the chat with"),
+    console: bool = typer.Option(False, "--console", "-c", help="Use pure console mode (no Textual)")
+):
+    """Entry point for the chat-cli application"""
+    if console:
+        # Launch pure console version
+        import asyncio
+        import sys
+        import os
         
-    app = SimpleChatApp(initial_text=initial_value) # Keep main function
-    app.run() # Keep main function
+        # Add current directory to path for console_chat import
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        
+        try:
+            from console_chat import ConsoleUI
+            
+            async def run_console():
+                console_ui = ConsoleUI()
+                if initial_text and not isinstance(initial_text, typer.models.ArgumentInfo):
+                    # If initial text provided, create conversation and add message
+                    await console_ui.create_new_conversation()
+                    await console_ui.generate_response(str(initial_text))
+                await console_ui.run()
+            
+            asyncio.run(run_console())
+            
+        except ImportError:
+            print("Error: Could not import console version. Make sure all dependencies are installed.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error running console version: {e}")
+            sys.exit(1)
+    else:
+        # Original Textual version
+        if isinstance(initial_text, typer.models.ArgumentInfo):
+            initial_value = None
+        else:
+            initial_value = str(initial_text) if initial_text is not None else None
+            
+        app = SimpleChatApp(initial_text=initial_value)
+        app.run()
 
 if __name__ == "__main__": # Keep main function entry point
     typer.run(main) # Keep main function entry point
