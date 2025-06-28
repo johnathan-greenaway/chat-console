@@ -55,37 +55,54 @@ async def console_streaming_response(
             style=style
         ):
             if chunk:
-                buffer.append(chunk)
-                current_time = time.time()
-                
-                # Update based on time interval or buffer size
-                should_update = (
-                    current_time - last_update >= update_interval or
-                    len(buffer) >= buffer_size or
-                    len(full_content) < 100  # Always update quickly for first few chars
-                )
-                
-                if should_update:
-                    # Process buffered chunks
-                    new_content = ''.join(buffer)
-                    full_content += new_content
-                    buffer = []
-                    last_update = current_time
+                # For Ollama, break down large chunks into smaller pieces for smoother streaming
+                if is_ollama and len(chunk) > 1:
+                    # Split chunk into smaller pieces (words or characters)
+                    words = chunk.split(' ')
+                    for i, word in enumerate(words):
+                        if i > 0:
+                            word = ' ' + word  # Add space back except for first word
+                        
+                        full_content += word
+                        
+                        # Update display with gradual content
+                        if update_callback:
+                            update_callback(full_content)
+                        
+                        yield word
+                        
+                        # Small delay between words for streaming effect
+                        await asyncio.sleep(0.03)
+                else:
+                    buffer.append(chunk)
+                    current_time = time.time()
                     
-                    # Call update callback with accumulated content
-                    if update_callback:
-                        update_callback(full_content)
+                    # Update based on time interval or buffer size
+                    should_update = (
+                        current_time - last_update >= update_interval or
+                        len(buffer) >= buffer_size or
+                        len(full_content) < 100  # Always update quickly for first few chars
+                    )
                     
-                    # Yield the new chunk for compatibility
-                    yield new_content
-                    
-                    # Provider-specific delays
-                    if is_ollama:
-                        await asyncio.sleep(0.02)  # Small delay for Ollama
-                    elif is_openai and not model.startswith(("o1", "o3", "o4")):
-                        await asyncio.sleep(0.01)  # Minimal delay for fast OpenAI models
-                    else:
-                        await asyncio.sleep(0.015)  # Default delay
+                    if should_update:
+                        # Process buffered chunks
+                        new_content = ''.join(buffer)
+                        full_content += new_content
+                        buffer = []
+                        last_update = current_time
+                        
+                        # Call update callback with accumulated content
+                        if update_callback:
+                            update_callback(full_content)
+                        
+                        # Yield the new chunk for compatibility
+                        yield new_content
+                        
+                        # Provider-specific delays
+                        if is_openai and not model.startswith(("o1", "o3", "o4")):
+                            await asyncio.sleep(0.01)  # Minimal delay for fast OpenAI models
+                        else:
+                            await asyncio.sleep(0.015)  # Default delay
         
         # Process any remaining buffer content
         if buffer:

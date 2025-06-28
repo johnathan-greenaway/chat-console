@@ -353,6 +353,10 @@ class ConsoleUI:
         # Apply code highlighting if enabled
         highlighted_content = self._detect_and_highlight_code(message.content)
         
+        # Add streaming cursor if actively streaming
+        if streaming and message.content:
+            highlighted_content += f"{self.theme['accent']}▎{self.theme['reset']}"
+        
         # Use improved word wrapping
         lines = self._improved_word_wrap(highlighted_content, content_width)
         
@@ -368,7 +372,9 @@ class ConsoleUI:
                     role_indicator = f"{self.theme['success']}🤖{self.theme['reset']}"
                     role_color = self.theme['success']
                     if streaming:
-                        role_indicator = f"{self.theme['success']}✨{self.theme['reset']}"
+                        # More obvious streaming indicator with blinking effect
+                        role_indicator = f"{self.theme['accent']}✨{self.theme['reset']}"
+                        role_color = self.theme['accent']
                 
                 timestamp_colored = f"{self.theme['muted']}{timestamp}{self.theme['reset']}"
                 prefix = f" {role_indicator} {timestamp_colored} "
@@ -583,8 +589,10 @@ class ConsoleUI:
         show_welcome = not hasattr(self, '_welcome_shown')
         
         while True:
-            self.draw_screen(current_input, prompt, show_welcome)
-            show_welcome = False  # Only show once
+            # Only redraw screen if not currently generating to avoid interference
+            if not self.generating:
+                self.draw_screen(current_input, prompt, show_welcome)
+                show_welcome = False  # Only show once
             
             # Get single character with better handling
             if os.name == 'nt':
@@ -766,12 +774,196 @@ class ConsoleUI:
             # Silently fail - title generation is not critical
             pass
     
+    def _get_context_aware_loading_phrases(self, user_message: str) -> List[str]:
+        """Generate context-aware loading phrases based on user input"""
+        message_lower = user_message.lower()
+        
+        # Code-related keywords
+        if any(keyword in message_lower for keyword in [
+            'code', 'function', 'debug', 'error', 'bug', 'script', 'program', 
+            'algorithm', 'python', 'javascript', 'java', 'c++', 'html', 'css',
+            'sql', 'git', 'api', 'database', 'framework', 'library'
+        ]):
+            return [
+                "Analyzing your code", "Reviewing logic", "Debugging the issue",
+                "Examining patterns", "Processing syntax", "Evaluating approach",
+                "Formulating solution", "Optimizing structure"
+            ]
+        
+        # Writing/creative keywords  
+        elif any(keyword in message_lower for keyword in [
+            'write', 'essay', 'story', 'article', 'blog', 'creative', 'poem',
+            'letter', 'email', 'content', 'draft', 'narrative', 'description'
+        ]):
+            return [
+                "Crafting your text", "Shaping ideas", "Weaving words",
+                "Building narrative", "Polishing prose", "Structuring content",
+                "Refining language", "Creating flow"
+            ]
+        
+        # Analysis/research keywords
+        elif any(keyword in message_lower for keyword in [
+            'analyze', 'research', 'study', 'explain', 'compare', 'evaluate',
+            'assess', 'investigate', 'examine', 'understand', 'interpret'
+        ]):
+            return [
+                "Analyzing information", "Processing data", "Examining details",
+                "Connecting insights", "Evaluating evidence", "Synthesizing findings",
+                "Drawing conclusions", "Structuring analysis"
+            ]
+        
+        # Math/calculation keywords
+        elif any(keyword in message_lower for keyword in [
+            'calculate', 'math', 'solve', 'equation', 'formula', 'statistics',
+            'probability', 'geometry', 'algebra', 'number', 'compute'
+        ]):
+            return [
+                "Calculating result", "Processing numbers", "Solving equation",
+                "Working through math", "Computing values", "Analyzing formula",
+                "Checking calculations", "Verifying solution"
+            ]
+        
+        # Question/help keywords
+        elif any(keyword in message_lower for keyword in [
+            'how', 'what', 'why', 'when', 'where', 'help', 'assist', 'guide',
+            'explain', 'show', 'teach', 'learn', 'understand'
+        ]):
+            return [
+                "Processing your question", "Gathering information", "Organizing thoughts",
+                "Preparing explanation", "Structuring response", "Connecting concepts",
+                "Clarifying details", "Formulating answer"
+            ]
+        
+        # Default generic phrases
+        else:
+            return self.loading_phrases
+    
+    def _get_dynamic_loading_phrase(self, user_message: str = "") -> str:
+        """Get current loading phrase with context-awareness and cycling"""
+        elapsed = time.time() - self.start_time
+        
+        # Get context-aware phrases if user message provided
+        if user_message and hasattr(self, '_current_context_phrases'):
+            phrases = self._current_context_phrases
+        elif user_message:
+            phrases = self._get_context_aware_loading_phrases(user_message)
+            self._current_context_phrases = phrases  # Cache for this generation
+        else:
+            phrases = self.loading_phrases
+        
+        # Change phrase every 2 seconds
+        phrase_index = int(elapsed // 2) % len(phrases)
+        return phrases[phrase_index]
+    
+    def _update_streaming_display(self, content: str):
+        """Update display with real-time streaming content and context-aware status"""
+        if not self.generating:
+            return
+            
+        # Rate limit updates to avoid flickering, but allow faster updates for better streaming effect
+        current_time = time.time()
+        if hasattr(self, '_last_display_update'):
+            if current_time - self._last_display_update < 0.05:  # Max 20 updates per second for smoother streaming
+                return
+        self._last_display_update = current_time
+        
+        # Clear screen and redraw with current content
+        self.clear_screen()
+        
+        # Update the last assistant message with current content
+        if self.messages and self.messages[-1].role == "assistant":
+            self.messages[-1].content = content
+        
+        # Show dynamic loading indicator with cycling phrases
+        elapsed = int(time.time() - self.start_time)
+        user_message = getattr(self, '_current_user_message', "")
+        phrase = self._get_dynamic_loading_phrase(user_message)
+        
+        # Create streaming status with animated indicators
+        dots = "." * ((elapsed % 3) + 1)
+        activity_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        activity_indicator = activity_chars[elapsed % len(activity_chars)]
+        streaming_status = f"{activity_indicator} {phrase}{dots} ({elapsed}s) - {len(content)} chars"
+        
+        # Draw the full screen with current state
+        self._draw_streaming_screen(streaming_status)
+        
+        # Ensure output is flushed
+        sys.stdout.flush()
+    
+    def _draw_streaming_screen(self, status_message: str):
+        """Draw the screen optimized for streaming updates"""
+        # Calculate layout
+        header_lines = self.draw_header()
+        footer_lines = self.draw_footer()
+        
+        # Modified input area for streaming
+        input_lines = self._draw_streaming_input_area(status_message)
+        
+        # Calculate available space for messages
+        used_lines = len(header_lines) + len(footer_lines) + len(input_lines)
+        available_lines = self.height - used_lines - 2
+        
+        # Draw header
+        for line in header_lines:
+            print(line)
+        
+        # Draw messages
+        message_lines = self.draw_messages()
+        chars = self.get_border_chars()
+        
+        # Pad or truncate message area
+        if len(message_lines) < available_lines:
+            # Pad with empty lines
+            empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+            message_lines.extend([empty_line] * (available_lines - len(message_lines)))
+        else:
+            # Truncate to fit
+            message_lines = message_lines[-available_lines:]
+        
+        for line in message_lines:
+            print(line)
+        
+        # Draw streaming input area
+        for line in input_lines:
+            print(line)
+        
+        # Draw footer
+        for line in footer_lines:
+            print(line)
+    
+    def _draw_streaming_input_area(self, status_message: str) -> List[str]:
+        """Draw input area optimized for streaming with status"""
+        chars = self.get_border_chars()
+        lines = []
+        
+        # Show streaming status
+        status_text = f"{self.theme['accent']}✨ {status_message}{self.theme['reset']}"
+        clean_status = f" {status_message}"
+        color_padding = len(status_text) - len(clean_status)
+        status_line = chars['vertical'] + f" {status_text}".ljust(self.width - 2 + color_padding) + chars['vertical']
+        lines.append(status_line)
+        
+        # Show cancellation hint
+        cancel_hint = f"{self.theme['muted']}Press Ctrl+C to cancel generation{self.theme['reset']}"
+        clean_hint = "Press Ctrl+C to cancel generation"
+        hint_padding = len(cancel_hint) - len(clean_hint)
+        hint_line = chars['vertical'] + f" {cancel_hint}".ljust(self.width - 2 + hint_padding) + chars['vertical']
+        lines.append(hint_line)
+        
+        return lines
+    
     async def generate_response(self, user_message: str):
         """Generate AI response with enhanced streaming and visual feedback"""
         self.generating = True
         self.start_time = time.time()
         self.loading_phase_index = 0
+        self._current_user_message = user_message  # Store for context-aware loading
         assistant_message = None
+        
+        # Clear any cached context phrases for new generation
+        if hasattr(self, '_current_context_phrases'):
+            delattr(self, '_current_context_phrases')
         
         try:
             # Add user message
@@ -802,49 +994,17 @@ class ConsoleUI:
             # Enhanced streaming with real-time updates
             full_response = ""
             cancelled = False
-            last_update = time.time()
             
             def update_callback(content: str):
-                nonlocal full_response, last_update
+                nonlocal full_response
                 if not self.generating:
                     return
                     
                 full_response = content
                 assistant_message.content = content
                 
-                # Update screen more frequently for better streaming experience
-                current_time = time.time()
-                if current_time - last_update > 0.1:  # Update every 100ms
-                    # Draw with streaming indicator
-                    self.clear_screen()
-                    header_lines = self.draw_header()
-                    for line in header_lines:
-                        print(line)
-                    
-                    # Draw messages with streaming indicator
-                    message_lines = []
-                    for msg in self.messages[:-10]:  # Skip recent messages to save space
-                        pass
-                    
-                    for msg in self.messages[-10:]:
-                        is_streaming = (msg == assistant_message and self.generating)
-                        message_lines.extend(self.format_message(msg, streaming=is_streaming))
-                    
-                    # Display messages
-                    for line in message_lines[-20:]:  # Show last 20 lines
-                        print(line)
-                    
-                    # Show enhanced loading indicator
-                    input_lines = self.draw_input_area("", "Generating response")
-                    for line in input_lines:
-                        print(line)
-                    
-                    footer_lines = self.draw_footer()
-                    for line in footer_lines:
-                        print(line)
-                    
-                    sys.stdout.flush()
-                    last_update = current_time
+                # Use our new streaming display method
+                self._update_streaming_display(content)
             
             # Apply style to messages
             styled_messages = apply_style_prefix(api_messages, self.selected_style)
@@ -857,9 +1017,7 @@ class ConsoleUI:
                     if not self.generating:
                         cancelled = True
                         break
-                    if chunk:
-                        full_response += chunk
-                        assistant_message.content = full_response
+                    # Note: content is already handled in update_callback
                         
             except asyncio.CancelledError:
                 cancelled = True
@@ -1745,8 +1903,15 @@ async def main():
     if args.style:
         console.selected_style = args.style
     
-    # Run the application
-    await console.run()
+    # If a message was provided, send it directly for testing
+    if args.message:
+        await console.create_new_conversation()
+        print(f"Sending message: {args.message}")
+        await console.generate_response(args.message)
+        print("Response generated!")
+    else:
+        # Run the application normally
+        await console.run()
     
     print("\nGoodbye!")
 
