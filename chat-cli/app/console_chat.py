@@ -517,7 +517,9 @@ class ConsoleUI:
             else:
                 display_prompt = prompt
                 
-            self.draw_screen(current_input, display_prompt)
+            # Only redraw screen if not currently generating to avoid interference
+            if not self.generating:
+                self.draw_screen(current_input, display_prompt)
             
             # Get character input with escape sequence handling
             char = self._get_char_with_escape_sequences()
@@ -671,14 +673,14 @@ class ConsoleUI:
         elapsed = int(time.time() - self.start_time)
         phrase = self._get_dynamic_loading_phrase()
         
-        # Simple cursor positioning update instead of full screen redraw
-        print(f"\r{self.theme['accent']}● {phrase}... {self.theme['muted']}({elapsed}s){self.theme['reset']}", end="", flush=True)
-        
-        # Periodically redraw full screen (every 5 seconds or significant content changes)
-        if elapsed % 5 == 0 or len(content) > self.loading_phase_index + 100:
-            self.loading_phase_index = len(content)
-            # Update the assistant message and redraw
-            self.draw_screen("", f"{phrase} ({elapsed}s)")
+        # Use cursor positioning to update status at bottom of screen
+        # Save cursor position, move to bottom, update status, restore position
+        print(f"\033[s", end="")  # Save cursor position
+        print(f"\033[{self.height};1H", end="")  # Move to bottom row
+        print(f"\033[K", end="")  # Clear line
+        status_line = f"{self.theme['accent']}● {phrase}... {self.theme['muted']}({elapsed}s) - {len(content)} chars{self.theme['reset']}"
+        print(status_line, end="", flush=True)
+        print(f"\033[u", end="", flush=True)  # Restore cursor position
     
     async def create_new_conversation(self):
         """Create a new conversation"""
