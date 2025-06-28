@@ -150,7 +150,7 @@ class ConsoleUI:
         """Draw the footer with controls"""
         chars = self.get_border_chars()
         
-        controls = "[Tab] Menu Mode  [q] Quit  [n] New  [h] History  [s] Settings  [m] Models"
+        controls = "[Tab] Menu Mode  [q] Quit  [n] New  [h] History  [s] Settings  [m] Ollama Models"
         footer_line = chars['vertical'] + f" {controls} ".ljust(self.width - 2) + chars['vertical']
         
         return [
@@ -480,7 +480,7 @@ class ConsoleUI:
                 self.db.update_conversation_title(self.current_conversation.id, new_title)
                 self.current_conversation.title = new_title
                 
-        except Exception as e:
+        except Exception:
             # Silently fail - title generation is not critical
             pass
     
