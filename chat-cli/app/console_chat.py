@@ -425,33 +425,64 @@ class ConsoleUI:
         return lines
     
     def draw_input_area(self, current_input: str = "", prompt: str = "Type your message") -> List[str]:
-        """Draw the input area with mode indicator"""
+        """Draw the input area with enhanced multi-line support and indicators"""
         chars = self.get_border_chars()
         lines = []
         
-        # Input prompt with mode indicator
+        # Input prompt with mode indicator and multi-line status
         mode_indicator = "📝" if self.input_mode == "text" else "⚡"
         mode_text = "TEXT" if self.input_mode == "text" else "MENU"
-        prompt_with_mode = f"{mode_indicator} {prompt} ({mode_text} mode - Tab to switch)"
-        prompt_line = chars['vertical'] + f" {prompt_with_mode}: ".ljust(self.width - 2) + chars['vertical']
+        
+        # Multi-line indicator
+        if self.multi_line_input:
+            ml_indicator = f"{self.theme['accent']}[MULTI-LINE: {len(self.multi_line_input)} lines]{self.theme['reset']}"
+            prompt_with_mode = f"{mode_indicator} {ml_indicator} (Ctrl+D to send, Esc to cancel)"
+        else:
+            prompt_with_mode = f"{mode_indicator} {prompt} ({mode_text} mode - Tab to switch, Ctrl+J for multi-line)"
+        
+        prompt_line = chars['vertical'] + f" {prompt_with_mode}".ljust(self.width - 2) + chars['vertical']
         lines.append(prompt_line)
         
-        # Input field
+        # Input field(s)
         if self.input_mode == "text":
-            input_content = current_input
-            if len(input_content) > self.width - 6:
-                input_content = input_content[-(self.width - 9):] + "..."
-            input_line = chars['vertical'] + f" > {input_content}".ljust(self.width - 2) + chars['vertical']
+            if self.multi_line_input:
+                # Show multi-line input with line numbers
+                for i, line_content in enumerate(self.multi_line_input[-3:]):  # Show last 3 lines
+                    line_num = len(self.multi_line_input) - 3 + i + 1 if len(self.multi_line_input) > 3 else i + 1
+                    if len(line_content) > self.width - 12:
+                        display_content = line_content[:self.width - 15] + "..."
+                    else:
+                        display_content = line_content
+                    
+                    if i == len(self.multi_line_input[-3:]) - 1:  # Current line
+                        input_line = chars['vertical'] + f" {self.theme['primary']}{line_num:2d}>{self.theme['reset']} {display_content}".ljust(self.width - 2) + chars['vertical']
+                    else:
+                        input_line = chars['vertical'] + f" {self.theme['muted']}{line_num:2d}:{self.theme['reset']} {display_content}".ljust(self.width - 2) + chars['vertical']
+                    lines.append(input_line)
+                
+                # Show line count if more than 3 lines
+                if len(self.multi_line_input) > 3:
+                    more_line = chars['vertical'] + f" {self.theme['muted']}... ({len(self.multi_line_input)} total lines){self.theme['reset']}".ljust(self.width - 2) + chars['vertical']
+                    lines.append(more_line)
+            else:
+                # Single line input
+                input_content = current_input
+                if len(input_content) > self.width - 6:
+                    input_content = input_content[-(self.width - 9):] + "..."
+                input_line = chars['vertical'] + f" {self.theme['primary']}>{self.theme['reset']} {input_content}".ljust(self.width - 2) + chars['vertical']
+                lines.append(input_line)
         else:
             # Menu mode - show available hotkeys
-            menu_help = "n)ew  h)istory  s)ettings  m)odels  q)uit"
+            menu_help = f"{self.theme['secondary']}n{self.theme['reset']})ew  {self.theme['secondary']}h{self.theme['reset']})istory  {self.theme['secondary']}s{self.theme['reset']})ettings  {self.theme['secondary']}m{self.theme['reset']})odels  {self.theme['secondary']}q{self.theme['reset']})uit"
             input_line = chars['vertical'] + f" {menu_help}".ljust(self.width - 2) + chars['vertical']
-        
-        lines.append(input_line)
+            lines.append(input_line)
         
         # Show generating indicator if needed
         if self.generating:
-            status_line = chars['vertical'] + " ● Generating response...".ljust(self.width - 2) + chars['vertical']
+            elapsed = int(time.time() - self.start_time) if hasattr(self, 'start_time') else 0
+            user_message = getattr(self, '_current_user_message', "")
+            phrase = self._get_dynamic_loading_phrase(user_message)
+            status_line = chars['vertical'] + f" {self.theme['accent']}● {phrase}... ({elapsed}s){self.theme['reset']}".ljust(self.width - 2) + chars['vertical']
             lines.append(status_line)
         
         return lines
@@ -605,9 +636,14 @@ class ConsoleUI:
                         current_input = "\n".join(self.multi_line_input)
                     else:
                         current_input = current_input[:-1]
-                elif char == '\x0a':  # Shift+Enter equivalent (start multi-line)
+                elif char == '\x0a':  # Ctrl+J - start/continue multi-line
                     if not self.multi_line_input:
+                        # Start multi-line mode
                         self.multi_line_input = [current_input, ""]
+                        current_input = "\n".join(self.multi_line_input)
+                    else:
+                        # Add new line in multi-line mode
+                        self.multi_line_input.append("")
                         current_input = "\n".join(self.multi_line_input)
                 elif ord(char) >= 32:
                     # Printable character
@@ -657,29 +693,124 @@ class ConsoleUI:
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     
-    def _get_dynamic_loading_phrase(self) -> str:
-        """Get current loading phrase with cycling inspired by gemini-code-assist usePhraseCycler"""
+    def _get_context_aware_loading_phrases(self, user_message: str) -> List[str]:
+        """Generate context-aware loading phrases based on user input"""
+        message_lower = user_message.lower()
+        
+        # Code-related keywords
+        if any(keyword in message_lower for keyword in [
+            'code', 'function', 'debug', 'error', 'bug', 'script', 'program', 
+            'algorithm', 'python', 'javascript', 'java', 'c++', 'html', 'css',
+            'sql', 'git', 'api', 'database', 'framework', 'library'
+        ]):
+            return [
+                "Analyzing your code", "Reviewing logic", "Debugging the issue",
+                "Examining patterns", "Processing syntax", "Evaluating approach",
+                "Formulating solution", "Optimizing structure"
+            ]
+        
+        # Writing/creative keywords  
+        elif any(keyword in message_lower for keyword in [
+            'write', 'essay', 'story', 'article', 'blog', 'creative', 'poem',
+            'letter', 'email', 'content', 'draft', 'narrative', 'description'
+        ]):
+            return [
+                "Crafting your text", "Shaping ideas", "Weaving words",
+                "Building narrative", "Polishing prose", "Structuring content",
+                "Refining language", "Creating flow"
+            ]
+        
+        # Analysis/research keywords
+        elif any(keyword in message_lower for keyword in [
+            'analyze', 'research', 'study', 'explain', 'compare', 'evaluate',
+            'assess', 'investigate', 'examine', 'understand', 'interpret'
+        ]):
+            return [
+                "Analyzing information", "Processing data", "Examining details",
+                "Connecting insights", "Evaluating evidence", "Synthesizing findings",
+                "Drawing conclusions", "Structuring analysis"
+            ]
+        
+        # Math/calculation keywords
+        elif any(keyword in message_lower for keyword in [
+            'calculate', 'math', 'solve', 'equation', 'formula', 'statistics',
+            'probability', 'geometry', 'algebra', 'number', 'compute'
+        ]):
+            return [
+                "Calculating result", "Processing numbers", "Solving equation",
+                "Working through math", "Computing values", "Analyzing formula",
+                "Checking calculations", "Verifying solution"
+            ]
+        
+        # Question/help keywords
+        elif any(keyword in message_lower for keyword in [
+            'how', 'what', 'why', 'when', 'where', 'help', 'assist', 'guide',
+            'explain', 'show', 'teach', 'learn', 'understand'
+        ]):
+            return [
+                "Processing your question", "Gathering information", "Organizing thoughts",
+                "Preparing explanation", "Structuring response", "Connecting concepts",
+                "Clarifying details", "Formulating answer"
+            ]
+        
+        # Default generic phrases
+        else:
+            return self.loading_phrases
+    
+    def _get_dynamic_loading_phrase(self, user_message: str = "") -> str:
+        """Get current loading phrase with context-awareness and cycling"""
         elapsed = time.time() - self.start_time
+        
+        # Get context-aware phrases if user message provided
+        if user_message and hasattr(self, '_current_context_phrases'):
+            phrases = self._current_context_phrases
+        elif user_message:
+            phrases = self._get_context_aware_loading_phrases(user_message)
+            self._current_context_phrases = phrases  # Cache for this generation
+        else:
+            phrases = self.loading_phrases
+        
         # Change phrase every 2 seconds
-        phrase_index = int(elapsed // 2) % len(self.loading_phrases)
-        return self.loading_phrases[phrase_index]
+        phrase_index = int(elapsed // 2) % len(phrases)
+        return phrases[phrase_index]
     
     def _update_streaming_display(self, content: str):
-        """Update display during streaming without clearing screen"""
+        """Update display with real-time streaming content and context-aware status"""
         if not self.generating:
             return
             
         # Show dynamic loading indicator with cycling phrases
         elapsed = int(time.time() - self.start_time)
-        phrase = self._get_dynamic_loading_phrase()
+        user_message = getattr(self, '_current_user_message', "")
+        phrase = self._get_dynamic_loading_phrase(user_message)
         
-        # Use cursor positioning to update status at bottom of screen
-        # Save cursor position, move to bottom, update status, restore position
+        # Create a streaming preview of content (first/last parts)
+        preview = ""
+        if content:
+            if len(content) <= 100:
+                preview = content.replace('\n', ' ')[:50]
+            else:
+                # Show first 30 chars + ... + last 20 chars
+                start = content[:30].replace('\n', ' ')
+                end = content[-20:].replace('\n', ' ')
+                preview = f"{start}...{end}"
+        
+        # Use cursor positioning to update multiple lines at bottom
         print(f"\033[s", end="")  # Save cursor position
+        
+        # Update streaming content area (second to last line)
+        if content:
+            print(f"\033[{self.height-1};1H", end="")  # Move to second-to-last row
+            print(f"\033[K", end="")  # Clear line
+            content_line = f"{self.theme['text']}► {preview}{self.theme['reset']}"
+            print(content_line[:self.width-2], end="", flush=True)
+        
+        # Update status line (bottom)
         print(f"\033[{self.height};1H", end="")  # Move to bottom row
         print(f"\033[K", end="")  # Clear line
         status_line = f"{self.theme['accent']}● {phrase}... {self.theme['muted']}({elapsed}s) - {len(content)} chars{self.theme['reset']}"
         print(status_line, end="", flush=True)
+        
         print(f"\033[u", end="", flush=True)  # Restore cursor position
     
     async def create_new_conversation(self):
@@ -724,6 +855,11 @@ class ConsoleUI:
         """Generate AI response with enhanced streaming display"""
         self.generating = True
         self.start_time = time.time()  # Reset timer for this generation
+        self._current_user_message = user_message  # Store for context-aware loading
+        
+        # Clear any cached context phrases for new generation
+        if hasattr(self, '_current_context_phrases'):
+            delattr(self, '_current_context_phrases')
         
         try:
             # Add user message
