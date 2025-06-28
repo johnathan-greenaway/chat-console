@@ -11,9 +11,11 @@ import argparse
 import signal
 import threading
 import time
+import random
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 import shutil
+import json
 
 # Add app to path for imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -26,7 +28,7 @@ from app.console_utils import console_streaming_response, apply_style_prefix
 from app.api.base import BaseModelClient
 
 class ConsoleUI:
-    """Pure console UI following Rams design principles"""
+    """Pure console UI following Rams design principles with Gemini-inspired enhancements"""
     
     def __init__(self):
         self.width = min(shutil.get_terminal_size().columns, 120)
@@ -39,9 +41,48 @@ class ConsoleUI:
         self.running = True
         self.generating = False
         self.input_mode = "text"  # "text" or "menu"
+        self.multi_line_input = []
+        self.input_history = []
+        self.history_index = 0
+        self.theme = self._load_theme()
+        self.loading_phrases = [
+            "Thinking deeply", "Crafting response", "Processing context",
+            "Analyzing request", "Generating ideas", "Considering options",
+            "Formulating answer", "Connecting concepts", "Refining thoughts"
+        ]
+        self.loading_phase_index = 0
+        self.start_time = time.time()
         
         # Suppress verbose logging for console mode
         self._setup_console_logging()
+    
+    def _load_theme(self) -> Dict[str, str]:
+        """Load color theme configuration"""
+        try:
+            # Try to import colorama for colors
+            from colorama import Fore, Back, Style, init
+            init(autoreset=True)
+            
+            # Default theme inspired by gemini-code-assist
+            return {
+                'primary': Fore.CYAN,
+                'secondary': Fore.BLUE,
+                'accent': Fore.MAGENTA,
+                'success': Fore.GREEN,
+                'warning': Fore.YELLOW,
+                'error': Fore.RED,
+                'muted': Fore.LIGHTBLACK_EX,
+                'text': Fore.WHITE,
+                'reset': Style.RESET_ALL,
+                'bold': Style.BRIGHT,
+                'dim': Style.DIM
+            }
+        except ImportError:
+            # Fallback to no colors if colorama not available
+            return {key: '' for key in [
+                'primary', 'secondary', 'accent', 'success', 'warning', 
+                'error', 'muted', 'text', 'reset', 'bold', 'dim'
+            ]}
     
     def _setup_console_logging(self):
         """Setup logging to minimize disruption to console UI"""
@@ -117,28 +158,73 @@ class ConsoleUI:
         else:
             return chars['horizontal'] * width
     
+    def draw_ascii_welcome(self) -> List[str]:
+        """Draw beautiful ASCII art welcome inspired by gemini-code-assist"""
+        if not hasattr(self, '_welcome_shown'):
+            self._welcome_shown = True
+            
+            ascii_art = [
+                "    ███████╗██╗  ██╗ █████╗ ████████╗      ██████╗ ██████╗ ███╗   ██╗███████╗ ██████╗ ██╗     ███████╗",
+                "    ██╔════╝██║  ██║██╔══██╗╚══██╔══╝     ██╔════╝██╔═══██╗████╗  ██║██╔════╝██╔═══██╗██║     ██╔════╝",
+                "    ██║     ███████║███████║   ██║        ██║     ██║   ██║██╔██╗ ██║███████╗██║   ██║██║     █████╗  ",
+                "    ██║     ██╔══██║██╔══██║   ██║        ██║     ██║   ██║██║╚██╗██║╚════██║██║   ██║██║     ██╔══╝  ",
+                "    ╚██████╗██║  ██║██║  ██║   ██║        ╚██████╗╚██████╔╝██║ ╚████║███████║╚██████╔╝███████╗███████╗",
+                "     ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝         ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚══════╝╚══════╝"
+            ]
+            
+            # Scale ASCII art for terminal width
+            if self.width < 100:
+                ascii_art = [
+                    "  ██████╗██╗  ██╗ █████╗ ████████╗",
+                    "  ██╔════╝██║  ██║██╔══██╗╚══██╔══╝",
+                    "  ██║     ███████║███████║   ██║   ",
+                    "  ██║     ██╔══██║██╔══██║   ██║   ",
+                    "  ╚██████╗██║  ██║██║  ██║   ██║   ",
+                    "   ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   "
+                ]
+            
+            welcome_lines = []
+            for line in ascii_art:
+                colored_line = f"{self.theme['accent']}{line.center(self.width)}{self.theme['reset']}"
+                welcome_lines.append(colored_line)
+                
+            # Add welcome message
+            welcome_lines.append("")
+            welcome_text = f"{self.theme['primary']}✨ Welcome to Chat Console - Pure Terminal AI Experience ✨{self.theme['reset']}"
+            welcome_lines.append(welcome_text.center(self.width))
+            
+            tips_text = f"{self.theme['muted']}Press Tab for menu mode • Shift+Enter for multi-line input{self.theme['reset']}"
+            welcome_lines.append(tips_text.center(self.width))
+            welcome_lines.append("")
+            
+            return welcome_lines
+        return []
+    
     def draw_header(self) -> List[str]:
-        """Draw the application header"""
+        """Draw the enhanced application header with colors"""
         from app import __version__
         chars = self.get_border_chars()
         
         lines = []
         
         # Top border with title and model info
-        title = f" Chat Console v{__version__} "
-        model_info = f" Model: {self.selected_model} "
+        title = f" {self.theme['bold']}Chat Console v{__version__}{self.theme['reset']} "
+        model_info = f" {self.theme['primary']}Model: {self.selected_model}{self.theme['reset']} "
         
-        # Calculate spacing
-        used_space = len(title) + len(model_info)
+        # Calculate spacing (account for color codes)
+        clean_title = f" Chat Console v{__version__} "
+        clean_model = f" Model: {self.selected_model} "
+        used_space = len(clean_title) + len(clean_model)
         remaining = self.width - used_space - 2
         spacing = chars['horizontal'] * max(0, remaining)
         
         header_line = chars['top_left'] + title + spacing + model_info + chars['top_right']
         lines.append(header_line)
         
-        # Conversation title
+        # Conversation title with color
         conv_title = self.current_conversation.title if self.current_conversation else "New Conversation"
-        title_line = chars['vertical'] + f" {conv_title} ".ljust(self.width - 2) + chars['vertical']
+        colored_title = f" {self.theme['secondary']}{conv_title}{self.theme['reset']} "
+        title_line = chars['vertical'] + colored_title.ljust(self.width - 2 + len(self.theme['secondary']) + len(self.theme['reset'])) + chars['vertical']
         lines.append(title_line)
         
         # Separator
@@ -147,11 +233,23 @@ class ConsoleUI:
         return lines
     
     def draw_footer(self) -> List[str]:
-        """Draw the footer with controls"""
+        """Draw the enhanced footer with colorized controls"""
         chars = self.get_border_chars()
         
-        controls = "[Tab] Menu Mode  [q] Quit  [n] New  [h] History  [s] Settings  [m] Ollama Models"
-        footer_line = chars['vertical'] + f" {controls} ".ljust(self.width - 2) + chars['vertical']
+        # Colorize controls
+        controls = (
+            f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
+            f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
+            f"[{self.theme['accent']}n{self.theme['muted']}] New  "
+            f"[{self.theme['accent']}h{self.theme['muted']}] History  "
+            f"[{self.theme['accent']}s{self.theme['muted']}] Settings  "
+            f"[{self.theme['accent']}m{self.theme['muted']}] Models{self.theme['reset']}"
+        )
+        
+        # Calculate clean length for padding
+        clean_controls = "[Tab] Menu  [q] Quit  [n] New  [h] History  [s] Settings  [m] Models"
+        color_padding = len(controls) - len(clean_controls)
+        footer_line = chars['vertical'] + f" {controls} ".ljust(self.width - 2 + color_padding) + chars['vertical']
         
         return [
             self.draw_border_line(self.width, 'middle'),
@@ -244,13 +342,13 @@ class ConsoleUI:
         
         return wrapped_lines or [""]
     
-    def format_message(self, message: Message) -> List[str]:
-        """Enhanced message formatting with code highlighting and better wrapping"""
+    def format_message(self, message: Message, streaming: bool = False) -> List[str]:
+        """Enhanced message formatting with colors, streaming indicators, and better wrapping"""
         timestamp = datetime.now().strftime("%H:%M")
         chars = self.get_border_chars()
         
         # Calculate available width for content
-        content_width = self.width - 10  # Account for borders and timestamp
+        content_width = self.width - 12  # Account for borders, timestamp, and role
         
         # Apply code highlighting if enabled
         highlighted_content = self._detect_and_highlight_code(message.content)
@@ -258,18 +356,38 @@ class ConsoleUI:
         # Use improved word wrapping
         lines = self._improved_word_wrap(highlighted_content, content_width)
         
-        # Format lines with proper spacing
+        # Format lines with proper spacing and colors
         formatted_lines = []
         for i, line in enumerate(lines):
             if i == 0:
                 # First line with timestamp and role indicator
-                role_indicator = "👤" if message.role == "user" else "🤖"
-                prefix = f" {role_indicator} {timestamp} "
-                formatted_line = chars['vertical'] + prefix + line.ljust(content_width - len(role_indicator)) + chars['vertical']
+                if message.role == "user":
+                    role_indicator = f"{self.theme['primary']}👤{self.theme['reset']}"
+                    role_color = self.theme['primary']
+                else:
+                    role_indicator = f"{self.theme['success']}🤖{self.theme['reset']}"
+                    role_color = self.theme['success']
+                    if streaming:
+                        role_indicator = f"{self.theme['success']}✨{self.theme['reset']}"
+                
+                timestamp_colored = f"{self.theme['muted']}{timestamp}{self.theme['reset']}"
+                prefix = f" {role_indicator} {timestamp_colored} "
+                
+                # Apply role color to content
+                colored_line = f"{role_color}{line}{self.theme['reset']}"
+                clean_prefix = f" 👤 {timestamp} " if message.role == "user" else f" 🤖 {timestamp} "
+                
+                formatted_line = (chars['vertical'] + prefix + 
+                                colored_line.ljust(content_width + len(colored_line) - len(line)) + 
+                                chars['vertical'])
             else:
-                # Continuation lines with proper indentation
+                # Continuation lines with proper indentation and color
                 prefix = "        "  # Align with content
-                formatted_line = chars['vertical'] + prefix + line.ljust(content_width) + chars['vertical']
+                role_color = self.theme['primary'] if message.role == "user" else self.theme['text']
+                colored_line = f"{role_color}{line}{self.theme['reset']}"
+                formatted_line = (chars['vertical'] + prefix + 
+                                colored_line.ljust(content_width + len(colored_line) - len(line)) + 
+                                chars['vertical'])
             formatted_lines.append(formatted_line)
         
         # Add empty line for spacing
@@ -279,60 +397,139 @@ class ConsoleUI:
         return formatted_lines
     
     def draw_messages(self) -> List[str]:
-        """Draw all messages in the conversation"""
+        """Draw all messages in the conversation with enhanced styling"""
         lines = []
         chars = self.get_border_chars()
         
         if not self.messages:
-            # Empty state
+            # Enhanced empty state with tips
             empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
-            lines.extend([empty_line] * 3)
-            center_text = "Start a conversation by typing a message below"
-            centered_line = chars['vertical'] + center_text.center(self.width - 2) + chars['vertical']
+            lines.extend([empty_line] * 2)
+            
+            # Welcome message with colors
+            welcome_text = f"{self.theme['primary']}✨ Start a conversation by typing a message below ✨{self.theme['reset']}"
+            clean_welcome = " Start a conversation by typing a message below "
+            color_padding = len(welcome_text) - len(clean_welcome)
+            centered_line = chars['vertical'] + welcome_text.center(self.width - 2 + color_padding) + chars['vertical']
             lines.append(centered_line)
-            lines.extend([empty_line] * 3)
+            
+            lines.append(empty_line)
+            
+            # Tips with colors
+            tips = [
+                f"{self.theme['muted']}• Use {self.theme['accent']}Shift+Enter{self.theme['muted']} for multi-line input{self.theme['reset']}",
+                f"{self.theme['muted']}• Press {self.theme['accent']}Tab{self.theme['muted']} to access menu mode{self.theme['reset']}",
+                f"{self.theme['muted']}• Use {self.theme['accent']}Up/Down arrows{self.theme['muted']} to navigate history{self.theme['reset']}"
+            ]
+            
+            for tip in tips:
+                clean_tip = tip.replace(self.theme['muted'], '').replace(self.theme['accent'], '').replace(self.theme['reset'], '')
+                color_padding = len(tip) - len(clean_tip)
+                tip_line = chars['vertical'] + f" {tip}".ljust(self.width - 2 + color_padding) + chars['vertical']
+                lines.append(tip_line)
+            
+            lines.extend([empty_line] * 2)
         else:
-            # Display messages
+            # Display messages with enhanced formatting
             for message in self.messages[-10:]:  # Show last 10 messages
-                lines.extend(self.format_message(message))
+                is_streaming = (message == self.messages[-1] and 
+                              message.role == "assistant" and 
+                              self.generating)
+                lines.extend(self.format_message(message, streaming=is_streaming))
         
         return lines
     
     def draw_input_area(self, current_input: str = "", prompt: str = "Type your message") -> List[str]:
-        """Draw the input area with mode indicator"""
+        """Draw the enhanced input area with multi-line support and dynamic indicators"""
         chars = self.get_border_chars()
         lines = []
         
-        # Input prompt with mode indicator
-        mode_indicator = "📝" if self.input_mode == "text" else "⚡"
-        mode_text = "TEXT" if self.input_mode == "text" else "MENU"
-        prompt_with_mode = f"{mode_indicator} {prompt} ({mode_text} mode - Tab to switch)"
-        prompt_line = chars['vertical'] + f" {prompt_with_mode}: ".ljust(self.width - 2) + chars['vertical']
+        # Input prompt with enhanced mode indicator
+        if self.input_mode == "text":
+            if len(self.multi_line_input) > 0:
+                mode_indicator = f"{self.theme['accent']}📋{self.theme['reset']}"  # Multi-line
+                mode_text = f"{self.theme['accent']}MULTI-LINE{self.theme['reset']}"
+                extra_hint = f"{self.theme['muted']} (Enter to add line, Ctrl+D to send){self.theme['reset']}"
+            else:
+                mode_indicator = f"{self.theme['primary']}📝{self.theme['reset']}"  # Single line
+                mode_text = f"{self.theme['primary']}TEXT{self.theme['reset']}"
+                extra_hint = f"{self.theme['muted']} (Shift+Enter for multi-line){self.theme['reset']}"
+        else:
+            mode_indicator = f"{self.theme['warning']}⚡{self.theme['reset']}"
+            mode_text = f"{self.theme['warning']}MENU{self.theme['reset']}"
+            extra_hint = f"{self.theme['muted']} (Tab to switch){self.theme['reset']}"
+        
+        prompt_with_mode = f"{mode_indicator} {prompt} ({mode_text} mode{extra_hint})"
+        # Calculate clean length for padding
+        clean_prompt = f" {prompt} (TEXT mode (Tab to switch))"
+        color_padding = len(prompt_with_mode) - len(clean_prompt)
+        prompt_line = chars['vertical'] + f" {prompt_with_mode}: ".ljust(self.width - 2 + color_padding) + chars['vertical']
         lines.append(prompt_line)
         
-        # Input field
+        # Multi-line input display
+        if self.multi_line_input:
+            for i, line in enumerate(self.multi_line_input[-3:]):  # Show last 3 lines
+                line_num = f"{self.theme['muted']}{i+1:2d}|{self.theme['reset']}"
+                content = line[:self.width-8] if len(line) > self.width-8 else line
+                input_line = chars['vertical'] + f" {line_num} {content}".ljust(self.width - 2 + len(line_num) - 4) + chars['vertical']
+                lines.append(input_line)
+            
+            if len(self.multi_line_input) > 3:
+                more_lines = chars['vertical'] + f" {self.theme['muted']}... {len(self.multi_line_input)-3} more lines{self.theme['reset']}".ljust(self.width - 2 + 20) + chars['vertical']
+                lines.append(more_lines)
+        
+        # Current input field
         if self.input_mode == "text":
             input_content = current_input
             if len(input_content) > self.width - 6:
                 input_content = input_content[-(self.width - 9):] + "..."
-            input_line = chars['vertical'] + f" > {input_content}".ljust(self.width - 2) + chars['vertical']
+            cursor_indicator = f"{self.theme['accent']}▎{self.theme['reset']}"  # Cursor block
+            input_line = chars['vertical'] + f" > {input_content}{cursor_indicator}".ljust(self.width - 2 + len(cursor_indicator) - 1) + chars['vertical']
         else:
-            # Menu mode - show available hotkeys
-            menu_help = "n)ew  h)istory  s)ettings  m)odels  q)uit"
-            input_line = chars['vertical'] + f" {menu_help}".ljust(self.width - 2) + chars['vertical']
+            # Menu mode - show colorized hotkeys
+            menu_help = (
+                f"{self.theme['accent']}n{self.theme['muted']})ew  "
+                f"{self.theme['accent']}h{self.theme['muted']})istory  "
+                f"{self.theme['accent']}s{self.theme['muted']})ettings  "
+                f"{self.theme['accent']}m{self.theme['muted']})odels  "
+                f"{self.theme['accent']}q{self.theme['muted']})uit{self.theme['reset']}"
+            )
+            clean_menu = "n)ew  h)istory  s)ettings  m)odels  q)uit"
+            color_padding = len(menu_help) - len(clean_menu)
+            input_line = chars['vertical'] + f" {menu_help}".ljust(self.width - 2 + color_padding) + chars['vertical']
         
         lines.append(input_line)
         
-        # Show generating indicator if needed
+        # Enhanced generating indicator with cycling phrases
         if self.generating:
-            status_line = chars['vertical'] + " ● Generating response...".ljust(self.width - 2) + chars['vertical']
+            elapsed = int(time.time() - self.start_time)
+            current_phrase = self.loading_phrases[self.loading_phase_index % len(self.loading_phrases)]
+            
+            # Cycle through loading phrases every 2 seconds
+            if elapsed % 2 == 0 and elapsed > 0:
+                self.loading_phase_index = (self.loading_phase_index + 1) % len(self.loading_phrases)
+            
+            # Animated dots
+            dots = "." * ((elapsed % 3) + 1)
+            status_text = f"{self.theme['accent']}✨ {current_phrase}{dots}{self.theme['reset']} {self.theme['muted']}({elapsed}s){self.theme['reset']}"
+            clean_status = f" {current_phrase}{dots} ({elapsed}s)"
+            color_padding = len(status_text) - len(clean_status)
+            status_line = chars['vertical'] + f" {status_text}".ljust(self.width - 2 + color_padding) + chars['vertical']
             lines.append(status_line)
         
         return lines
     
-    def draw_screen(self, current_input: str = "", input_prompt: str = "Type your message"):
-        """Draw the complete screen"""
+    def draw_screen(self, current_input: str = "", input_prompt: str = "Type your message", show_welcome: bool = False):
+        """Draw the complete enhanced screen with welcome message and better layout"""
         self.clear_screen()
+        
+        # Show welcome message on first run
+        if show_welcome:
+            welcome_lines = self.draw_ascii_welcome()
+            for line in welcome_lines:
+                print(line)
+            print("\n" * 2)
+            time.sleep(0.1)  # Brief pause to let user see welcome
         
         # Calculate layout
         header_lines = self.draw_header()
@@ -371,19 +568,25 @@ class ConsoleUI:
         for line in footer_lines:
             print(line)
         
-        # Position cursor
+        # Position cursor for better user experience
+        cursor_offset = len(current_input) + 4
+        if self.multi_line_input:
+            cursor_offset = len(current_input) + 4  # Adjust for multi-line
+        
         print("\033[A" * (len(footer_lines) + len(input_lines) - 1), end="")
-        print(f"\033[{len(current_input) + 4}C", end="")
+        print(f"\033[{cursor_offset}C", end="")
         sys.stdout.flush()
     
     def get_input(self, prompt: str = "Type your message") -> str:
-        """Enhanced input with tab navigation and hotkey support"""
+        """Enhanced input with multi-line support, history navigation, and improved UX"""
         current_input = ""
+        show_welcome = not hasattr(self, '_welcome_shown')
         
         while True:
-            self.draw_screen(current_input, prompt)
+            self.draw_screen(current_input, prompt, show_welcome)
+            show_welcome = False  # Only show once
             
-            # Get single character
+            # Get single character with better handling
             if os.name == 'nt':
                 import msvcrt
                 char = msvcrt.getch().decode('utf-8', errors='ignore')
@@ -394,6 +597,24 @@ class ConsoleUI:
                 try:
                     tty.setraw(sys.stdin.fileno())
                     char = sys.stdin.read(1)
+                    
+                    # Handle escape sequences (arrow keys, etc.)
+                    if char == '\x1b':  # ESC sequence start
+                        try:
+                            tty.setraw(sys.stdin.fileno())
+                            next_char = sys.stdin.read(1)
+                            if next_char == '[':
+                                arrow_char = sys.stdin.read(1)
+                                if arrow_char == 'A':  # Up arrow
+                                    char = '\x1b[A'
+                                elif arrow_char == 'B':  # Down arrow
+                                    char = '\x1b[B'
+                                else:
+                                    char = '\x1b'  # Just escape
+                            else:
+                                char = '\x1b'  # Just escape
+                        except:
+                            char = '\x1b'
                 finally:
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
             
@@ -401,38 +622,102 @@ class ConsoleUI:
             if char == '\t':
                 # Tab - switch between text and menu mode
                 self.input_mode = "menu" if self.input_mode == "text" else "text"
+                current_input = ""  # Clear input when switching modes
                 continue
+            
             elif char == '\r' or char == '\n':
-                # Enter
+                # Enter behavior
                 if self.input_mode == "text":
-                    # Submit text input
-                    if current_input.strip():
-                        return current_input.strip()
-                    # If empty input in text mode, switch to menu mode
-                    self.input_mode = "menu"
-                    continue
+                    if len(self.multi_line_input) > 0:
+                        # In multi-line mode, add current line
+                        if current_input.strip():
+                            self.multi_line_input.append(current_input)
+                        current_input = ""
+                        continue
+                    else:
+                        # Single line mode - submit if not empty
+                        if current_input.strip():
+                            result = current_input.strip()
+                            # Add to history
+                            if result not in self.input_history:
+                                self.input_history.append(result)
+                            self.history_index = len(self.input_history)
+                            return result
+                        # If empty, switch to menu mode
+                        self.input_mode = "menu"
+                        continue
                 else:
                     # In menu mode, Enter does nothing
                     continue
-            elif char == '\x03':
-                # Ctrl+C
+            
+            elif char == '\x04':  # Ctrl+D
+                # Send multi-line input
+                if self.multi_line_input:
+                    if current_input.strip():
+                        self.multi_line_input.append(current_input)
+                    result = "\n".join(self.multi_line_input)
+                    self.multi_line_input = []  # Clear multi-line buffer
+                    # Add to history
+                    if result not in self.input_history:
+                        self.input_history.append(result)
+                    self.history_index = len(self.input_history)
+                    return result
+                continue
+            
+            elif char == '\x03':  # Ctrl+C
                 if self.generating:
                     self.generating = False
                     return ""
+                elif self.multi_line_input:
+                    # Cancel multi-line input
+                    self.multi_line_input = []
+                    current_input = ""
+                    continue
                 else:
                     raise KeyboardInterrupt
+            
+            elif char == '\x1b[A':  # Up arrow - history navigation
+                if self.input_mode == "text" and self.input_history:
+                    if self.history_index > 0:
+                        self.history_index -= 1
+                        current_input = self.input_history[self.history_index]
+                continue
+            
+            elif char == '\x1b[B':  # Down arrow - history navigation
+                if self.input_mode == "text" and self.input_history:
+                    if self.history_index < len(self.input_history) - 1:
+                        self.history_index += 1
+                        current_input = self.input_history[self.history_index]
+                    else:
+                        self.history_index = len(self.input_history)
+                        current_input = ""
+                continue
+            
+            elif char == '\x1b':  # Escape
+                if self.multi_line_input:
+                    # Exit multi-line mode
+                    self.multi_line_input = []
+                    current_input = ""
+                elif self.input_mode == "menu":
+                    # Switch back to text mode
+                    self.input_mode = "text"
+                continue
             
             # Mode-specific handling
             if self.input_mode == "text":
                 # Text input mode
-                if char == '\x7f' or char == '\x08':
-                    # Backspace
+                if char == '\x7f' or char == '\x08':  # Backspace
                     current_input = current_input[:-1]
-                elif ord(char) >= 32:
-                    # Printable character
+                elif char == '\x0a':  # Shift+Enter for multi-line (simplified detection)
+                    # Start multi-line mode
+                    if current_input.strip():
+                        self.multi_line_input.append(current_input)
+                    current_input = ""
+                    continue
+                elif ord(char) >= 32:  # Printable character
                     current_input += char
             else:
-                # Menu mode - handle hotkeys
+                # Menu mode - handle colorized hotkeys
                 if char.lower() == 'q':
                     return "##QUIT##"
                 elif char.lower() == 'n':
@@ -443,9 +728,6 @@ class ConsoleUI:
                     return "##SETTINGS##"
                 elif char.lower() == 'm':
                     return "##MODELS##"
-                elif char == '\x1b':  # Escape - back to text mode
-                    self.input_mode = "text"
-                    continue
     
     async def create_new_conversation(self):
         """Create a new conversation"""
@@ -485,8 +767,10 @@ class ConsoleUI:
             pass
     
     async def generate_response(self, user_message: str):
-        """Generate AI response with improved cancellation handling"""
+        """Generate AI response with enhanced streaming and visual feedback"""
         self.generating = True
+        self.start_time = time.time()
+        self.loading_phase_index = 0
         assistant_message = None
         
         try:
@@ -511,27 +795,61 @@ class ConsoleUI:
             # Get client
             client = await BaseModelClient.get_client_for_model(self.selected_model)
             
-            # Add assistant message
+            # Add assistant message with streaming indicator
             assistant_message = Message(role="assistant", content="")
             self.messages.append(assistant_message)
             
-            # Stream response
+            # Enhanced streaming with real-time updates
             full_response = ""
             cancelled = False
+            last_update = time.time()
             
             def update_callback(content: str):
-                nonlocal full_response
+                nonlocal full_response, last_update
                 if not self.generating:
                     return
+                    
                 full_response = content
                 assistant_message.content = content
-                # Redraw screen periodically
-                self.draw_screen("", "Generating response")
+                
+                # Update screen more frequently for better streaming experience
+                current_time = time.time()
+                if current_time - last_update > 0.1:  # Update every 100ms
+                    # Draw with streaming indicator
+                    self.clear_screen()
+                    header_lines = self.draw_header()
+                    for line in header_lines:
+                        print(line)
+                    
+                    # Draw messages with streaming indicator
+                    message_lines = []
+                    for msg in self.messages[:-10]:  # Skip recent messages to save space
+                        pass
+                    
+                    for msg in self.messages[-10:]:
+                        is_streaming = (msg == assistant_message and self.generating)
+                        message_lines.extend(self.format_message(msg, streaming=is_streaming))
+                    
+                    # Display messages
+                    for line in message_lines[-20:]:  # Show last 20 lines
+                        print(line)
+                    
+                    # Show enhanced loading indicator
+                    input_lines = self.draw_input_area("", "Generating response")
+                    for line in input_lines:
+                        print(line)
+                    
+                    footer_lines = self.draw_footer()
+                    for line in footer_lines:
+                        print(line)
+                    
+                    sys.stdout.flush()
+                    last_update = current_time
             
             # Apply style to messages
             styled_messages = apply_style_prefix(api_messages, self.selected_style)
             
-            # Generate streaming response with cancellation support
+            # Generate streaming response with enhanced visual feedback
             try:
                 async for chunk in console_streaming_response(
                     styled_messages, self.selected_model, self.selected_style, client, update_callback
@@ -541,6 +859,7 @@ class ConsoleUI:
                         break
                     if chunk:
                         full_response += chunk
+                        assistant_message.content = full_response
                         
             except asyncio.CancelledError:
                 cancelled = True
@@ -1331,12 +1650,12 @@ class ConsoleUI:
         input("\nPress Enter to continue...")
     
     async def run(self):
-        """Main application loop"""
+        """Enhanced main application loop with welcome experience"""
         # Create initial conversation
         await self.create_new_conversation()
         
-        # Welcome message
-        self.draw_screen("", "Type your message (or 'q' to quit)")
+        # Show welcome screen first
+        self.draw_screen("", "Type your message to begin your AI conversation", show_welcome=True)
         
         while self.running:
             try:
