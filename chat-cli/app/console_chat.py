@@ -17,8 +17,8 @@ import shutil
 
 from .models import Message, Conversation
 from .database import ChatDatabase
-from .config import CONFIG
-from .utils import resolve_model_id
+from .config import CONFIG, save_config
+from .utils import resolve_model_id, generate_conversation_title
 from .console_utils import console_streaming_response, apply_style_prefix
 from .api.base import BaseModelClient
 
@@ -35,6 +35,69 @@ class ConsoleUI:
         self.selected_style = CONFIG["default_style"]
         self.running = True
         self.generating = False
+        self.input_mode = "text"  # "text" or "menu"
+        
+        # Suppress verbose logging for console mode
+        self._setup_console_logging()
+    
+    def _setup_console_logging(self):
+        """Setup logging to minimize disruption to console UI"""
+        import logging
+        
+        # Set root logger to ERROR to suppress all INFO messages
+        logging.getLogger().setLevel(logging.ERROR)
+        
+        # Suppress all app module logging
+        logging.getLogger('app').setLevel(logging.ERROR)
+        logging.getLogger('app.api').setLevel(logging.ERROR)
+        logging.getLogger('app.api.base').setLevel(logging.ERROR)
+        logging.getLogger('app.api.ollama').setLevel(logging.ERROR)
+        logging.getLogger('app.utils').setLevel(logging.ERROR)
+        logging.getLogger('app.console_utils').setLevel(logging.ERROR)
+        
+        # Suppress third-party library logging
+        logging.getLogger('aiohttp').setLevel(logging.ERROR)
+        logging.getLogger('urllib3').setLevel(logging.ERROR)
+        logging.getLogger('httpx').setLevel(logging.ERROR)
+        logging.getLogger('asyncio').setLevel(logging.ERROR)
+        logging.getLogger('root').setLevel(logging.ERROR)
+        
+        # Completely disable all handlers to prevent any output
+        logging.basicConfig(
+            level=logging.CRITICAL,  # Only show CRITICAL messages
+            format='',  # Empty format
+            handlers=[logging.NullHandler()]  # Null handler suppresses all output
+        )
+        
+        # Clear any existing handlers
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        
+        # Add only NullHandler
+        logging.root.addHandler(logging.NullHandler())
+        
+        # Redirect stdout/stderr for subprocess calls (if any)
+        self._dev_null = open(os.devnull, 'w')
+        
+    def _suppress_output(self):
+        """Context manager to suppress all output during sensitive operations"""
+        import sys
+        import contextlib
+        
+        @contextlib.contextmanager
+        def suppress():
+            with open(os.devnull, "w") as devnull:
+                old_stdout = sys.stdout
+                old_stderr = sys.stderr
+                try:
+                    sys.stdout = devnull
+                    sys.stderr = devnull
+                    yield
+                finally:
+                    sys.stdout = old_stdout
+                    sys.stderr = old_stderr
+        
+        return suppress()
         
     def clear_screen(self):
         """Clear the terminal screen"""
@@ -101,7 +164,7 @@ class ConsoleUI:
         """Draw the footer with controls"""
         chars = self.get_border_chars()
         
-        controls = "[q] Quit  [n] New  [h] History  [s] Settings  [ctrl+c] Cancel"
+        controls = "[Tab] Menu Mode  [q] Quit  [n] New  [h] History  [s] Settings"
         footer_line = chars['vertical'] + f" {controls} ".ljust(self.width - 2) + chars['vertical']
         
         return [
@@ -176,20 +239,28 @@ class ConsoleUI:
         return lines
     
     def draw_input_area(self, current_input: str = "", prompt: str = "Type your message") -> List[str]:
-        """Draw the input area"""
+        """Draw the input area with mode indicator"""
         chars = self.get_border_chars()
         lines = []
         
-        # Input prompt
-        prompt_line = chars['vertical'] + f" {prompt}: ".ljust(self.width - 2) + chars['vertical']
+        # Input prompt with mode indicator
+        mode_indicator = "📝" if self.input_mode == "text" else "⚡"
+        mode_text = "TEXT" if self.input_mode == "text" else "MENU"
+        prompt_with_mode = f"{mode_indicator} {prompt} ({mode_text} mode - Tab to switch)"
+        prompt_line = chars['vertical'] + f" {prompt_with_mode}: ".ljust(self.width - 2) + chars['vertical']
         lines.append(prompt_line)
         
         # Input field
-        input_content = current_input
-        if len(input_content) > self.width - 6:
-            input_content = input_content[-(self.width - 9):] + "..."
+        if self.input_mode == "text":
+            input_content = current_input
+            if len(input_content) > self.width - 6:
+                input_content = input_content[-(self.width - 9):] + "..."
+            input_line = chars['vertical'] + f" > {input_content}".ljust(self.width - 2) + chars['vertical']
+        else:
+            # Menu mode - show available hotkeys
+            menu_help = "n)ew  h)istory  s)ettings  q)uit"
+            input_line = chars['vertical'] + f" {menu_help}".ljust(self.width - 2) + chars['vertical']
         
-        input_line = chars['vertical'] + f" > {input_content}".ljust(self.width - 2) + chars['vertical']
         lines.append(input_line)
         
         # Show generating indicator if needed
@@ -246,7 +317,7 @@ class ConsoleUI:
         sys.stdout.flush()
     
     def get_input(self, prompt: str = "Type your message") -> str:
-        """Get user input with real-time display updates"""
+        """Enhanced input with tab navigation and hotkey support"""
         current_input = ""
         
         while True:
@@ -266,10 +337,23 @@ class ConsoleUI:
                 finally:
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
             
-            # Handle special keys
-            if char == '\r' or char == '\n':
-                # Enter - submit input
-                return current_input.strip()
+            # Handle special keys first
+            if char == '\t':
+                # Tab - switch between text and menu mode
+                self.input_mode = "menu" if self.input_mode == "text" else "text"
+                continue
+            elif char == '\r' or char == '\n':
+                # Enter
+                if self.input_mode == "text":
+                    # Submit text input
+                    if current_input.strip():
+                        return current_input.strip()
+                    # If empty input in text mode, switch to menu mode
+                    self.input_mode = "menu"
+                    continue
+                else:
+                    # In menu mode, Enter does nothing
+                    continue
             elif char == '\x03':
                 # Ctrl+C
                 if self.generating:
@@ -277,15 +361,29 @@ class ConsoleUI:
                     return ""
                 else:
                     raise KeyboardInterrupt
-            elif char == '\x7f' or char == '\x08':
-                # Backspace
-                current_input = current_input[:-1]
-            elif char == '\x1b':
-                # Escape sequence - handle arrow keys, etc.
-                continue
-            elif ord(char) >= 32:
-                # Printable character
-                current_input += char
+            
+            # Mode-specific handling
+            if self.input_mode == "text":
+                # Text input mode
+                if char == '\x7f' or char == '\x08':
+                    # Backspace
+                    current_input = current_input[:-1]
+                elif ord(char) >= 32:
+                    # Printable character
+                    current_input += char
+            else:
+                # Menu mode - handle hotkeys
+                if char.lower() == 'q':
+                    return "##QUIT##"
+                elif char.lower() == 'n':
+                    return "##NEW##"
+                elif char.lower() == 'h':
+                    return "##HISTORY##"
+                elif char.lower() == 's':
+                    return "##SETTINGS##"
+                elif char == '\x1b':  # Escape - back to text mode
+                    self.input_mode = "text"
+                    continue
     
     async def create_new_conversation(self):
         """Create a new conversation"""
@@ -303,6 +401,28 @@ class ConsoleUI:
         if self.current_conversation:
             self.db.add_message(self.current_conversation.id, role, content)
     
+    async def _generate_title_background(self, first_message: str):
+        """Generate conversation title in background after first user message"""
+        if not CONFIG.get("generate_dynamic_titles", True):
+            return
+            
+        try:
+            # Get client for title generation
+            with self._suppress_output():
+                client = await BaseModelClient.get_client_for_model(self.selected_model)
+            
+            # Generate title
+            new_title = await generate_conversation_title(first_message, self.selected_model, client)
+            
+            # Update conversation title in database and UI
+            if self.current_conversation and new_title and new_title != "New Conversation":
+                self.db.update_conversation_title(self.current_conversation.id, new_title)
+                self.current_conversation.title = new_title
+                
+        except Exception as e:
+            # Silently fail - title generation is not critical
+            pass
+    
     async def generate_response(self, user_message: str):
         """Generate AI response"""
         self.generating = True
@@ -310,6 +430,14 @@ class ConsoleUI:
         try:
             # Add user message
             await self.add_message("user", user_message)
+            
+            # Generate title for first user message if this is a new conversation
+            if (self.current_conversation and 
+                self.current_conversation.title == "New Conversation" and 
+                len([msg for msg in self.messages if msg.role == "user"]) == 1):
+                # Generate title in background (non-blocking)
+                import asyncio
+                asyncio.create_task(self._generate_title_background(user_message))
             
             # Prepare messages for API
             api_messages = []
@@ -319,8 +447,17 @@ class ConsoleUI:
                     "content": msg.content
                 })
             
-            # Get client
-            client = await BaseModelClient.get_client_for_model(self.selected_model)
+            # Get client with appropriate output suppression
+            model_info = CONFIG["available_models"].get(self.selected_model, {})
+            is_ollama = (model_info.get("provider") == "ollama" or 
+                        "ollama" in self.selected_model.lower() or 
+                        self.selected_model in ["gemma:2b", "gemma:7b", "llama3:8b", "mistral:7b"])
+            
+            if is_ollama:
+                with self._suppress_output():
+                    client = await BaseModelClient.get_client_for_model(self.selected_model)
+            else:
+                client = await BaseModelClient.get_client_for_model(self.selected_model)
             
             # Add assistant message
             assistant_message = Message(role="assistant", content="")
@@ -339,14 +476,15 @@ class ConsoleUI:
             # Apply style to messages
             styled_messages = apply_style_prefix(api_messages, self.selected_style)
             
-            # Generate streaming response
-            async for chunk in console_streaming_response(
-                styled_messages, self.selected_model, self.selected_style, client, update_callback
-            ):
-                if not self.generating:
-                    break
-                if chunk:
-                    full_response += chunk
+            # Generate streaming response with output suppression
+            with self._suppress_output():
+                async for chunk in console_streaming_response(
+                    styled_messages, self.selected_model, self.selected_style, client, update_callback
+                ):
+                    if not self.generating:
+                        break
+                    if chunk:
+                        full_response += chunk
             
             # Update final message content
             assistant_message.content = full_response
@@ -394,37 +532,187 @@ class ConsoleUI:
         except (ValueError, KeyboardInterrupt):
             pass
     
-    def show_settings(self):
-        """Show settings menu"""
+    async def show_settings(self):
+        """Show enhanced settings menu with dynamic model detection"""
+        while True:
+            self.clear_screen()
+            print("=" * self.width)
+            print("SETTINGS".center(self.width))
+            print("=" * self.width)
+            
+            print(f"Current Model: {self.selected_model}")
+            print(f"Current Style: {self.selected_style}")
+            print()
+            
+            print("What would you like to change?")
+            print("1. Select Model")
+            print("2. Response Style")
+            print("3. Detect Ollama Models")
+            print("0. Back to Chat")
+            
+            try:
+                choice = input("\n> ").strip()
+                
+                if choice == "1":
+                    await self._select_model()
+                elif choice == "2":
+                    self._select_style()
+                elif choice == "3":
+                    await self._detect_ollama_models()
+                elif choice == "0" or choice == "":
+                    break
+                    
+            except (ValueError, KeyboardInterrupt):
+                break
+    
+    async def _select_model(self):
+        """Enhanced model selection with all providers"""
         self.clear_screen()
         print("=" * self.width)
-        print("SETTINGS".center(self.width))
+        print("MODEL SELECTION".center(self.width))
         print("=" * self.width)
         
-        print(f"Current Model: {self.selected_model}")
-        print(f"Current Style: {self.selected_style}")
-        print()
+        # Group models by provider
+        providers = {}
+        for model_id, model_info in CONFIG["available_models"].items():
+            provider = model_info["provider"]
+            if provider not in providers:
+                providers[provider] = []
+            providers[provider].append((model_id, model_info))
         
-        # Show available models
-        print("Available Models:")
-        models = list(CONFIG["available_models"].keys())
-        for i, model in enumerate(models):
-            marker = "►" if model == self.selected_model else " "
-            display_name = CONFIG["available_models"][model]["display_name"]
-            print(f"{marker} {i+1:2d}. {display_name}")
+        # Add dynamically detected Ollama models
+        try:
+            with self._suppress_output():
+                from .api.ollama import OllamaClient
+                client = await OllamaClient.create()
+                local_models = await client.get_available_models()
+                
+                if local_models:
+                    if "ollama" not in providers:
+                        providers["ollama"] = []
+                    
+                    for model in local_models:
+                        model_id = model.get("id", "unknown")
+                        # Only add if not already in config
+                        if model_id not in CONFIG["available_models"]:
+                            providers["ollama"].append((model_id, {
+                                "provider": "ollama",
+                                "display_name": model_id,
+                                "max_tokens": 4096
+                            }))
+        except Exception as e:
+            pass  # Ollama not available
         
-        print("\nEnter model number to select (or press Enter to cancel):")
+        # Display models by provider
+        model_list = []
+        print("Available Models by Provider:\n")
+        
+        for provider, models in providers.items():
+            if models:  # Only show providers with available models
+                print(f"=== {provider.upper()} ===")
+                for model_id, model_info in models:
+                    marker = "►" if model_id == self.selected_model else " "
+                    display_name = model_info.get("display_name", model_id)
+                    model_list.append(model_id)
+                    print(f"{marker} {len(model_list):2d}. {display_name}")
+                print()
+        
+        if not model_list:
+            print("No models available. Please check your API keys or Ollama installation.")
+            input("Press Enter to continue...")
+            return
+        
+        print("Enter model number to select (or press Enter to cancel):")
         
         try:
             choice = input("> ").strip()
             if choice and choice.isdigit():
                 idx = int(choice) - 1
-                if 0 <= idx < len(models):
-                    self.selected_model = models[idx]
-                    print(f"Model changed to: {self.selected_model}")
+                if 0 <= idx < len(model_list):
+                    old_model = self.selected_model
+                    self.selected_model = model_list[idx]
+                    print(f"Model changed from {old_model} to {self.selected_model}")
                     input("Press Enter to continue...")
         except (ValueError, KeyboardInterrupt):
             pass
+    
+    def _select_style(self):
+        """Style selection submenu"""
+        self.clear_screen()
+        print("=" * self.width)
+        print("RESPONSE STYLE SELECTION".center(self.width))
+        print("=" * self.width)
+        
+        styles = list(CONFIG["user_styles"].keys())
+        for i, style in enumerate(styles):
+            marker = "►" if style == self.selected_style else " "
+            name = CONFIG["user_styles"][style]["name"]
+            description = CONFIG["user_styles"][style]["description"]
+            print(f"{marker} {i+1:2d}. {name}")
+            print(f"     {description}")
+            print()
+        
+        print("Enter style number to select (or press Enter to cancel):")
+        
+        try:
+            choice = input("> ").strip()
+            if choice and choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(styles):
+                    old_style = self.selected_style
+                    self.selected_style = styles[idx]
+                    print(f"Style changed from {old_style} to {self.selected_style}")
+                    input("Press Enter to continue...")
+        except (ValueError, KeyboardInterrupt):
+            pass
+    
+    async def _detect_ollama_models(self):
+        """Detect and add locally available Ollama models"""
+        self.clear_screen()
+        print("=" * self.width)
+        print("OLLAMA MODEL DETECTION".center(self.width))
+        print("=" * self.width)
+        
+        print("Checking for local Ollama models...")
+        
+        try:
+            with self._suppress_output():
+                from .api.ollama import OllamaClient
+                client = await OllamaClient.create()
+                local_models = await client.get_available_models()
+            
+            if not local_models:
+                print("No local Ollama models found.")
+                print("Use the model browser ('m' key) to download models.")
+            else:
+                print(f"Found {len(local_models)} local Ollama models:")
+                print()
+                
+                new_models = 0
+                for model in local_models:
+                    model_id = model.get("id", "unknown")
+                    print(f"  • {model_id}")
+                    
+                    # Add to config if not already present
+                    if model_id not in CONFIG["available_models"]:
+                        CONFIG["available_models"][model_id] = {
+                            "provider": "ollama",
+                            "display_name": model_id,
+                            "max_tokens": 4096
+                        }
+                        new_models += 1
+                
+                if new_models > 0:
+                    save_config(CONFIG)
+                    print(f"\nAdded {new_models} new models to configuration.")
+                else:
+                    print("\nAll models already in configuration.")
+                    
+        except Exception as e:
+            print(f"Error detecting Ollama models: {str(e)}")
+            print("Make sure Ollama is running and accessible.")
+        
+        input("\nPress Enter to continue...")
     
     async def run(self):
         """Main application loop"""
@@ -441,7 +729,21 @@ class ConsoleUI:
                 if not user_input:
                     continue
                 
-                # Handle commands
+                # Handle special command tokens from enhanced input
+                if user_input == "##QUIT##":
+                    self.running = False
+                    break
+                elif user_input == "##NEW##":
+                    await self.create_new_conversation()
+                    continue
+                elif user_input == "##HISTORY##":
+                    self.show_history()
+                    continue
+                elif user_input == "##SETTINGS##":
+                    await self.show_settings()
+                    continue
+                
+                # Handle legacy single-letter commands for backward compatibility
                 if user_input.lower() == 'q':
                     self.running = False
                     break
@@ -452,7 +754,7 @@ class ConsoleUI:
                     self.show_history()
                     continue
                 elif user_input.lower() == 's':
-                    self.show_settings()
+                    await self.show_settings()
                     continue
                 
                 # Generate response
