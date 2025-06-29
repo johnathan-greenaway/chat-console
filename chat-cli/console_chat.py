@@ -89,19 +89,30 @@ class ConsoleUI:
         import logging
         import os
         
-        # Suppress verbose Ollama logging
-        logging.getLogger('app.api.ollama').setLevel(logging.ERROR)
-        logging.getLogger('aiohttp').setLevel(logging.ERROR)
-        logging.getLogger('urllib3').setLevel(logging.ERROR)
-        logging.getLogger('httpx').setLevel(logging.ERROR)
-        logging.getLogger('asyncio').setLevel(logging.ERROR)
+        # Set root logger to CRITICAL to suppress everything except critical errors
+        logging.getLogger().setLevel(logging.CRITICAL)
         
-        # Redirect any remaining output to avoid TUI disruption
-        logging.basicConfig(
-            level=logging.ERROR,
-            format='%(levelname)s: %(message)s',
-            handlers=[logging.NullHandler()]  # Suppress console output
-        )
+        # Clear any existing handlers first
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        
+        # Add only NullHandler to suppress all output
+        logging.root.addHandler(logging.NullHandler())
+        
+        # Aggressively suppress all known loggers
+        noisy_loggers = [
+            'app', 'app.api', 'app.api.base', 'app.api.ollama', 
+            'app.utils', 'app.console_utils', 'aiohttp', 'urllib3', 
+            'httpx', 'asyncio', 'root', 'INFO', 'DEBUG', 'WARNING',
+            'httpcore', 'httpx._client', 'hpack', 'h11'
+        ]
+        
+        for logger_name in noisy_loggers:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.CRITICAL)
+            logger.handlers = []
+            logger.addHandler(logging.NullHandler())
+            logger.propagate = False
         
         # Redirect stdout/stderr for subprocess calls (if any)
         self._dev_null = open(os.devnull, 'w')
@@ -863,7 +874,7 @@ class ConsoleUI:
         # Rate limit updates to avoid flickering, but allow faster updates for better streaming effect
         current_time = time.time()
         if hasattr(self, '_last_display_update'):
-            if current_time - self._last_display_update < 0.05:  # Max 20 updates per second for smoother streaming
+            if current_time - self._last_display_update < 0.02:  # Max 50 updates per second for very smooth streaming
                 return
         self._last_display_update = current_time
         

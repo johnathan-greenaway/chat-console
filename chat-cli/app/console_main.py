@@ -41,7 +41,9 @@ setup_console_logging()
 
 async def run_console_app():
     """Run the console application"""
-    from .console_chat import main as console_main
+    # Import the correct console_chat.py from parent directory
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from console_chat import main as console_main
     await console_main()
 
 def main():
