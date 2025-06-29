@@ -786,39 +786,16 @@ class ConsoleUI:
                 title_client = await AnthropicClient.create()
                 title_model = "claude-3-haiku-20240307"
             else:
-                # Fallback to current model with optimization for Ollama
+                # Fallback to current model - keep same model to preserve warming
                 selected_model_resolved = resolve_model_id(self.selected_model)
                 client_type = BaseModelClient.get_client_type_for_model(selected_model_resolved)
                 
-                # Special handling for Ollama models - prefer smaller models
+                # For Ollama models, use the SAME model the user selected
                 if client_type and client_type.__name__ == "OllamaClient":
                     try:
                         from .api.ollama import OllamaClient
-                        ollama_client = await OllamaClient.create()
-                        available_models = await ollama_client.get_available_models()
-                        
-                        # Prefer smallest, fastest models for title generation
-                        preferred_models = [
-                            "smalllm2:135m", "smollm2:latest", "tinyllama", "gemma:2b", 
-                            "phi3:mini", "qwen2.5:0.5b", "qwen2:0.5b"
-                        ]
-                        
-                        # Find the best small model available
-                        small_model_found = False
-                        for preferred in preferred_models:
-                            for model in available_models:
-                                if model.get("id", "") == preferred:
-                                    title_model = preferred
-                                    small_model_found = True
-                                    break
-                            if small_model_found:
-                                break
-                        
-                        if not small_model_found:
-                            # Use the current model if no small models found
-                            title_model = selected_model_resolved
-                            
-                        title_client = ollama_client
+                        title_client = await OllamaClient.create()
+                        title_model = selected_model_resolved  # Use same model
                         
                     except Exception:
                         # Fallback to standard approach
@@ -832,19 +809,59 @@ class ConsoleUI:
             if not title_client or not title_model:
                 return
             
-            # Generate title with timeout handling
-            title_generation_task = asyncio.create_task(
-                generate_conversation_title(first_message, title_model, title_client)
-            )
+            # Generate title with timeout handling and fallback for Ollama
+            new_title = None
             
             try:
+                # For Ollama models, generate title directly to preserve warming
+                if client_type and client_type.__name__ == "OllamaClient":
+                    title_generation_task = asyncio.create_task(
+                        self._generate_title_directly(first_message, title_model, title_client)
+                    )
+                else:
+                    # For other providers, use the utils function
+                    title_generation_task = asyncio.create_task(
+                        generate_conversation_title(first_message, title_model, title_client)
+                    )
+                
                 # Wait for completion with 30-second timeout
                 new_title = await asyncio.wait_for(title_generation_task, timeout=30)
-            except asyncio.TimeoutError:
-                # Cancel the task and use default title
-                if not title_generation_task.done():
+                
+            except (asyncio.TimeoutError, Exception) as e:
+                # Cancel the task if it's still running
+                if 'title_generation_task' in locals() and not title_generation_task.done():
                     title_generation_task.cancel()
-                new_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                
+                # For Ollama models, try fallback to small model if main model failed
+                if (client_type and client_type.__name__ == "OllamaClient" and 
+                    not isinstance(e, asyncio.TimeoutError)):
+                    try:
+                        # Try with a small model as fallback
+                        from .api.ollama import OllamaClient
+                        fallback_client = await OllamaClient.create()
+                        available_models = await fallback_client.get_available_models()
+                        
+                        # Find a small model for fallback
+                        small_fallback_models = ["smollm2:latest", "tinyllama", "gemma:2b"]
+                        fallback_model = None
+                        
+                        for small_model in small_fallback_models:
+                            if any(model.get("id", "") == small_model for model in available_models):
+                                fallback_model = small_model
+                                break
+                        
+                        if fallback_model:
+                            fallback_task = asyncio.create_task(
+                                generate_conversation_title(first_message, fallback_model, fallback_client)
+                            )
+                            new_title = await asyncio.wait_for(fallback_task, timeout=15)
+                            
+                    except Exception:
+                        # If fallback also fails, use default title
+                        new_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                else:
+                    # For timeouts or non-Ollama models, use default title
+                    new_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
             
             # Update conversation title if valid
             if (new_title and 
@@ -865,6 +882,54 @@ class ConsoleUI:
         except Exception:
             # Silently fail - title generation is not critical
             pass
+    
+    async def _generate_title_directly(self, message: str, model: str, client) -> str:
+        """Generate title directly using the passed client to preserve model warming"""
+        try:
+            # Create a special prompt for title generation
+            title_prompt = [
+                {
+                    "role": "system", 
+                    "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. ONLY output the title text. DO NOT include phrases like 'Sure, here's a title' or any additional formatting, explanation, or quotes."
+                },
+                {
+                    "role": "user",
+                    "content": message
+                }
+            ]
+            
+            # Generate title using the existing client (preserves warming)
+            title = await client.generate_completion(
+                messages=title_prompt,
+                model=model,
+                temperature=0.7,
+                max_tokens=60
+            )
+            
+            # Sanitize the title - remove quotes, extra spaces and unwanted prefixes
+            if title:
+                title = title.strip().strip('"').strip("'")
+                # Remove common prefixes that models sometimes add
+                prefixes_to_remove = [
+                    "Title: ", "title: ", "Here's a title: ", "A good title would be: ",
+                    "Conversation about ", "Discussion on ", "Chat about "
+                ]
+                for prefix in prefixes_to_remove:
+                    if title.startswith(prefix):
+                        title = title[len(prefix):].strip()
+                
+                # Ensure reasonable length
+                if len(title) > 60:
+                    title = title[:57] + "..."
+                elif len(title) < 3:
+                    title = "New Conversation"
+                    
+                return title
+            
+            return "New Conversation"
+            
+        except Exception:
+            return "New Conversation"
     
     def _get_context_aware_loading_phrases(self, user_message: str) -> List[str]:
         """Generate context-aware loading phrases based on user input"""
@@ -1135,6 +1200,11 @@ class ConsoleUI:
                     "role": msg.role,
                     "content": msg.content
                 })
+            
+            # Warm up Ollama model right before generation (after auto-titling)
+            if not hasattr(self, '_model_warmed'):
+                await self._warm_up_ollama_model(self.selected_model)
+                self._model_warmed = True
             
             # Get client
             client = await BaseModelClient.get_client_for_model(self.selected_model)
@@ -2011,6 +2081,7 @@ class ConsoleUI:
                 if success:
                     # Silently log success without disrupting UI
                     pass
+                    
         except Exception:
             # Silently handle any errors - warm-up is best effort
             pass
@@ -2020,9 +2091,8 @@ class ConsoleUI:
         # Create initial conversation
         await self.create_new_conversation()
         
-        # Warm up Ollama model if selected
-        if self.selected_model:
-            asyncio.create_task(self._warm_up_ollama_model(self.selected_model))
+        # Note: We'll warm up the model right before the main generation
+        # to avoid conflicts with auto-titling
         
         # Show welcome screen first
         self.draw_screen("", "Type your message to begin your AI conversation", show_welcome=True)
