@@ -4,6 +4,11 @@ Pure Console Chat CLI - No Textual Dependencies
 A true terminal interface following Dieter Rams principles
 """
 
+# Pre-import logging suppression to prevent any output during imports
+import logging
+logging.getLogger().setLevel(logging.CRITICAL)
+logging.basicConfig(level=logging.CRITICAL, handlers=[logging.NullHandler()])
+
 import os
 import sys
 import asyncio
