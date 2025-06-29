@@ -975,6 +975,41 @@ class ConsoleUI:
         # Ensure output is flushed
         sys.stdout.flush()
     
+    async def _animate_loading_screen(self):
+        """Continuously animate the loading screen while generating"""
+        activity_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        dot_patterns = ["   ", ".  ", ".. ", "..."]
+        
+        while self.generating and not hasattr(self, '_streaming_started'):
+            try:
+                elapsed = int(time.time() - self.start_time)
+                
+                # Get current loading phrase
+                phrase = self._get_dynamic_loading_phrase(self._current_user_message)
+                
+                # Cycle through spinner characters
+                spinner_index = elapsed % len(activity_chars)
+                activity_indicator = activity_chars[spinner_index]
+                
+                # Cycle through dot patterns
+                dot_index = (elapsed // 2) % len(dot_patterns)
+                dots = dot_patterns[dot_index]
+                
+                # Create animated status
+                status = f"{activity_indicator} {phrase}{dots} ({elapsed}s) - preparing..."
+                
+                # Redraw screen with updated animation
+                self.clear_screen()
+                self._draw_streaming_screen(status)
+                sys.stdout.flush()
+                
+                # Update every 0.5 seconds for smooth animation
+                await asyncio.sleep(0.5)
+                
+            except Exception:
+                # If animation fails, break gracefully
+                break
+    
     async def generate_response(self, user_message: str):
         """Generate AI response with enhanced streaming and visual feedback"""
         self.generating = True
@@ -982,6 +1017,7 @@ class ConsoleUI:
         self.loading_phase_index = 0
         self._current_user_message = user_message  # Store for context-aware loading
         assistant_message = None
+        animation_task = None
         
         # Clear any cached context phrases for new generation
         if hasattr(self, '_current_context_phrases'):
@@ -993,6 +1029,9 @@ class ConsoleUI:
             
             # Show loading animation immediately after user message is added
             self._show_initial_loading_screen()
+            
+            # Start animated loading screen in background
+            animation_task = asyncio.create_task(self._animate_loading_screen())
             
             # Generate title for first user message if this is a new conversation
             if (self.current_conversation and 
@@ -1025,6 +1064,9 @@ class ConsoleUI:
                 if not self.generating:
                     return
                     
+                # Signal that streaming has started (stops animation)
+                self._streaming_started = True
+                
                 full_response = content
                 assistant_message.content = content
                 
@@ -1078,6 +1120,15 @@ class ConsoleUI:
                 await self.add_message("assistant", error_msg)
         finally:
             self.generating = False
+            # Clean up animation task and reset streaming flag
+            if hasattr(self, '_streaming_started'):
+                delattr(self, '_streaming_started')
+            # Cancel animation task if it's still running
+            try:
+                if animation_task and not animation_task.done():
+                    animation_task.cancel()
+            except:
+                pass
     
     def show_history(self):
         """Show conversation history"""
