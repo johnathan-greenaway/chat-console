@@ -759,21 +759,109 @@ class ConsoleUI:
     
     async def _generate_title_background(self, first_message: str):
         """Generate conversation title in background after first user message"""
-        if not CONFIG.get("generate_dynamic_titles", True):
+        if not CONFIG.get("generate_dynamic_titles", True) or not self.current_conversation:
+            return
+            
+        # Ensure message is long enough to generate a meaningful title
+        if len(first_message) < 3:
             return
             
         try:
-            # Get client for title generation
-            client = await BaseModelClient.get_client_for_model(self.selected_model)
+            # Use sophisticated model prioritization like the legacy version
+            title_client = None
+            title_model = None
             
-            # Generate title
-            new_title = await generate_conversation_title(first_message, self.selected_model, client)
+            # Import needed components
+            from .config import OPENAI_API_KEY, ANTHROPIC_API_KEY
             
-            # Update conversation title in database and UI
-            if self.current_conversation and new_title and new_title != "New Conversation":
-                self.db.update_conversation_title(self.current_conversation.id, new_title)
-                self.current_conversation.title = new_title
+            # Prioritize faster, cheaper models for title generation
+            if OPENAI_API_KEY:
+                # OpenAI is most reliable for title generation
+                from .api.openai import OpenAIClient
+                title_client = await OpenAIClient.create()
+                title_model = "gpt-3.5-turbo"
+            elif ANTHROPIC_API_KEY:
+                # Anthropic is second choice
+                from .api.anthropic import AnthropicClient
+                title_client = await AnthropicClient.create()
+                title_model = "claude-3-haiku-20240307"
+            else:
+                # Fallback to current model with optimization for Ollama
+                selected_model_resolved = resolve_model_id(self.selected_model)
+                client_type = BaseModelClient.get_client_type_for_model(selected_model_resolved)
                 
+                # Special handling for Ollama models - prefer smaller models
+                if client_type and client_type.__name__ == "OllamaClient":
+                    try:
+                        from .api.ollama import OllamaClient
+                        ollama_client = await OllamaClient.create()
+                        available_models = await ollama_client.get_available_models()
+                        
+                        # Prefer smallest, fastest models for title generation
+                        preferred_models = [
+                            "smalllm2:135m", "smollm2:latest", "tinyllama", "gemma:2b", 
+                            "phi3:mini", "qwen2.5:0.5b", "qwen2:0.5b"
+                        ]
+                        
+                        # Find the best small model available
+                        small_model_found = False
+                        for preferred in preferred_models:
+                            for model in available_models:
+                                if model.get("id", "") == preferred:
+                                    title_model = preferred
+                                    small_model_found = True
+                                    break
+                            if small_model_found:
+                                break
+                        
+                        if not small_model_found:
+                            # Use the current model if no small models found
+                            title_model = selected_model_resolved
+                            
+                        title_client = ollama_client
+                        
+                    except Exception:
+                        # Fallback to standard approach
+                        title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
+                        title_model = selected_model_resolved
+                else:
+                    # For other providers, use the current model
+                    title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
+                    title_model = selected_model_resolved
+            
+            if not title_client or not title_model:
+                return
+            
+            # Generate title with timeout handling
+            title_generation_task = asyncio.create_task(
+                generate_conversation_title(first_message, title_model, title_client)
+            )
+            
+            try:
+                # Wait for completion with 30-second timeout
+                new_title = await asyncio.wait_for(title_generation_task, timeout=30)
+            except asyncio.TimeoutError:
+                # Cancel the task and use default title
+                if not title_generation_task.done():
+                    title_generation_task.cancel()
+                new_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+            
+            # Update conversation title if valid
+            if (new_title and 
+                new_title != "New Conversation" and 
+                not new_title.startswith("Conversation (") and
+                self.current_conversation):
+                
+                # Verify conversation still exists and is current
+                current_conv_id = self.current_conversation.id
+                if self.db.get_conversation(current_conv_id):
+                    # Update database
+                    self.db.update_conversation(current_conv_id, title=new_title)
+                    
+                    # Update local conversation object if still current
+                    if self.current_conversation and self.current_conversation.id == current_conv_id:
+                        self.current_conversation.title = new_title
+                        
         except Exception:
             # Silently fail - title generation is not critical
             pass
