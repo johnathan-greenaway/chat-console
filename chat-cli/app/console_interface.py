@@ -957,6 +957,24 @@ class ConsoleUI:
         
         return lines
     
+    def _show_initial_loading_screen(self):
+        """Show initial loading screen immediately when generation starts"""
+        # Clear screen and show loading state
+        self.clear_screen()
+        
+        # Get initial loading phrase
+        phrase = self._get_dynamic_loading_phrase(self._current_user_message)
+        dots = "."
+        activity_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        activity_indicator = activity_chars[0]  # Start with first spinner
+        initial_status = f"{activity_indicator} {phrase}{dots} (0s) - preparing..."
+        
+        # Draw the screen with initial loading state
+        self._draw_streaming_screen(initial_status)
+        
+        # Ensure output is flushed
+        sys.stdout.flush()
+    
     async def generate_response(self, user_message: str):
         """Generate AI response with enhanced streaming and visual feedback"""
         self.generating = True
@@ -972,6 +990,9 @@ class ConsoleUI:
         try:
             # Add user message
             await self.add_message("user", user_message)
+            
+            # Show loading animation immediately after user message is added
+            self._show_initial_loading_screen()
             
             # Generate title for first user message if this is a new conversation
             if (self.current_conversation and 
@@ -1150,6 +1171,10 @@ class ConsoleUI:
                     old_model = self.selected_model
                     self.selected_model = models[idx]
                     print(f"Model changed from {old_model} to {self.selected_model}")
+                    
+                    # Warm up the new Ollama model in the background
+                    asyncio.create_task(self._warm_up_ollama_model(self.selected_model))
+                    
                     input("Press Enter to continue...")
         except (ValueError, KeyboardInterrupt):
             pass
@@ -1798,6 +1823,9 @@ class ConsoleUI:
                 old_model = self.selected_model
                 self.selected_model = local_models[idx].get("id", "unknown")
                 print(f"\n✓ Switched from {old_model} to {self.selected_model}")
+                
+                # Warm up the new Ollama model in the background
+                asyncio.create_task(self._warm_up_ollama_model(self.selected_model))
     
     async def _switch_model(self):
         """Switch current model (combines local and available models)"""
@@ -1811,10 +1839,35 @@ class ConsoleUI:
             
         input("\nPress Enter to continue...")
     
+    async def _warm_up_ollama_model(self, model_id: str):
+        """Warm up an Ollama model in the background"""
+        try:
+            # Check if this is an Ollama model
+            from .api.base import BaseModelClient
+            client_class = BaseModelClient.get_client_type_for_model(model_id)
+            
+            if client_class and client_class.__name__ == "OllamaClient":
+                # Get or create the Ollama client
+                from .api.ollama import OllamaClient
+                client = await OllamaClient.create()
+                
+                # Preload the model
+                success = await client.preload_model(model_id)
+                if success:
+                    # Silently log success without disrupting UI
+                    pass
+        except Exception:
+            # Silently handle any errors - warm-up is best effort
+            pass
+    
     async def run(self):
         """Enhanced main application loop with welcome experience"""
         # Create initial conversation
         await self.create_new_conversation()
+        
+        # Warm up Ollama model if selected
+        if self.selected_model:
+            asyncio.create_task(self._warm_up_ollama_model(self.selected_model))
         
         # Show welcome screen first
         self.draw_screen("", "Type your message to begin your AI conversation", show_welcome=True)
