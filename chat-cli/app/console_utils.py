@@ -55,8 +55,17 @@ async def console_streaming_response(
             style=style
         ):
             if chunk:
-                # For Ollama, only break down chunks if they contain multiple words
-                if is_ollama and len(chunk) > 10 and ' ' in chunk and chunk.count(' ') > 1:
+                # Check if this is an error message that should not be streamed word by word
+                is_error_message = (
+                    "The model is still loading" in chunk or
+                    "I'm sorry, but I couldn't generate a response" in chunk or
+                    chunk.startswith("Error:") or
+                    chunk.startswith("Could not connect")
+                )
+                
+                # For Ollama, only break down chunks if they contain multiple words AND are not error messages
+                if (is_ollama and len(chunk) > 10 and ' ' in chunk and 
+                    chunk.count(' ') > 1 and not is_error_message):
                     # Split large multi-word chunks into individual words for smoother streaming
                     words = chunk.split(' ')
                     for i, word in enumerate(words):
@@ -74,7 +83,7 @@ async def console_streaming_response(
                         # Small delay between words for streaming effect
                         await asyncio.sleep(0.02)
                 else:
-                    # Use the chunk as-is (Ollama already provides good chunking)
+                    # Use the chunk as-is (for normal content or error messages)
                     full_content += chunk
                     
                     # Update display immediately for each chunk
@@ -83,8 +92,8 @@ async def console_streaming_response(
                     
                     yield chunk
                     
-                    # Small delay to make streaming visible
-                    if is_ollama:
+                    # Small delay to make streaming visible (but not for error messages)
+                    if is_ollama and not is_error_message:
                         await asyncio.sleep(0.01)
         
         # Process any remaining buffer content

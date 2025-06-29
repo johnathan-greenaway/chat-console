@@ -1842,14 +1842,30 @@ class ConsoleUI:
     async def _warm_up_ollama_model(self, model_id: str):
         """Warm up an Ollama model in the background"""
         try:
+            # Don't warm up if we're already generating (avoid conflicts)
+            if self.generating:
+                return
+                
             # Check if this is an Ollama model
             from .api.base import BaseModelClient
             client_class = BaseModelClient.get_client_type_for_model(model_id)
             
             if client_class and client_class.__name__ == "OllamaClient":
+                # Add a small delay to avoid conflicts with immediate usage
+                await asyncio.sleep(0.5)
+                
+                # Check again if we're still not generating
+                if self.generating:
+                    return
+                
                 # Get or create the Ollama client
                 from .api.ollama import OllamaClient
                 client = await OllamaClient.create()
+                
+                # Check if model is already preloaded
+                preloaded_models = client.get_preloaded_models()
+                if model_id in preloaded_models:
+                    return  # Already warm
                 
                 # Preload the model
                 success = await client.preload_model(model_id)
