@@ -5,276 +5,370 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
 
-# Define color palette
-COLORS = {
+# Rams-inspired minimal color palette
+# Following "Less but better" - functional colors with clear hierarchy
+RAMS_COLORS = {
     "dark": {
-        "background": "#0C0C0C",
-        "foreground": "#33FF33",
-        "user_msg": "#00FFFF",
-        "assistant_msg": "#33FF33",
-        "system_msg": "#FF8C00",
-        "highlight": "#FFD700",
-        "selection": "#1A1A1A",
-        "border": "#33FF33",
-        "error": "#FF0000",
-        "success": "#33FF33",
+        "background": "#0C0C0C",      # Deep black
+        "foreground": "#E8E8E8",      # Clean white
+        "accent": "#33FF33",          # Minimal green accent
+        "muted": "#666666",           # Subtle gray
+        "border": "#333333",          # Dark gray borders
+        "selection": "#1A1A1A",       # Subtle selection
+        "user_msg": "#E8E8E8",        # Same as foreground for consistency
+        "assistant_msg": "#E8E8E8",   # Same as foreground for consistency
+        "system_msg": "#666666",      # Muted for less important info
+        "highlight": "#33FF33",       # Use accent for highlights
+        "error": "#FF4444",           # Minimal red for errors
+        "success": "#33FF33",         # Use accent for success
+        "timestamp": "#666666",       # Muted for timestamps
     },
     "light": {
-        "background": "#F0F0F0",
-        "foreground": "#000000",
-        "user_msg": "#0000FF",
-        "assistant_msg": "#008000",
-        "system_msg": "#800080",
-        "highlight": "#0078D7",
-        "selection": "#ADD6FF",
-        "border": "#D0D0D0",
-        "error": "#D32F2F",
-        "success": "#388E3C",
+        "background": "#FFFFFF",      # Pure white
+        "foreground": "#000000",      # Pure black
+        "accent": "#007ACC",          # Minimal blue accent
+        "muted": "#999999",           # Subtle gray
+        "border": "#CCCCCC",          # Light gray borders
+        "selection": "#F0F0F0",       # Subtle selection
+        "user_msg": "#000000",        # Same as foreground
+        "assistant_msg": "#000000",   # Same as foreground
+        "system_msg": "#999999",      # Muted
+        "highlight": "#007ACC",       # Use accent
+        "error": "#CC0000",           # Minimal red
+        "success": "#007ACC",         # Use accent
+        "timestamp": "#999999",       # Muted for timestamps
     }
 }
 
+# Legacy alias for backward compatibility
+COLORS = RAMS_COLORS
+
 def get_theme(theme_name="dark"):
-    """Get Rich theme based on theme name"""
-    colors = COLORS.get(theme_name, COLORS["dark"])
+    """Get Rich theme based on Rams design principles"""
+    colors = RAMS_COLORS.get(theme_name, RAMS_COLORS["dark"])
     
     return Theme({
-        "user": Style(color=colors["user_msg"], bold=True),
-        "assistant": Style(color=colors["assistant_msg"]),
-        "system": Style(color=colors["system_msg"], italic=True),
-        "highlight": Style(color=colors["highlight"], bold=True),
-        "selection": Style(bgcolor=colors["selection"]),
-        "border": Style(color=colors["border"]),
-        "error": Style(color=colors["error"], bold=True),
-        "success": Style(color=colors["success"]),
-        "prompt": Style(color=colors["highlight"]),
-        "heading": Style(color=colors["highlight"], bold=True),
-        "dim": Style(color=colors["border"]),
-        "code": Style(bgcolor="#2D2D2D", color="#D4D4D4"),
-        "code.syntax": Style(color="#569CD6"),
-        "link": Style(color=colors["highlight"], underline=True),
+        "user": Style(color=colors["user_msg"]),           # No bold - cleaner
+        "assistant": Style(color=colors["assistant_msg"]),   # Consistent with user
+        "system": Style(color=colors["muted"], italic=True), # Subtle for system msgs
+        "highlight": Style(color=colors["accent"]),          # Use accent sparingly
+        "selection": Style(bgcolor=colors["selection"]),     # Subtle selection
+        "border": Style(color=colors["border"]),            # Functional borders
+        "error": Style(color=colors["error"]),              # Clear error indication
+        "success": Style(color=colors["success"]),          # Minimal success
+        "prompt": Style(color=colors["accent"]),            # Use accent for prompts
+        "heading": Style(color=colors["accent"]),           # Minimal headings
+        "dim": Style(color=colors["muted"]),               # Muted for less important
+        "timestamp": Style(color=colors["timestamp"]),      # Subtle timestamps
+        "code": Style(bgcolor=colors["selection"], color=colors["foreground"]),  # Minimal code styling
+        "code.syntax": Style(color=colors["accent"]),       # Use accent for syntax
+        "link": Style(color=colors["accent"]),             # Clean links
     })
 
-# Textual CSS for the application
+# Rams-inspired CSS following "As little design as possible"
 CSS = """
-/* Base styles */
+/* Base styles - Clean foundation */
 Screen {
-    background: $surface;
-    color: $text;
+    background: #0C0C0C;  /* Deep black */
+    color: #E8E8E8;       /* Clean white */
 }
 
-/* Chat message styles */
+/* Message display - Purposeful spacing */
 .message {
     width: 100%;
-    padding: 0 1;
-    margin: 0;
+    padding: 2 3;         /* Generous padding for readability */
+    margin: 1 0;          /* Vertical breathing room */
+    text-wrap: wrap;
 }
 
 .message-content {
     width: 100%;
     text-align: left;
     padding: 0;
+    line-height: 1.4;     /* Better readability */
 }
 
-/* Code blocks */
+/* User messages - Minimal accent */
+.user-message {
+    background: #1A1A1A;  /* Subtle background */
+    border-left: solid #33FF33 2;  /* Minimal accent line */
+    margin-left: 2;       /* Slight indent */
+}
+
+/* Assistant messages - Clean distinction */
+.assistant-message {
+    background: #0C0C0C;  /* Clean background */
+    border-left: solid #666666 1;  /* Subtle indicator */
+    margin-right: 2;      /* Opposite indent */
+}
+
+/* Code blocks - Functional styling */
 .code-block {
-    background: $surface-darken-3;
-    color: $text-muted;
-    border: solid $primary-darken-3;
-    margin: 1 2;
-    padding: 1;
+    background: #1A1A1A;
+    color: #E8E8E8;
+    border: solid #333333 1;
+    margin: 1 0;
+    padding: 2;
     overflow: auto;
+    font-family: monospace;
 }
 
-/* Input area */
+/* Input area - Clean and functional */
 #input-container {
     height: auto;
-    background: $surface;
-    border-top: solid $primary-darken-2;
-    padding: 0;
+    background: #0C0C0C;
+    border-top: solid #333333 1;
+    padding: 2;           /* Generous padding */
 }
 
 #message-input {
-    background: $surface-darken-1;
-    color: $text;
-    border: solid $primary-darken-2;
+    background: #0C0C0C;
+    color: #E8E8E8;
+    border: solid #333333 1;  /* Single, clean border */
     min-height: 2;
-    padding: 0 1;
+    padding: 1 2;         /* Comfortable padding */
 }
 
 #message-input:focus {
-    border: tall $primary;
+    border: solid #33FF33 1;  /* Minimal focus indicator */
+    outline: none;
 }
 
-/* Action buttons */
+/* Buttons - Minimal and functional */
 .action-button {
-    background: $primary;
-    color: #FFFFFF !important; /* Explicit white text */
-    border: none;
-    min-width: 10;
-    margin-left: 1;
-    padding: 0 1; /* Add padding */
-    text-style: bold;
-    font-size: 1.1;
+    background: transparent;
+    color: #E8E8E8;
+    border: solid #333333 1;
+    min-width: 8;
+    margin: 0 1;
+    padding: 1 2;
+    text-style: normal;   /* No bold - cleaner */
 }
 
 .action-button:hover {
-    background: $primary-lighten-1;
-    color: #FFFFFF !important;
-    text-style: bold;
+    background: #1A1A1A;
+    border: solid #33FF33 1;
+    color: #E8E8E8;
 }
 
-/* Sidebar */
+.action-button:focus {
+    border: solid #33FF33 1;
+}
+
+/* Sidebar - Clean hierarchy */
 #sidebar {
     width: 25%;
-    min-width: 18;
-    background: $surface-darken-1;
-    border-right: solid $primary-darken-2 1;
+    min-width: 20;
+    background: #0C0C0C;
+    border-right: solid #333333 1;
 }
 
-/* Chat list */
+/* Chat list - Functional design */
 .chat-item {
-    padding: 0 1;
-    height: 2;
-    border-bottom: solid $primary-darken-3 1;
+    padding: 1 2;         /* Comfortable padding */
+    height: auto;
+    min-height: 3;
+    border-bottom: solid #1A1A1A 1;
 }
 
 .chat-item:hover {
-    background: $primary-darken-2;
+    background: #1A1A1A;  /* Subtle hover */
 }
 
 .chat-item.selected {
-    background: $primary-darken-1;
-    border-left: wide $primary;
+    background: #1A1A1A;
+    border-left: solid #33FF33 2;  /* Minimal selection indicator */
 }
 
 .chat-title {
     width: 100%;
-    content-align: center middle;
+    content-align: left top;
     text-align: left;
+    color: #E8E8E8;
 }
 
 .chat-model {
-    color: $text-muted;
-    text-align: right;
+    color: #666666;       /* Muted secondary info */
+    text-align: left;
+    font-size: 0.9;
 }
 
 .chat-date {
-    color: $text-muted;
+    color: #666666;       /* Consistent muted color */
     text-align: right;
+    font-size: 0.9;
 }
 
-/* Search input */
+/* Search input - Clean and functional */
 #search-input {
     width: 100%;
-    border: solid $primary-darken-2 1;
-    margin: 0 1;
-    height: 2;
+    border: solid #333333 1;
+    margin: 1;
+    height: 3;
+    padding: 1;
+    background: #0C0C0C;
+    color: #E8E8E8;
 }
 
 #search-input:focus {
-    border: solid $primary;
+    border: solid #33FF33 1;
+    outline: none;
 }
 
-/* Model selector */
+/* Selectors - Consistent minimal styling */
 #model-selector {
     width: 100%;
-    height: 2;
-    margin: 0 1;
-    background: $surface-darken-1;
-    border: solid $primary-darken-2 1;
+    height: 3;
+    margin: 1;
+    background: #0C0C0C;
+    border: solid #333333 1;
+    color: #E8E8E8;
+    padding: 1;
 }
 
-/* Style selector */
 #style-selector {
     width: 100%;
-    height: 2;
-    margin: 0 1;
-    background: $surface-darken-1;
-    border: solid $primary-darken-2 1;
+    height: 3;
+    margin: 1;
+    background: #0C0C0C;
+    border: solid #333333 1;
+    color: #E8E8E8;
+    padding: 1;
 }
 
-/* Header */
+/* Header - Clean information architecture */
 #app-header {
     width: 100%;
-    height: 2;
-    background: $surface-darken-2;
-    color: $text;
-    content-align: center middle;
-    text-align: center;
-    border-bottom: solid $primary-darken-2 1;
+    height: 3;
+    background: #0C0C0C;
+    color: #E8E8E8;
+    content-align: left middle;
+    text-align: left;
+    border-bottom: solid #333333 1;
+    padding: 0 2;
 }
 
-/* Loading indicator */
+/* Loading indicator - Minimal and unobtrusive */
 #loading-indicator {
-    background: $surface-darken-1;
-    color: $text;
-    padding: 0 1;
+    background: #0C0C0C;
+    color: #666666;       /* Muted for less distraction */
+    padding: 1 2;
     height: auto;
     width: 100%;
-    border-top: solid $primary-darken-2 1;
+    border-top: solid #333333 1;
     display: none;
+    text-align: center;
 }
 
-/* Settings modal */
+/* Modal - Clean and focused */
 .modal {
-    background: $surface;
-    border: solid $primary;
-    padding: 1;
+    background: #0C0C0C;
+    border: solid #333333 1;
+    padding: 2;
     height: auto;
     min-width: 40;
     max-width: 60;
 }
 
 .modal-title {
-    background: $primary;
-    color: $text;
+    background: #0C0C0C;
+    color: #E8E8E8;
     width: 100%;
-    height: 3;
-    content-align: center middle;
-    text-align: center;
+    height: auto;
+    content-align: left middle;
+    text-align: left;
+    padding: 1 0;
+    border-bottom: solid #333333 1;
+    margin-bottom: 2;
 }
 
 .form-label {
     width: 100%;
     padding: 1 0;
+    color: #E8E8E8;
 }
 
 .form-input {
     width: 100%;
-    background: $surface-darken-1;
-    border: solid $primary-darken-2;
+    background: #0C0C0C;
+    border: solid #333333 1;
     height: 3;
-    margin-bottom: 1;
+    margin-bottom: 2;
+    padding: 1;
+    color: #E8E8E8;
 }
 
 .form-input:focus {
-    border: solid $primary;
+    border: solid #33FF33 1;
+    outline: none;
 }
 
 .button-container {
     width: 100%;
-    height: 3;
+    height: auto;
     align: right middle;
+    padding-top: 2;
 }
 
 .button {
-    background: $primary-darken-1;
-    color: $text;
-    min-width: 6;
+    background: transparent;
+    color: #E8E8E8;
+    min-width: 8;
     margin-left: 1;
-    border: solid $primary 1;
+    border: solid #333333 1;
+    padding: 1 2;
+}
+
+.button:hover {
+    background: #1A1A1A;
+    border: solid #33FF33 1;
 }
 
 .button.cancel {
-    background: $error;
+    border: solid #FF4444 1;
 }
 
-/* Tags */
+.button.cancel:hover {
+    border: solid #FF4444 1;
+    background: #1A1A1A;
+}
+
+/* Tags - Minimal and functional */
 .tag {
-    background: $primary-darken-1;
-    color: $text;
+    background: transparent;
+    color: #E8E8E8;
     padding: 0 1;
     margin: 0 1 0 0;
-    border: solid $border;
+    border: solid #333333 1;
+}
+
+/* Timestamp styling */
+.timestamp {
+    color: #666666;
+    font-size: 0.9;
+}
+
+/* Focus indicators - Consistent throughout */
+*:focus {
+    outline: none;
+    border-color: #33FF33 !important;
+}
+
+/* Scrollbars - Minimal styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0C0C0C;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #333333;
+    border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #666666;
 }
 """

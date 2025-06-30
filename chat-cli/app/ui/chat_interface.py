@@ -22,70 +22,72 @@ from ..config import CONFIG
 logger = logging.getLogger(__name__)
 
 class SendButton(Button):
-    """Custom send button implementation"""
+    """Minimal send button following Rams design principles"""
     
     DEFAULT_CSS = """
-    /* Drastically simplified SendButton CSS */
     SendButton {
-        color: white; /* Basic text color */
-        /* Removed most properties */
-        margin: 0 1; /* Keep margin for spacing */
+        background: transparent;
+        color: #E8E8E8;
+        border: solid #333333 1;
+        margin: 0 1;
+        padding: 1 2;
     }
 
-    SendButton > .button--label {
-         color: white; /* Basic label color */
-         width: auto; /* Ensure label width isn't constrained */
-         height: auto; /* Ensure label height isn't constrained */
-         /* Removed most properties */
+    SendButton:hover {
+        background: #1A1A1A;
+        border: solid #33FF33 1;
+        color: #E8E8E8;
+    }
+
+    SendButton:focus {
+        border: solid #33FF33 1;
+        outline: none;
     }
     """
 
     def __init__(self, name: Optional[str] = None):
         super().__init__(
-            "⬆ SEND ⬆",
-            name=name,
-            variant="success"
+            "→",  # Simple arrow - functional and clear
+            name=name
         )
-
-    def on_mount(self) -> None:
-        """Handle mount event"""
-        self.styles.text_opacity = 100
-        self.styles.text_style = "bold"
 
 class MessageDisplay(Static): # Inherit from Static instead of RichLog
     """Widget to display a single message using Static"""
     
     DEFAULT_CSS = """
+    /* Rams-inspired message styling - "Less but better" */
     MessageDisplay {
         width: 100%;
-        height: auto; /* Let height adjust automatically */
-        min-height: 1; /* Ensure minimum height */
-        min-width: 60; /* Set a reasonable minimum width to avoid constant width adjustment */
-        margin: 1 0;
-        padding: 1;
-        text-wrap: wrap; /* Explicitly enable text wrapping via CSS */
-        content-align: left top; /* Anchor content to top-left */
-        overflow-y: auto; /* Changed from 'visible' to valid 'auto' value */
-        box-sizing: border-box; /* Include padding in size calculations */
-        transition: none; /* Fixed property name from 'transitions' to 'transition' */
+        height: auto;
+        margin: 2 0;           /* Generous vertical spacing */
+        padding: 2 3;          /* Intentional padding for readability */
+        text-wrap: wrap;
+        content-align: left top;
+        overflow-y: auto;
+        box-sizing: border-box;
+        background: transparent; /* Clean default */
+        border: none;           /* Remove unnecessary borders */
     }
     
     MessageDisplay.user-message {
-        background: $primary-darken-2;
-        border-right: wide $primary;
-        margin-right: 4;
+        background: #1A1A1A;   /* Subtle distinction */
+        border-left: solid #33FF33 2;  /* Minimal accent line */
+        margin-left: 2;        /* Slight indent */
+        margin-right: 8;       /* Asymmetric layout for hierarchy */
     }
     
     MessageDisplay.assistant-message {
-        background: $surface;
-        border-left: wide $secondary;
-        margin-left: 4;
+        background: transparent; /* Clean background */
+        border-left: solid #666666 1;  /* Subtle indicator */
+        margin-right: 2;       /* Opposite indent */
+        margin-left: 8;        /* Asymmetric layout */
     }
     
     MessageDisplay.system-message {
-        background: $surface-darken-1;
-        border: dashed $primary-background;
+        background: transparent;
+        border: solid #333333 1;
         margin: 1 4;
+        color: #666666;        /* Muted for less important messages */
     }
     """
     
@@ -168,31 +170,31 @@ class MessageDisplay(Static): # Inherit from Static instead of RichLog
                 logger.error(f"Error refreshing app: {str(e)}")
         
     def _format_content(self, content: str) -> str:
-        """Format message content with timestamp and handle markdown links"""
+        """Format message content following Rams principles - clean and functional"""
         timestamp = datetime.now().strftime("%H:%M")
         
-        # Special handling for "Thinking..." to make it visually distinct
+        # Special handling for "Thinking..." - minimal styling
         if content == "Thinking...":
-            # Use italic style for the thinking indicator
-            return f"[dim]{timestamp}[/dim] [italic]{content}[/italic]"
+            return f"  {timestamp}  [dim]{content}[/dim]"
             
-        # Fix markdown-style links that cause markup errors
-        # Convert [text](url) to a safe format for Textual markup
+        # Clean up markdown-style links for better readability
         content = re.sub(
             r'\[([^\]]+)\]\(([^)]+)\)',
             lambda m: f"{m.group(1)} ({m.group(2)})",
             content
         )
         
-        # Escape any other potential markup characters
+        # Escape markup characters but keep content clean
         content = content.replace("[", "\\[").replace("]", "\\]")
-        # But keep our timestamp markup
-        timestamp_markup = f"[dim]{timestamp}[/dim]"
         
-        # Use proper logging instead of print
-        logger.debug(f"Formatting content: {len(content)} chars")
+        # Rams principle: "As little design as possible"
+        # Simple timestamp with generous spacing for readability
+        return f"  {timestamp}  {content}"
         
-        return f"{timestamp_markup} {content}"
+    def _get_clean_border(self, width: int = 60) -> str:
+        """Create a clean ASCII border following the design spec"""
+        from .borders import create_border_line
+        return create_border_line(width, 'light', 'top')
 
 class InputWithFocus(Input):
     """Enhanced Input that better handles focus and maintains cursor position"""
@@ -218,66 +220,74 @@ class ChatInterface(Container):
     """Main chat interface container"""
     
     DEFAULT_CSS = """
+    /* Clean chat interface following Rams principles */
     ChatInterface {
         width: 100%;
         height: 100%;
-        background: $surface;
+        background: #0C0C0C;
     }
     
     #messages-container {
         width: 100%;
         height: 1fr;
-        min-height: 10;
-        border-bottom: solid $primary-darken-2;
+        min-height: 15;         /* More breathing room */
+        border-bottom: solid #333333 1;
         overflow: auto;
-        padding: 0 1;
-        content-align: left top; /* Keep content anchored at top */
+        padding: 2;             /* Generous padding */
+        content-align: left top;
         box-sizing: border-box;
-        scrollbar-gutter: stable; /* Better than scrollbar-size which isn't valid */
+        background: #0C0C0C;
     }
     
     #input-area {
         width: 100%;
         height: auto;
-        min-height: 4;
-        max-height: 10;
-        padding: 1;
+        min-height: 5;          /* Comfortable minimum */
+        max-height: 12;
+        padding: 2;             /* Consistent padding */
+        background: #0C0C0C;
+        border-top: solid #333333 1;
     }
     
     #message-input {
         width: 1fr;
-        min-height: 2;
+        min-height: 3;          /* Comfortable input height */
         height: auto;
         margin-right: 1;
-        border: solid $primary-darken-2;
+        border: solid #333333 1;
+        background: #0C0C0C;
+        color: #E8E8E8;
+        padding: 1;
     }
     
     #message-input:focus {
-        border: solid $primary;
+        border: solid #33FF33 1;
+        outline: none;
     }
     
     #version-label {
         width: 100%;
-        height: 1;
-        background: $warning;
-        color: black;
+        height: auto;
+        background: #0C0C0C;
+        color: #666666;         /* Muted version info */
         text-align: right;
-        padding: 0 1;
-        text-style: bold;
+        padding: 1;
+        border-bottom: solid #333333 1;
     }
     
     #loading-indicator {
         width: 100%;
-        height: 1;
-        background: $primary-darken-1;
-        color: $text;
+        height: 2;
+        background: #0C0C0C;
+        color: #666666;         /* Subtle loading indicator */
         display: none;
-        padding: 0 1;
+        padding: 0 2;
+        text-align: center;
+        border-bottom: solid #333333 1;
     }
     
     #loading-indicator.model-loading {
-        background: $warning;
-        color: $text;
+        color: #33FF33;         /* Accent for model loading */
     }
     """
     
@@ -404,21 +414,17 @@ class ChatInterface(Container):
             input_widget.focus()
         
     def start_loading(self, model_loading: bool = False) -> None:
-        """Show loading indicator
-        
-        Args:
-            model_loading: If True, indicates Ollama is loading a model
-        """
+        """Show minimal loading indicator following Rams principles"""
         self.is_loading = True
         loading = self.query_one("#loading-indicator")
         loading_text = self.query_one("#loading-text")
         
         if model_loading:
             loading.add_class("model-loading")
-            loading_text.update("⚙️ Loading Ollama model...")
+            loading_text.update("● Preparing model")
         else:
             loading.remove_class("model-loading")
-            loading_text.update("▪▪▪ Generating response...")
+            loading_text.update("● Generating")
             
         loading.display = True
         

@@ -39,7 +39,9 @@ setup(
     entry_points={
         "console_scripts": [
             "chat-console=app.main:main",
-            "c-c=app.main:main",  
+            "c-c=app.main:main",
+            "chat-console-classic=app.classic_main:main",
+            "c-c-c=app.classic_main:main",
         ],
     },
 )
