@@ -1201,11 +1201,6 @@ class ConsoleUI:
                     "content": msg.content
                 })
             
-            # Warm up Ollama model right before generation (after auto-titling)
-            if not hasattr(self, '_model_warmed'):
-                await self._warm_up_ollama_model(self.selected_model)
-                self._model_warmed = True
-            
             # Get client
             client = await BaseModelClient.get_client_for_model(self.selected_model)
             
@@ -1380,10 +1375,6 @@ class ConsoleUI:
                     old_model = self.selected_model
                     self.selected_model = models[idx]
                     print(f"Model changed from {old_model} to {self.selected_model}")
-                    
-                    # Warm up the new Ollama model in the background
-                    asyncio.create_task(self._warm_up_ollama_model(self.selected_model))
-                    
                     input("Press Enter to continue...")
         except (ValueError, KeyboardInterrupt):
             pass
@@ -2032,9 +2023,6 @@ class ConsoleUI:
                 old_model = self.selected_model
                 self.selected_model = local_models[idx].get("id", "unknown")
                 print(f"\n✓ Switched from {old_model} to {self.selected_model}")
-                
-                # Warm up the new Ollama model in the background
-                asyncio.create_task(self._warm_up_ollama_model(self.selected_model))
     
     async def _switch_model(self):
         """Switch current model (combines local and available models)"""
@@ -2048,51 +2036,11 @@ class ConsoleUI:
             
         input("\nPress Enter to continue...")
     
-    async def _warm_up_ollama_model(self, model_id: str):
-        """Warm up an Ollama model in the background"""
-        try:
-            # Don't warm up if we're already generating (avoid conflicts)
-            if self.generating:
-                return
-                
-            # Check if this is an Ollama model
-            from .api.base import BaseModelClient
-            client_class = BaseModelClient.get_client_type_for_model(model_id)
-            
-            if client_class and client_class.__name__ == "OllamaClient":
-                # Add a small delay to avoid conflicts with immediate usage
-                await asyncio.sleep(0.5)
-                
-                # Check again if we're still not generating
-                if self.generating:
-                    return
-                
-                # Get or create the Ollama client
-                from .api.ollama import OllamaClient
-                client = await OllamaClient.create()
-                
-                # Check if model is already preloaded
-                preloaded_models = client.get_preloaded_models()
-                if model_id in preloaded_models:
-                    return  # Already warm
-                
-                # Preload the model
-                success = await client.preload_model(model_id)
-                if success:
-                    # Silently log success without disrupting UI
-                    pass
-                    
-        except Exception:
-            # Silently handle any errors - warm-up is best effort
-            pass
     
     async def run(self):
         """Enhanced main application loop with welcome experience"""
         # Create initial conversation
         await self.create_new_conversation()
-        
-        # Note: We'll warm up the model right before the main generation
-        # to avoid conflicts with auto-titling
         
         # Show welcome screen first
         self.draw_screen("", "Type your message to begin your AI conversation", show_welcome=True)
