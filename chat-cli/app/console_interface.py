@@ -56,6 +56,17 @@ class ConsoleUI:
         self.messages_per_page = 10  # Default messages per page
         self.scroll_mode = False  # Whether we're in scroll mode
         
+        # Message rendering cache and state
+        self.formatted_messages_cache = []  # Cache of formatted message lines
+        self.message_buffer = []  # Current visible message lines
+        self.last_message_count = 0  # Track when to refresh cache
+        self.screen_regions = {
+            'header': [],
+            'messages': [],
+            'input': [],
+            'footer': []
+        }
+        
         # Suppress verbose logging for console mode
         self._setup_console_logging()
     
@@ -139,6 +150,122 @@ class ConsoleUI:
     def clear_screen(self):
         """Clear the terminal screen"""
         os.system('cls' if os.name == 'nt' else 'clear')
+    
+    def _rebuild_message_cache(self):
+        """Rebuild the formatted message cache when messages change"""
+        if len(self.messages) == self.last_message_count:
+            return  # No change needed
+            
+        self.formatted_messages_cache = []
+        
+        for i, message in enumerate(self.messages):
+            is_streaming = (i == len(self.messages) - 1 and 
+                          message.role == "assistant" and 
+                          self.generating and 
+                          self.scroll_offset == 0)
+            formatted_lines = self.format_message(message, streaming=is_streaming)
+            self.formatted_messages_cache.extend(formatted_lines)
+            
+        self.last_message_count = len(self.messages)
+    
+    def _update_message_buffer(self):
+        """Update the message buffer based on current scroll state"""
+        self._rebuild_message_cache()
+        
+        total_lines = len(self.formatted_messages_cache)
+        if total_lines == 0:
+            self.message_buffer = self._get_empty_state_messages()
+            return
+            
+        # Calculate available space for messages
+        header_lines = len(self.screen_regions['header'])
+        footer_lines = len(self.screen_regions['footer']) 
+        input_lines = len(self.screen_regions['input'])
+        used_lines = header_lines + footer_lines + input_lines
+        available_lines = self.height - used_lines - 2
+        
+        # Calculate scroll position in terms of lines, not messages
+        if self.scroll_offset == 0:
+            # Show most recent lines
+            start_line = max(0, total_lines - available_lines)
+            end_line = total_lines
+        else:
+            # Convert message offset to line offset
+            # This is approximate - we'll improve this later
+            lines_per_message = max(1, total_lines // max(1, len(self.messages)))
+            line_offset = self.scroll_offset * lines_per_message
+            end_line = max(available_lines, total_lines - line_offset)
+            start_line = max(0, end_line - available_lines)
+            
+        self.message_buffer = self.formatted_messages_cache[start_line:end_line]
+        
+        # Add scroll indicators if needed
+        if self.scroll_mode or self.scroll_offset > 0:
+            self._add_scroll_indicators()
+    
+    def _get_empty_state_messages(self):
+        """Get the empty state welcome messages"""
+        chars = self.get_border_chars()
+        lines = []
+        
+        # Enhanced empty state with tips
+        empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+        lines.extend([empty_line] * 2)
+        
+        # Welcome message with colors
+        welcome_text = f"{self.theme['primary']}✨ Start a conversation by typing a message below ✨{self.theme['reset']}"
+        clean_welcome = " Start a conversation by typing a message below "
+        color_padding = len(welcome_text) - len(clean_welcome)
+        centered_line = chars['vertical'] + welcome_text.center(self.width - 2 + color_padding) + chars['vertical']
+        lines.append(centered_line)
+        
+        lines.append(empty_line)
+        
+        # Tips with colors
+        tips = [
+            f"{self.theme['muted']}• Use {self.theme['accent']}Shift+Enter{self.theme['muted']} for multi-line input{self.theme['reset']}",
+            f"{self.theme['muted']}• Press {self.theme['accent']}Tab{self.theme['muted']} to access menu mode{self.theme['reset']}",
+            f"{self.theme['muted']}• Use {self.theme['accent']}Ctrl+B{self.theme['muted']} to enable scrolling{self.theme['reset']}"
+        ]
+        
+        for tip in tips:
+            clean_tip = tip.replace(self.theme['muted'], '').replace(self.theme['accent'], '').replace(self.theme['reset'], '')
+            color_padding = len(tip) - len(clean_tip)
+            tip_line = chars['vertical'] + f" {tip}".ljust(self.width - 2 + color_padding) + chars['vertical']
+            lines.append(tip_line)
+        
+        lines.extend([empty_line] * 2)
+        return lines
+    
+    def _add_scroll_indicators(self):
+        """Add scroll indicators to the message buffer"""
+        if not (self.scroll_mode or self.scroll_offset > 0):
+            return
+            
+        chars = self.get_border_chars()
+        empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+        
+        indicators = []
+        
+        # Top indicator - show if we can scroll up (more messages above)
+        if self.scroll_offset < len(self.messages) - 1:
+            more_above = f"{self.theme['accent']}↑ More messages above (offset: {self.scroll_offset}) ↑{self.theme['reset']}"
+            clean_above = f"↑ More messages above (offset: {self.scroll_offset}) ↑"
+            color_padding = len(more_above) - len(clean_above)
+            above_line = chars['vertical'] + more_above.center(self.width - 2 + color_padding) + chars['vertical']
+            indicators.extend([above_line, empty_line])
+        
+        # Bottom indicator - show if we can scroll down (more messages below)  
+        if self.scroll_offset > 0:
+            more_below = f"{self.theme['accent']}↓ More messages below (use j or Ctrl+D) ↓{self.theme['reset']}"
+            clean_below = f"↓ More messages below (use j or Ctrl+D) ↓"
+            color_padding = len(more_below) - len(clean_below)
+            below_line = chars['vertical'] + more_below.center(self.width - 2 + color_padding) + chars['vertical']
+            indicators.extend([empty_line, below_line])
+        
+        # Add indicators to message buffer
+        if indicators:
+            self.message_buffer = indicators + self.message_buffer
     
     def get_border_chars(self):
         """Get clean ASCII border characters"""
@@ -431,99 +558,10 @@ class ConsoleUI:
         return formatted_lines
     
     def draw_messages(self) -> List[str]:
-        """Draw all messages in the conversation with enhanced styling"""
-        lines = []
-        chars = self.get_border_chars()
-        
-        if not self.messages:
-            # Enhanced empty state with tips
-            empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
-            lines.extend([empty_line] * 2)
-            
-            # Welcome message with colors
-            welcome_text = f"{self.theme['primary']}✨ Start a conversation by typing a message below ✨{self.theme['reset']}"
-            clean_welcome = " Start a conversation by typing a message below "
-            color_padding = len(welcome_text) - len(clean_welcome)
-            centered_line = chars['vertical'] + welcome_text.center(self.width - 2 + color_padding) + chars['vertical']
-            lines.append(centered_line)
-            
-            lines.append(empty_line)
-            
-            # Tips with colors
-            tips = [
-                f"{self.theme['muted']}• Use {self.theme['accent']}Shift+Enter{self.theme['muted']} for multi-line input{self.theme['reset']}",
-                f"{self.theme['muted']}• Press {self.theme['accent']}Tab{self.theme['muted']} to access menu mode{self.theme['reset']}",
-                f"{self.theme['muted']}• Use {self.theme['accent']}Up/Down arrows{self.theme['muted']} to navigate history{self.theme['reset']}"
-            ]
-            
-            for tip in tips:
-                clean_tip = tip.replace(self.theme['muted'], '').replace(self.theme['accent'], '').replace(self.theme['reset'], '')
-                color_padding = len(tip) - len(clean_tip)
-                tip_line = chars['vertical'] + f" {tip}".ljust(self.width - 2 + color_padding) + chars['vertical']
-                lines.append(tip_line)
-            
-            lines.extend([empty_line] * 2)
-        else:
-            # Calculate visible message range based on scroll offset
-            total_messages = len(self.messages)
-            
-            # First, let's count total lines needed for all messages
-            message_line_counts = []
-            for msg in self.messages:
-                # Estimate lines per message (formatted message returns list of lines)
-                formatted_lines = self.format_message(msg, streaming=False)
-                message_line_counts.append(len(formatted_lines))
-            
-            # Simplified calculation - show a fixed window of messages
-            if self.scroll_offset == 0:
-                # Normal view - show most recent messages
-                end_idx = total_messages
-                # Show as many messages as fit, but at least 3-5 messages
-                messages_to_show = min(self.messages_per_page, 5)
-                start_idx = max(0, total_messages - messages_to_show)
-            else:
-                # Scrolled view - offset is number of messages from bottom
-                end_idx = total_messages - self.scroll_offset
-                # Ensure we show a reasonable window
-                messages_to_show = min(self.messages_per_page, 5)
-                start_idx = max(0, end_idx - messages_to_show)
-                end_idx = max(start_idx + 1, end_idx)  # Ensure at least one message
-            
-            # Display messages with enhanced formatting
-            visible_messages = self.messages[start_idx:end_idx]
-            for i, message in enumerate(visible_messages):
-                is_streaming = (self.scroll_offset == 0 and 
-                              i == len(visible_messages) - 1 and
-                              message == self.messages[-1] and 
-                              message.role == "assistant" and 
-                              self.generating)
-                lines.extend(self.format_message(message, streaming=is_streaming))
-            
-            # Add scroll indicators if needed
-            if self.scroll_mode or self.scroll_offset > 0:
-                chars = self.get_border_chars()
-                empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
-                
-                
-                # Top indicator
-                if start_idx > 0:
-                    more_above = f"{self.theme['accent']}↑ {start_idx} more messages above ↑{self.theme['reset']}"
-                    clean_above = f"↑ {start_idx} more messages above ↑"
-                    color_padding = len(more_above) - len(clean_above)
-                    above_line = chars['vertical'] + more_above.center(self.width - 2 + color_padding) + chars['vertical']
-                    lines.insert(0, above_line)
-                    lines.insert(1, empty_line)
-                
-                # Bottom indicator  
-                if end_idx < total_messages:
-                    more_below = f"{self.theme['accent']}↓ {total_messages - end_idx} more messages below ↓{self.theme['reset']}"
-                    clean_below = f"↓ {total_messages - end_idx} more messages below ↓"
-                    color_padding = len(more_below) - len(clean_below)
-                    below_line = chars['vertical'] + more_below.center(self.width - 2 + color_padding) + chars['vertical']
-                    lines.append(empty_line)
-                    lines.append(below_line)
-        
-        return lines
+        """Draw all messages - now uses the new buffer system"""
+        # Use the new message buffer system
+        self._update_message_buffer()
+        return self.message_buffer.copy()
     
     def draw_input_area(self, current_input: str = "", prompt: str = "Type your message") -> List[str]:
         """Draw the enhanced input area with multi-line support and dynamic indicators"""
@@ -605,58 +643,82 @@ class ConsoleUI:
         
         return lines
     
-    def draw_screen(self, current_input: str = "", input_prompt: str = "Type your message", show_welcome: bool = False):
-        """Draw the complete enhanced screen with welcome message and better layout"""
-        self.clear_screen()
+    def _render_regions(self, current_input: str = "", input_prompt: str = "Type your message"):
+        """Render all screen regions into buffers"""
+        # Update all regions
+        self.screen_regions['header'] = self.draw_header()
+        self.screen_regions['footer'] = self.draw_footer()
+        self.screen_regions['input'] = self.draw_input_area(current_input, input_prompt)
+        
+        # Update message buffer using the new system
+        self._update_message_buffer()
+        self.screen_regions['messages'] = self.message_buffer.copy()
+        
+        # Ensure message area fits available space
+        header_lines = len(self.screen_regions['header'])
+        footer_lines = len(self.screen_regions['footer'])
+        input_lines = len(self.screen_regions['input'])
+        used_lines = header_lines + footer_lines + input_lines
+        available_lines = self.height - used_lines - 2
+        
+        # Pad or truncate message area
+        chars = self.get_border_chars()
+        empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+        
+        if len(self.screen_regions['messages']) < available_lines:
+            # Pad with empty lines
+            padding_needed = available_lines - len(self.screen_regions['messages'])
+            self.screen_regions['messages'].extend([empty_line] * padding_needed)
+        else:
+            # Truncate to fit
+            self.screen_regions['messages'] = self.screen_regions['messages'][:available_lines]
+    
+    def _update_region(self, region_name: str, new_content: List[str]):
+        """Update a specific screen region without full redraw"""
+        # Store old content for comparison
+        old_content = self.screen_regions.get(region_name, [])
+        
+        # Update the region
+        self.screen_regions[region_name] = new_content.copy()
+        
+        # For now, we'll still do full redraws but this sets up the structure
+        # for targeted updates later
+        return old_content != new_content
+    
+    def draw_screen(self, current_input: str = "", input_prompt: str = "Type your message", show_welcome: bool = False, force_redraw: bool = False):
+        """Draw the complete enhanced screen with smart updates"""
         
         # Show welcome message on first run
         if show_welcome:
+            self.clear_screen()
             welcome_lines = self.draw_ascii_welcome()
             for line in welcome_lines:
                 print(line)
             print("\n" * 2)
             time.sleep(2.5)  # Pause to let user see welcome screen properly
+            # After welcome, force a full redraw
+            force_redraw = True
         
-        # Calculate layout
-        header_lines = self.draw_header()
-        footer_lines = self.draw_footer()
-        input_lines = self.draw_input_area(current_input, input_prompt)
+        # Render all regions
+        self._render_regions(current_input, input_prompt)
         
-        # Calculate available space for messages
-        used_lines = len(header_lines) + len(footer_lines) + len(input_lines)
-        available_lines = self.height - used_lines - 2
+        # For now, do a full redraw when needed
+        # Later we can optimize this to only update changed regions
+        if force_redraw or not hasattr(self, '_screen_initialized'):
+            self.clear_screen()
+            self._screen_initialized = True
         
-        # Update messages_per_page based on available space
-        # Account for scroll indicators (2 lines each when active)
-        indicator_lines = 4 if (self.scroll_mode or self.scroll_offset > 0) else 0
-        self.messages_per_page = max(1, (available_lines - indicator_lines) // 3)  # Assuming ~3 lines per message
-        
-        # Draw header
-        for line in header_lines:
+        # Draw all regions
+        for line in self.screen_regions['header']:
             print(line)
         
-        # Draw messages
-        message_lines = self.draw_messages()
-        chars = self.get_border_chars()
-        
-        # Pad or truncate message area
-        if len(message_lines) < available_lines:
-            # Pad with empty lines
-            empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
-            message_lines.extend([empty_line] * (available_lines - len(message_lines)))
-        else:
-            # Truncate to fit
-            message_lines = message_lines[-available_lines:]
-        
-        for line in message_lines:
+        for line in self.screen_regions['messages']:
             print(line)
         
-        # Draw input area
-        for line in input_lines:
+        for line in self.screen_regions['input']:
             print(line)
         
-        # Draw footer
-        for line in footer_lines:
+        for line in self.screen_regions['footer']:
             print(line)
         
         # Position cursor for better user experience
@@ -664,8 +726,45 @@ class ConsoleUI:
         if self.multi_line_input:
             cursor_offset = len(current_input) + 4  # Adjust for multi-line
         
-        print("\033[A" * (len(footer_lines) + len(input_lines) - 1), end="")
+        footer_lines = len(self.screen_regions['footer'])
+        input_lines = len(self.screen_regions['input'])
+        print("\033[A" * (footer_lines + input_lines - 1), end="")
         print(f"\033[{cursor_offset}C", end="")
+        sys.stdout.flush()
+    
+    def update_messages_only(self):
+        """Update only the message area - for scroll operations"""
+        # Update message buffer
+        self._update_message_buffer()
+        self.screen_regions['messages'] = self.message_buffer.copy()
+        
+        # Ensure proper sizing
+        header_lines = len(self.screen_regions['header'])
+        footer_lines = len(self.screen_regions['footer'])
+        input_lines = len(self.screen_regions['input'])
+        used_lines = header_lines + footer_lines + input_lines
+        available_lines = self.height - used_lines - 2
+        
+        chars = self.get_border_chars()
+        empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+        
+        if len(self.screen_regions['messages']) < available_lines:
+            padding_needed = available_lines - len(self.screen_regions['messages'])
+            self.screen_regions['messages'].extend([empty_line] * padding_needed)
+        else:
+            self.screen_regions['messages'] = self.screen_regions['messages'][:available_lines]
+        
+        # Position cursor at start of message area
+        print(f"\033[{header_lines + 1};1H", end="")
+        
+        # Redraw message area
+        for line in self.screen_regions['messages']:
+            print(line)
+        
+        # Return cursor to input position (roughly)
+        total_lines = header_lines + len(self.screen_regions['messages']) + len(self.screen_regions['input']) + len(self.screen_regions['footer'])
+        input_line_position = total_lines - len(self.screen_regions['footer']) - 1
+        print(f"\033[{input_line_position};4H", end="")  # Position cursor at input line
         sys.stdout.flush()
     
     def get_input(self, prompt: str = "Type your message") -> str:
@@ -675,9 +774,13 @@ class ConsoleUI:
         
         while True:
             # Only redraw screen if not currently generating to avoid interference
-            if not self.generating:
+            # Also avoid redraw if we're in scroll mode and just did a scroll operation
+            if not self.generating and not getattr(self, '_skip_redraw', False):
                 self.draw_screen(current_input, prompt, show_welcome)
                 show_welcome = False  # Only show once
+            
+            # Reset skip redraw flag
+            self._skip_redraw = False
             
             # Get single character with better handling
             if os.name == 'nt':
@@ -793,8 +896,11 @@ class ConsoleUI:
                 if not self.scroll_mode:
                     # When exiting scroll mode, return to bottom
                     self.scroll_offset = 0
-                # Force immediate redraw
-                self.draw_screen(current_input, prompt)
+                # Update only the message area + header/footer for mode indicator
+                self.screen_regions['header'] = self.draw_header()
+                self.screen_regions['footer'] = self.draw_footer()
+                self.update_messages_only()
+                self._skip_redraw = True
                 continue
             
             elif char == '\x15':  # Ctrl+U - Page up
@@ -805,17 +911,22 @@ class ConsoleUI:
                     max_offset = len(self.messages) - 1
                     self.scroll_offset = min(self.scroll_offset + page_size, max_offset)
                     self.scroll_mode = True
-                    # Force immediate redraw
-                    self.draw_screen(current_input, prompt)
+                    # Update only messages and header for scroll mode indicator
+                    self.screen_regions['header'] = self.draw_header()
+                    self.update_messages_only()
+                    self._skip_redraw = True
                 continue
             
             elif char == '\x04':  # Ctrl+D - Page down (when not in multi-line mode)
                 if not self.multi_line_input and self.scroll_offset > 0:
-                    self.scroll_offset = max(0, self.scroll_offset - self.messages_per_page)
+                    page_size = max(1, self.messages_per_page // 2)
+                    self.scroll_offset = max(0, self.scroll_offset - page_size)
                     if self.scroll_offset == 0:
                         self.scroll_mode = False
-                    # Force immediate redraw
-                    self.draw_screen(current_input, prompt)
+                    # Update messages and header for scroll mode indicator
+                    self.screen_regions['header'] = self.draw_header()
+                    self.update_messages_only()
+                    self._skip_redraw = True
                     continue
                 elif self.multi_line_input:
                     # Original Ctrl+D behavior for multi-line input
@@ -838,31 +949,40 @@ class ConsoleUI:
                     # Go to the very beginning (show oldest messages)
                     self.scroll_offset = max(0, len(self.messages) - 1)
                     self.scroll_mode = True
-                    # Force immediate redraw
-                    self.draw_screen(current_input, prompt)
+                    # Update messages and header for scroll mode indicator
+                    self.screen_regions['header'] = self.draw_header()
+                    self.update_messages_only()
+                    self._skip_redraw = True
                 continue
             
             elif char == '\x05':  # Ctrl+E - Go to end (bottom)
                 self.scroll_offset = 0
                 self.scroll_mode = False
-                # Force immediate redraw
-                self.draw_screen(current_input, prompt)
+                # Update messages and header for scroll mode indicator
+                self.screen_regions['header'] = self.draw_header()
+                self.update_messages_only()
+                self._skip_redraw = True
                 continue
             
             # Mode-specific handling
             if self.input_mode == "text":
                 # Check if we're in scroll mode for vim-style navigation
                 if self.scroll_mode:
-                    if char.lower() == 'j':  # Down one line
+                    if char.lower() == 'j':  # Down one line (toward newer messages)
                         if self.scroll_offset > 0:
                             self.scroll_offset = max(0, self.scroll_offset - 1)
-                            self.draw_screen(current_input, prompt)
+                            if self.scroll_offset == 0:
+                                self.scroll_mode = False
+                            self.screen_regions['header'] = self.draw_header()
+                            self.update_messages_only()
+                            self._skip_redraw = True
                         continue
-                    elif char.lower() == 'k':  # Up one line
+                    elif char.lower() == 'k':  # Up one line (toward older messages)
                         if len(self.messages) > 1:
                             max_offset = len(self.messages) - 1
                             self.scroll_offset = min(self.scroll_offset + 1, max_offset)
-                            self.draw_screen(current_input, prompt)
+                            self.update_messages_only()
+                            self._skip_redraw = True
                         continue
                 
                 # Normal text input mode
