@@ -51,6 +51,11 @@ class ConsoleUI:
         self.loading_phase_index = 0
         self.start_time = time.time()
         
+        # Scrolling support
+        self.scroll_offset = 0  # How many messages to skip from the bottom
+        self.messages_per_page = 10  # Default messages per page
+        self.scroll_mode = False  # Whether we're in scroll mode
+        
         # Suppress verbose logging for console mode
         self._setup_console_logging()
     
@@ -216,14 +221,21 @@ class ConsoleUI:
         title = f" {self.theme['bold']}Chat Console v{__version__}{self.theme['reset']} "
         model_info = f" {self.theme['primary']}Model: {self.selected_model}{self.theme['reset']} "
         
+        # Add scroll indicator if in scroll mode
+        if self.scroll_mode or self.scroll_offset > 0:
+            scroll_info = f" {self.theme['warning']}[SCROLL MODE]{self.theme['reset']} "
+        else:
+            scroll_info = ""
+        
         # Calculate spacing (account for color codes)
         clean_title = f" Chat Console v{__version__} "
         clean_model = f" Model: {self.selected_model} "
-        used_space = len(clean_title) + len(clean_model)
+        clean_scroll = " [SCROLL MODE] " if (self.scroll_mode or self.scroll_offset > 0) else ""
+        used_space = len(clean_title) + len(clean_model) + len(clean_scroll)
         remaining = self.width - used_space - 2
         spacing = chars['horizontal'] * max(0, remaining)
         
-        header_line = chars['top_left'] + title + spacing + model_info + chars['top_right']
+        header_line = chars['top_left'] + title + spacing + scroll_info + model_info + chars['top_right']
         lines.append(header_line)
         
         # Conversation title with color
@@ -241,18 +253,30 @@ class ConsoleUI:
         """Draw the enhanced footer with colorized controls"""
         chars = self.get_border_chars()
         
-        # Colorize controls
-        controls = (
-            f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
-            f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
-            f"[{self.theme['accent']}n{self.theme['muted']}] New  "
-            f"[{self.theme['accent']}h{self.theme['muted']}] History  "
-            f"[{self.theme['accent']}s{self.theme['muted']}] Settings  "
-            f"[{self.theme['accent']}m{self.theme['muted']}] Models{self.theme['reset']}"
-        )
+        # Show different controls based on mode
+        if self.scroll_mode or self.scroll_offset > 0:
+            # Scroll mode controls
+            controls = (
+                f"{self.theme['muted']}[{self.theme['accent']}Ctrl+U{self.theme['muted']}] Page Up  "
+                f"[{self.theme['accent']}Ctrl+D{self.theme['muted']}] Page Down  "
+                f"[{self.theme['accent']}Ctrl+G{self.theme['muted']}] Top  "
+                f"[{self.theme['accent']}Ctrl+E{self.theme['muted']}] Bottom  "
+                f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit Scroll{self.theme['reset']}"
+            )
+            clean_controls = "[Ctrl+U] Page Up  [Ctrl+D] Page Down  [Ctrl+G] Top  [Ctrl+E] Bottom  [Esc] Exit Scroll"
+        else:
+            # Normal controls
+            controls = (
+                f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
+                f"[{self.theme['accent']}Ctrl+B{self.theme['muted']}] Scroll  "
+                f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
+                f"[{self.theme['accent']}n{self.theme['muted']}] New  "
+                f"[{self.theme['accent']}h{self.theme['muted']}] History  "
+                f"[{self.theme['accent']}s{self.theme['muted']}] Settings{self.theme['reset']}"
+            )
+            clean_controls = "[Tab] Menu  [Ctrl+B] Scroll  [q] Quit  [n] New  [h] History  [s] Settings"
         
         # Calculate clean length for padding
-        clean_controls = "[Tab] Menu  [q] Quit  [n] New  [h] History  [s] Settings  [m] Models"
         color_padding = len(controls) - len(clean_controls)
         footer_line = chars['vertical'] + f" {controls} ".ljust(self.width - 2 + color_padding) + chars['vertical']
         
@@ -440,12 +464,51 @@ class ConsoleUI:
             
             lines.extend([empty_line] * 2)
         else:
+            # Calculate visible message range based on scroll offset
+            total_messages = len(self.messages)
+            
+            # Calculate the window of messages to display
+            if self.scroll_offset == 0:
+                # Normal view - show most recent messages
+                start_idx = max(0, total_messages - self.messages_per_page)
+                end_idx = total_messages
+            else:
+                # Scrolled view - show older messages
+                end_idx = total_messages - self.scroll_offset
+                start_idx = max(0, end_idx - self.messages_per_page)
+            
             # Display messages with enhanced formatting
-            for message in self.messages[-10:]:  # Show last 10 messages
-                is_streaming = (message == self.messages[-1] and 
+            visible_messages = self.messages[start_idx:end_idx]
+            for i, message in enumerate(visible_messages):
+                is_streaming = (self.scroll_offset == 0 and 
+                              i == len(visible_messages) - 1 and
+                              message == self.messages[-1] and 
                               message.role == "assistant" and 
                               self.generating)
                 lines.extend(self.format_message(message, streaming=is_streaming))
+            
+            # Add scroll indicators if needed
+            if self.scroll_mode or self.scroll_offset > 0:
+                chars = self.get_border_chars()
+                empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+                
+                # Top indicator
+                if start_idx > 0:
+                    more_above = f"{self.theme['accent']}↑ {start_idx} more messages above ↑{self.theme['reset']}"
+                    clean_above = f"↑ {start_idx} more messages above ↑"
+                    color_padding = len(more_above) - len(clean_above)
+                    above_line = chars['vertical'] + more_above.center(self.width - 2 + color_padding) + chars['vertical']
+                    lines.insert(0, above_line)
+                    lines.insert(1, empty_line)
+                
+                # Bottom indicator  
+                if end_idx < total_messages:
+                    more_below = f"{self.theme['accent']}↓ {total_messages - end_idx} more messages below ↓{self.theme['reset']}"
+                    clean_below = f"↓ {total_messages - end_idx} more messages below ↓"
+                    color_padding = len(more_below) - len(clean_below)
+                    below_line = chars['vertical'] + more_below.center(self.width - 2 + color_padding) + chars['vertical']
+                    lines.append(empty_line)
+                    lines.append(below_line)
         
         return lines
     
@@ -539,7 +602,7 @@ class ConsoleUI:
             for line in welcome_lines:
                 print(line)
             print("\n" * 2)
-            time.sleep(0.1)  # Brief pause to let user see welcome
+            time.sleep(2.5)  # Pause to let user see welcome screen properly
         
         # Calculate layout
         header_lines = self.draw_header()
@@ -662,19 +725,6 @@ class ConsoleUI:
                     # In menu mode, Enter does nothing
                     continue
             
-            elif char == '\x04':  # Ctrl+D
-                # Send multi-line input
-                if self.multi_line_input:
-                    if current_input.strip():
-                        self.multi_line_input.append(current_input)
-                    result = "\n".join(self.multi_line_input)
-                    self.multi_line_input = []  # Clear multi-line buffer
-                    # Add to history
-                    if result not in self.input_history:
-                        self.input_history.append(result)
-                    self.history_index = len(self.input_history)
-                    return result
-                continue
             
             elif char == '\x03':  # Ctrl+C
                 if self.generating:
@@ -713,6 +763,58 @@ class ConsoleUI:
                 elif self.input_mode == "menu":
                     # Switch back to text mode
                     self.input_mode = "text"
+                elif self.scroll_mode:
+                    # Exit scroll mode and return to bottom
+                    self.scroll_mode = False
+                    self.scroll_offset = 0
+                continue
+            
+            # Scroll controls
+            elif char == '\x02':  # Ctrl+B - Toggle scroll mode
+                self.scroll_mode = not self.scroll_mode
+                if not self.scroll_mode:
+                    # When exiting scroll mode, return to bottom
+                    self.scroll_offset = 0
+                continue
+            
+            elif char == '\x15':  # Ctrl+U - Page up
+                if len(self.messages) > self.messages_per_page:
+                    max_offset = len(self.messages) - self.messages_per_page
+                    self.scroll_offset = min(self.scroll_offset + self.messages_per_page, max_offset)
+                    self.scroll_mode = True
+                continue
+            
+            elif char == '\x04':  # Ctrl+D - Page down (when not in multi-line mode)
+                if not self.multi_line_input and self.scroll_offset > 0:
+                    self.scroll_offset = max(0, self.scroll_offset - self.messages_per_page)
+                    if self.scroll_offset == 0:
+                        self.scroll_mode = False
+                    continue
+                elif self.multi_line_input:
+                    # Original Ctrl+D behavior for multi-line input
+                    if current_input.strip():
+                        self.multi_line_input.append(current_input)
+                    result = "\n".join(self.multi_line_input)
+                    self.multi_line_input = []  # Clear multi-line buffer
+                    # Add to history
+                    if result not in self.input_history:
+                        self.input_history.append(result)
+                    self.history_index = len(self.input_history)
+                    # Reset scroll when sending a message
+                    self.scroll_offset = 0
+                    self.scroll_mode = False
+                    return result
+                continue
+            
+            elif char == '\x07':  # Ctrl+G - Go to top
+                if len(self.messages) > self.messages_per_page:
+                    self.scroll_offset = len(self.messages) - self.messages_per_page
+                    self.scroll_mode = True
+                continue
+            
+            elif char == '\x05':  # Ctrl+E - Go to end (bottom)
+                self.scroll_offset = 0
+                self.scroll_mode = False
                 continue
             
             # Mode-specific handling
@@ -1171,6 +1273,10 @@ class ConsoleUI:
         self._current_user_message = user_message  # Store for context-aware loading
         assistant_message = None
         animation_task = None
+        
+        # Reset scroll position when generating new response
+        self.scroll_offset = 0
+        self.scroll_mode = False
         
         # Clear any cached context phrases for new generation
         if hasattr(self, '_current_context_phrases'):
@@ -2044,6 +2150,9 @@ class ConsoleUI:
         
         # Show welcome screen first
         self.draw_screen("", "Type your message to begin your AI conversation", show_welcome=True)
+        
+        # Brief pause after welcome before starting input loop
+        await asyncio.sleep(0.5)
         
         while self.running:
             try:
