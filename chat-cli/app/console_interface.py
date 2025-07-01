@@ -257,13 +257,13 @@ class ConsoleUI:
         if self.scroll_mode or self.scroll_offset > 0:
             # Scroll mode controls
             controls = (
-                f"{self.theme['muted']}[{self.theme['accent']}Ctrl+U{self.theme['muted']}] Page Up  "
-                f"[{self.theme['accent']}Ctrl+D{self.theme['muted']}] Page Down  "
+                f"{self.theme['muted']}[{self.theme['accent']}j/k{self.theme['muted']}] Line ↓/↑  "
+                f"[{self.theme['accent']}Ctrl+U/D{self.theme['muted']}] Page ↑/↓  "
                 f"[{self.theme['accent']}Ctrl+G{self.theme['muted']}] Top  "
-                f"[{self.theme['accent']}Ctrl+E{self.theme['muted']}] Bottom  "
-                f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit Scroll{self.theme['reset']}"
+                f"[{self.theme['accent']}Ctrl+E{self.theme['muted']}] End  "
+                f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
             )
-            clean_controls = "[Ctrl+U] Page Up  [Ctrl+D] Page Down  [Ctrl+G] Top  [Ctrl+E] Bottom  [Esc] Exit Scroll"
+            clean_controls = "[j/k] Line ↓/↑  [Ctrl+U/D] Page ↑/↓  [Ctrl+G] Top  [Ctrl+E] End  [Esc] Exit"
         else:
             # Normal controls
             controls = (
@@ -467,15 +467,27 @@ class ConsoleUI:
             # Calculate visible message range based on scroll offset
             total_messages = len(self.messages)
             
-            # Calculate the window of messages to display
+            # First, let's count total lines needed for all messages
+            message_line_counts = []
+            for msg in self.messages:
+                # Estimate lines per message (formatted message returns list of lines)
+                formatted_lines = self.format_message(msg, streaming=False)
+                message_line_counts.append(len(formatted_lines))
+            
+            # Simplified calculation - show a fixed window of messages
             if self.scroll_offset == 0:
                 # Normal view - show most recent messages
-                start_idx = max(0, total_messages - self.messages_per_page)
                 end_idx = total_messages
+                # Show as many messages as fit, but at least 3-5 messages
+                messages_to_show = min(self.messages_per_page, 5)
+                start_idx = max(0, total_messages - messages_to_show)
             else:
-                # Scrolled view - show older messages
+                # Scrolled view - offset is number of messages from bottom
                 end_idx = total_messages - self.scroll_offset
-                start_idx = max(0, end_idx - self.messages_per_page)
+                # Ensure we show a reasonable window
+                messages_to_show = min(self.messages_per_page, 5)
+                start_idx = max(0, end_idx - messages_to_show)
+                end_idx = max(start_idx + 1, end_idx)  # Ensure at least one message
             
             # Display messages with enhanced formatting
             visible_messages = self.messages[start_idx:end_idx]
@@ -491,6 +503,7 @@ class ConsoleUI:
             if self.scroll_mode or self.scroll_offset > 0:
                 chars = self.get_border_chars()
                 empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+                
                 
                 # Top indicator
                 if start_idx > 0:
@@ -612,6 +625,11 @@ class ConsoleUI:
         # Calculate available space for messages
         used_lines = len(header_lines) + len(footer_lines) + len(input_lines)
         available_lines = self.height - used_lines - 2
+        
+        # Update messages_per_page based on available space
+        # Account for scroll indicators (2 lines each when active)
+        indicator_lines = 4 if (self.scroll_mode or self.scroll_offset > 0) else 0
+        self.messages_per_page = max(1, (available_lines - indicator_lines) // 3)  # Assuming ~3 lines per message
         
         # Draw header
         for line in header_lines:
@@ -775,13 +793,20 @@ class ConsoleUI:
                 if not self.scroll_mode:
                     # When exiting scroll mode, return to bottom
                     self.scroll_offset = 0
+                # Force immediate redraw
+                self.draw_screen(current_input, prompt)
                 continue
             
             elif char == '\x15':  # Ctrl+U - Page up
-                if len(self.messages) > self.messages_per_page:
-                    max_offset = len(self.messages) - self.messages_per_page
-                    self.scroll_offset = min(self.scroll_offset + self.messages_per_page, max_offset)
+                # First ensure we have enough messages to scroll
+                if len(self.messages) > 1:  # Need at least 2 messages to scroll
+                    # Page up means show older messages (increase offset)
+                    page_size = max(1, self.messages_per_page // 2)  # Half page for smoother scrolling
+                    max_offset = len(self.messages) - 1
+                    self.scroll_offset = min(self.scroll_offset + page_size, max_offset)
                     self.scroll_mode = True
+                    # Force immediate redraw
+                    self.draw_screen(current_input, prompt)
                 continue
             
             elif char == '\x04':  # Ctrl+D - Page down (when not in multi-line mode)
@@ -789,6 +814,8 @@ class ConsoleUI:
                     self.scroll_offset = max(0, self.scroll_offset - self.messages_per_page)
                     if self.scroll_offset == 0:
                         self.scroll_mode = False
+                    # Force immediate redraw
+                    self.draw_screen(current_input, prompt)
                     continue
                 elif self.multi_line_input:
                     # Original Ctrl+D behavior for multi-line input
@@ -807,19 +834,38 @@ class ConsoleUI:
                 continue
             
             elif char == '\x07':  # Ctrl+G - Go to top
-                if len(self.messages) > self.messages_per_page:
-                    self.scroll_offset = len(self.messages) - self.messages_per_page
+                if len(self.messages) > 1:
+                    # Go to the very beginning (show oldest messages)
+                    self.scroll_offset = max(0, len(self.messages) - 1)
                     self.scroll_mode = True
+                    # Force immediate redraw
+                    self.draw_screen(current_input, prompt)
                 continue
             
             elif char == '\x05':  # Ctrl+E - Go to end (bottom)
                 self.scroll_offset = 0
                 self.scroll_mode = False
+                # Force immediate redraw
+                self.draw_screen(current_input, prompt)
                 continue
             
             # Mode-specific handling
             if self.input_mode == "text":
-                # Text input mode
+                # Check if we're in scroll mode for vim-style navigation
+                if self.scroll_mode:
+                    if char.lower() == 'j':  # Down one line
+                        if self.scroll_offset > 0:
+                            self.scroll_offset = max(0, self.scroll_offset - 1)
+                            self.draw_screen(current_input, prompt)
+                        continue
+                    elif char.lower() == 'k':  # Up one line
+                        if len(self.messages) > 1:
+                            max_offset = len(self.messages) - 1
+                            self.scroll_offset = min(self.scroll_offset + 1, max_offset)
+                            self.draw_screen(current_input, prompt)
+                        continue
+                
+                # Normal text input mode
                 if char == '\x7f' or char == '\x08':  # Backspace
                     current_input = current_input[:-1]
                 elif char == '\x0a':  # Shift+Enter for multi-line (simplified detection)
