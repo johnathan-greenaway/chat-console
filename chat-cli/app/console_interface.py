@@ -389,13 +389,13 @@ class ConsoleUI:
         if self.scroll_mode or self.scroll_offset > 0:
             # Scroll mode controls
             controls = (
-                f"{self.theme['muted']}[{self.theme['accent']}j/k{self.theme['muted']}] Line ↓/↑  "
+                f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] Line ↓/↑  "
                 f"[{self.theme['accent']}Ctrl+U/D{self.theme['muted']}] Page ↑/↓  "
                 f"[{self.theme['accent']}Ctrl+G{self.theme['muted']}] Top  "
                 f"[{self.theme['accent']}Ctrl+E{self.theme['muted']}] End  "
                 f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
             )
-            clean_controls = "[j/k] Line ↓/↑  [Ctrl+U/D] Page ↑/↓  [Ctrl+G] Top  [Ctrl+E] End  [Esc] Exit"
+            clean_controls = "[j/i] Line ↓/↑  [Ctrl+U/D] Page ↑/↓  [Ctrl+G] Top  [Ctrl+E] End  [Esc] Exit"
         else:
             # Normal controls
             controls = (
@@ -965,7 +965,7 @@ class ConsoleUI:
                             self.draw_screen(current_input, prompt, force_redraw=True)
                             self._skip_redraw = True
                         continue
-                    elif char.lower() == 'k':  # Up one line (toward older messages)
+                    elif char.lower() == 'i':  # Up one line (toward older messages)
                         if len(self.messages) > 1:
                             max_offset = len(self.messages) - 1
                             self.scroll_offset = min(self.scroll_offset + 1, max_offset)
