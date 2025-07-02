@@ -547,17 +547,29 @@ class ConsoleUI:
                 # Apply role color to content
                 colored_line = f"{role_color}{line}{self.theme['reset']}"
                 
-                formatted_line = (chars['vertical'] + prefix + 
-                                colored_line.ljust(content_width + len(colored_line) - len(line)) + 
-                                chars['vertical'])
+                # Create line and pad to exact width
+                content = prefix + colored_line
+                # Remove color codes to calculate visual width
+                import re
+                visual_content = re.sub(r'\x1b\[[0-9;]*m', '', content)
+                current_width = len(visual_content)
+                padding_needed = self.width - 2 - current_width  # -2 for border chars
+                formatted_line = (chars['vertical'] + content + 
+                                " " * max(0, padding_needed) + chars['vertical'])
             else:
                 # Continuation lines with proper indentation and color
                 prefix = "        "  # Align with content
                 role_color = self.theme['primary'] if message.role == "user" else self.theme['text']
                 colored_line = f"{role_color}{line}{self.theme['reset']}"
-                formatted_line = (chars['vertical'] + prefix + 
-                                colored_line.ljust(content_width + len(colored_line) - len(line)) + 
-                                chars['vertical'])
+                
+                # Create line and pad to exact width
+                content = prefix + colored_line
+                # Remove color codes to calculate visual width
+                visual_content = re.sub(r'\x1b\[[0-9;]*m', '', content)
+                current_width = len(visual_content)
+                padding_needed = self.width - 2 - current_width  # -2 for border chars
+                formatted_line = (chars['vertical'] + content + 
+                                " " * max(0, padding_needed) + chars['vertical'])
             formatted_lines.append(formatted_line)
         
         # Add empty line for spacing
