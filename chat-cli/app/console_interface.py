@@ -99,34 +99,38 @@ class ConsoleUI:
             ]}
     
     def _setup_console_logging(self):
-        """Setup logging to minimize disruption to console UI"""
-        # Set root logger to CRITICAL to suppress everything except critical errors
-        logging.getLogger().setLevel(logging.CRITICAL)
+        """Completely disable all logging and debug output"""
+        import sys
+        import os
         
-        # Clear any existing handlers first
-        for handler in logging.root.handlers[:]:
-            logging.root.removeHandler(handler)
+        # Completely disable logging system
+        logging.disable(logging.CRITICAL)
         
-        # Add only NullHandler to suppress all output
-        logging.root.addHandler(logging.NullHandler())
+        # Clear all existing handlers and disable root logger
+        root_logger = logging.getLogger()
+        root_logger.handlers.clear()
+        root_logger.disabled = True
         
-        # Aggressively suppress all known loggers
+        # Redirect stderr to devnull to suppress any remaining debug output
+        try:
+            devnull_fd = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull_fd, 2)  # Redirect stderr (fd 2) to /dev/null
+            os.close(devnull_fd)
+        except:
+            pass  # If redirection fails, continue anyway
+        
+        # Disable all known loggers completely
         noisy_loggers = [
-            'app', 'app.api', 'app.api.base', 'app.api.ollama', 
-            'app.utils', 'app.console_utils', 'aiohttp', 'urllib3', 
-            'httpx', 'asyncio', 'root', 'INFO', 'DEBUG', 'WARNING',
-            'httpcore', 'httpx._client', 'hpack', 'h11'
+            'app', 'app.api', 'app.api.base', 'app.api.ollama', 'app.api.openai',
+            'app.api.anthropic', 'app.utils', 'app.console_utils', 'aiohttp', 'urllib3', 
+            'httpx', 'asyncio', 'root', 'httpcore', 'httpx._client', 'hpack', 'h11'
         ]
         
         for logger_name in noisy_loggers:
             logger = logging.getLogger(logger_name)
-            logger.setLevel(logging.CRITICAL)
-            logger.handlers = []
-            logger.addHandler(logging.NullHandler())
+            logger.disabled = True
+            logger.handlers.clear()
             logger.propagate = False
-        
-        # Redirect stdout/stderr for subprocess calls (if any)
-        self._dev_null = open(os.devnull, 'w')
         
     def _suppress_output(self):
         """Context manager to suppress all output during sensitive operations"""
@@ -153,8 +157,9 @@ class ConsoleUI:
     
     def _rebuild_message_cache(self):
         """Rebuild the formatted message cache when messages change"""
-        if len(self.messages) == self.last_message_count:
-            return  # No change needed
+        # Always rebuild during streaming to show updated content
+        if not self.generating and len(self.messages) == self.last_message_count:
+            return  # No change needed when not streaming
             
         self.formatted_messages_cache = []
         
@@ -513,6 +518,10 @@ class ConsoleUI:
         if streaming and message.content:
             highlighted_content += f"{self.theme['accent']}▎{self.theme['reset']}"
         
+        # If no content yet, show placeholder for streaming
+        if streaming and not message.content:
+            highlighted_content = f"{self.theme['muted']}[Generating response...]{self.theme['reset']}"
+        
         # Use improved word wrapping
         lines = self._improved_word_wrap(highlighted_content, content_width)
         
@@ -721,51 +730,37 @@ class ConsoleUI:
         for line in self.screen_regions['footer']:
             print(line)
         
-        # Position cursor for better user experience
-        cursor_offset = len(current_input) + 4
-        if self.multi_line_input:
-            cursor_offset = len(current_input) + 4  # Adjust for multi-line
-        
-        footer_lines = len(self.screen_regions['footer'])
-        input_lines = len(self.screen_regions['input'])
-        print("\033[A" * (footer_lines + input_lines - 1), end="")
-        print(f"\033[{cursor_offset}C", end="")
+        # Simple output flush without cursor positioning to avoid duplication
         sys.stdout.flush()
     
+    def _suppress_all_output(self):
+        """Temporarily suppress all stdout/stderr to prevent interference"""
+        import sys
+        import os
+        
+        class DevNull:
+            def write(self, _): pass
+            def flush(self): pass
+        
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
+        devnull = DevNull()
+        sys.stdout = devnull
+        sys.stderr = devnull
+    
+    def _restore_output(self):
+        """Restore stdout/stderr"""
+        import sys
+        if hasattr(self, '_old_stdout'):
+            sys.stdout = self._old_stdout
+        if hasattr(self, '_old_stderr'):
+            sys.stderr = self._old_stderr
+
     def update_messages_only(self):
-        """Update only the message area - for scroll operations"""
-        # Update message buffer
-        self._update_message_buffer()
-        self.screen_regions['messages'] = self.message_buffer.copy()
-        
-        # Ensure proper sizing
-        header_lines = len(self.screen_regions['header'])
-        footer_lines = len(self.screen_regions['footer'])
-        input_lines = len(self.screen_regions['input'])
-        used_lines = header_lines + footer_lines + input_lines
-        available_lines = self.height - used_lines - 2
-        
-        chars = self.get_border_chars()
-        empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
-        
-        if len(self.screen_regions['messages']) < available_lines:
-            padding_needed = available_lines - len(self.screen_regions['messages'])
-            self.screen_regions['messages'].extend([empty_line] * padding_needed)
-        else:
-            self.screen_regions['messages'] = self.screen_regions['messages'][:available_lines]
-        
-        # Position cursor at start of message area
-        print(f"\033[{header_lines + 1};1H", end="")
-        
-        # Redraw message area
-        for line in self.screen_regions['messages']:
-            print(line)
-        
-        # Return cursor to input position (roughly)
-        total_lines = header_lines + len(self.screen_regions['messages']) + len(self.screen_regions['input']) + len(self.screen_regions['footer'])
-        input_line_position = total_lines - len(self.screen_regions['footer']) - 1
-        print(f"\033[{input_line_position};4H", end="")  # Position cursor at input line
-        sys.stdout.flush()
+        """Update messages during scroll - use full redraw to avoid issues"""
+        # Just use the regular draw_screen method but force a redraw
+        # This is the safest approach to avoid any stray output
+        pass  # This method will be replaced by direct draw_screen calls
     
     def get_input(self, prompt: str = "Type your message") -> str:
         """Enhanced input with multi-line support, history navigation, and improved UX"""
@@ -896,10 +891,8 @@ class ConsoleUI:
                 if not self.scroll_mode:
                     # When exiting scroll mode, return to bottom
                     self.scroll_offset = 0
-                # Update only the message area + header/footer for mode indicator
-                self.screen_regions['header'] = self.draw_header()
-                self.screen_regions['footer'] = self.draw_footer()
-                self.update_messages_only()
+                # Use regular draw_screen to avoid stray output
+                self.draw_screen(current_input, prompt, force_redraw=True)
                 self._skip_redraw = True
                 continue
             
@@ -911,9 +904,8 @@ class ConsoleUI:
                     max_offset = len(self.messages) - 1
                     self.scroll_offset = min(self.scroll_offset + page_size, max_offset)
                     self.scroll_mode = True
-                    # Update only messages and header for scroll mode indicator
-                    self.screen_regions['header'] = self.draw_header()
-                    self.update_messages_only()
+                    # Use regular draw_screen to avoid stray output
+                    self.draw_screen(current_input, prompt, force_redraw=True)
                     self._skip_redraw = True
                 continue
             
@@ -923,9 +915,8 @@ class ConsoleUI:
                     self.scroll_offset = max(0, self.scroll_offset - page_size)
                     if self.scroll_offset == 0:
                         self.scroll_mode = False
-                    # Update messages and header for scroll mode indicator
-                    self.screen_regions['header'] = self.draw_header()
-                    self.update_messages_only()
+                    # Use regular draw_screen to avoid stray output
+                    self.draw_screen(current_input, prompt, force_redraw=True)
                     self._skip_redraw = True
                     continue
                 elif self.multi_line_input:
@@ -949,18 +940,16 @@ class ConsoleUI:
                     # Go to the very beginning (show oldest messages)
                     self.scroll_offset = max(0, len(self.messages) - 1)
                     self.scroll_mode = True
-                    # Update messages and header for scroll mode indicator
-                    self.screen_regions['header'] = self.draw_header()
-                    self.update_messages_only()
+                    # Use regular draw_screen to avoid stray output
+                    self.draw_screen(current_input, prompt, force_redraw=True)
                     self._skip_redraw = True
                 continue
             
             elif char == '\x05':  # Ctrl+E - Go to end (bottom)
                 self.scroll_offset = 0
                 self.scroll_mode = False
-                # Update messages and header for scroll mode indicator
-                self.screen_regions['header'] = self.draw_header()
-                self.update_messages_only()
+                # Use regular draw_screen to avoid stray output
+                self.draw_screen(current_input, prompt, force_redraw=True)
                 self._skip_redraw = True
                 continue
             
@@ -973,15 +962,14 @@ class ConsoleUI:
                             self.scroll_offset = max(0, self.scroll_offset - 1)
                             if self.scroll_offset == 0:
                                 self.scroll_mode = False
-                            self.screen_regions['header'] = self.draw_header()
-                            self.update_messages_only()
+                            self.draw_screen(current_input, prompt, force_redraw=True)
                             self._skip_redraw = True
                         continue
                     elif char.lower() == 'k':  # Up one line (toward older messages)
                         if len(self.messages) > 1:
                             max_offset = len(self.messages) - 1
                             self.scroll_offset = min(self.scroll_offset + 1, max_offset)
-                            self.update_messages_only()
+                            self.draw_screen(current_input, prompt, force_redraw=True)
                             self._skip_redraw = True
                         continue
                 
@@ -1529,6 +1517,10 @@ class ConsoleUI:
             # Save final response only if complete
             if self.current_conversation and full_response and not cancelled:
                 self.db.add_message(self.current_conversation.id, "assistant", full_response)
+            
+            # Show final screen with complete response
+            if not cancelled and full_response:
+                self.draw_screen("", "Type your message")
                 
         except KeyboardInterrupt:
             # Handle direct keyboard interrupt
