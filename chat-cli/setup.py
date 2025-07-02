@@ -40,8 +40,9 @@ setup(
         "console_scripts": [
             "chat-console=app.main:main",
             "c-c=app.main:main",
-            "chat-console-pure=app.console_main:main",
-            "c-c-pure=app.console_main:main",
+            "chat=app.main:main",
+            "chat-console-classic=app.classic_main:main",
+            "c-c-c=app.classic_main:main",
         ],
     },
 )

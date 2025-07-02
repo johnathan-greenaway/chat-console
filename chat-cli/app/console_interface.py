@@ -1,31 +1,29 @@
 #!/usr/bin/env python3
 """
-Pure Console Chat CLI - No Textual Dependencies
+Pure Console Chat Interface - No Textual Dependencies
 A true terminal interface following Dieter Rams principles
 """
+
+# Pre-import logging suppression to prevent any output during imports
+import logging
+logging.getLogger().setLevel(logging.CRITICAL)
+logging.basicConfig(level=logging.CRITICAL, handlers=[logging.NullHandler()])
 
 import os
 import sys
 import asyncio
-import argparse
 import signal
-import threading
 import time
-import random
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 import shutil
-import json
 
-# Add app to path for imports
-sys.path.insert(0, os.path.dirname(__file__))
-
-from app.models import Message, Conversation
-from app.database import ChatDatabase
-from app.config import CONFIG, save_config
-from app.utils import resolve_model_id, generate_conversation_title
-from app.console_utils import console_streaming_response, apply_style_prefix
-from app.api.base import BaseModelClient
+from .models import Message, Conversation
+from .database import ChatDatabase
+from .config import CONFIG, save_config
+from .utils import resolve_model_id, generate_conversation_title
+from .console_utils import console_streaming_response, apply_style_prefix
+from .api.base import BaseModelClient
 
 class ConsoleUI:
     """Pure console UI following Rams design principles with Gemini-inspired enhancements"""
@@ -53,6 +51,22 @@ class ConsoleUI:
         self.loading_phase_index = 0
         self.start_time = time.time()
         
+        # Scrolling support
+        self.scroll_offset = 0  # How many messages to skip from the bottom
+        self.messages_per_page = 10  # Default messages per page
+        self.scroll_mode = False  # Whether we're in scroll mode
+        
+        # Message rendering cache and state
+        self.formatted_messages_cache = []  # Cache of formatted message lines
+        self.message_buffer = []  # Current visible message lines
+        self.last_message_count = 0  # Track when to refresh cache
+        self.screen_regions = {
+            'header': [],
+            'messages': [],
+            'input': [],
+            'footer': []
+        }
+        
         # Suppress verbose logging for console mode
         self._setup_console_logging()
     
@@ -60,7 +74,7 @@ class ConsoleUI:
         """Load color theme configuration"""
         try:
             # Try to import colorama for colors
-            from colorama import Fore, Back, Style, init
+            from colorama import Fore, Style, init
             init(autoreset=True)
             
             # Default theme inspired by gemini-code-assist
@@ -85,30 +99,41 @@ class ConsoleUI:
             ]}
     
     def _setup_console_logging(self):
-        """Setup logging to minimize disruption to console UI"""
-        import logging
+        """Completely disable all logging and debug output"""
+        import sys
         import os
         
-        # Suppress verbose Ollama logging
-        logging.getLogger('app.api.ollama').setLevel(logging.ERROR)
-        logging.getLogger('aiohttp').setLevel(logging.ERROR)
-        logging.getLogger('urllib3').setLevel(logging.ERROR)
-        logging.getLogger('httpx').setLevel(logging.ERROR)
-        logging.getLogger('asyncio').setLevel(logging.ERROR)
+        # Completely disable logging system
+        logging.disable(logging.CRITICAL)
         
-        # Redirect any remaining output to avoid TUI disruption
-        logging.basicConfig(
-            level=logging.ERROR,
-            format='%(levelname)s: %(message)s',
-            handlers=[logging.NullHandler()]  # Suppress console output
-        )
+        # Clear all existing handlers and disable root logger
+        root_logger = logging.getLogger()
+        root_logger.handlers.clear()
+        root_logger.disabled = True
         
-        # Redirect stdout/stderr for subprocess calls (if any)
-        self._dev_null = open(os.devnull, 'w')
+        # Redirect stderr to devnull to suppress any remaining debug output
+        try:
+            devnull_fd = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull_fd, 2)  # Redirect stderr (fd 2) to /dev/null
+            os.close(devnull_fd)
+        except:
+            pass  # If redirection fails, continue anyway
+        
+        # Disable all known loggers completely
+        noisy_loggers = [
+            'app', 'app.api', 'app.api.base', 'app.api.ollama', 'app.api.openai',
+            'app.api.anthropic', 'app.utils', 'app.console_utils', 'aiohttp', 'urllib3', 
+            'httpx', 'asyncio', 'root', 'httpcore', 'httpx._client', 'hpack', 'h11'
+        ]
+        
+        for logger_name in noisy_loggers:
+            logger = logging.getLogger(logger_name)
+            logger.disabled = True
+            logger.handlers.clear()
+            logger.propagate = False
         
     def _suppress_output(self):
         """Context manager to suppress all output during sensitive operations"""
-        import sys
         import contextlib
         
         @contextlib.contextmanager
@@ -129,6 +154,123 @@ class ConsoleUI:
     def clear_screen(self):
         """Clear the terminal screen"""
         os.system('cls' if os.name == 'nt' else 'clear')
+    
+    def _rebuild_message_cache(self):
+        """Rebuild the formatted message cache when messages change"""
+        # Always rebuild during streaming to show updated content
+        if not self.generating and len(self.messages) == self.last_message_count:
+            return  # No change needed when not streaming
+            
+        self.formatted_messages_cache = []
+        
+        for i, message in enumerate(self.messages):
+            is_streaming = (i == len(self.messages) - 1 and 
+                          message.role == "assistant" and 
+                          self.generating and 
+                          self.scroll_offset == 0)
+            formatted_lines = self.format_message(message, streaming=is_streaming)
+            self.formatted_messages_cache.extend(formatted_lines)
+            
+        self.last_message_count = len(self.messages)
+    
+    def _update_message_buffer(self):
+        """Update the message buffer based on current scroll state"""
+        self._rebuild_message_cache()
+        
+        total_lines = len(self.formatted_messages_cache)
+        if total_lines == 0:
+            self.message_buffer = self._get_empty_state_messages()
+            return
+            
+        # Calculate available space for messages
+        header_lines = len(self.screen_regions['header'])
+        footer_lines = len(self.screen_regions['footer']) 
+        input_lines = len(self.screen_regions['input'])
+        used_lines = header_lines + footer_lines + input_lines
+        available_lines = self.height - used_lines - 2
+        
+        # Calculate scroll position in terms of lines, not messages
+        if self.scroll_offset == 0:
+            # Show most recent lines
+            start_line = max(0, total_lines - available_lines)
+            end_line = total_lines
+        else:
+            # Convert message offset to line offset
+            # This is approximate - we'll improve this later
+            lines_per_message = max(1, total_lines // max(1, len(self.messages)))
+            line_offset = self.scroll_offset * lines_per_message
+            end_line = max(available_lines, total_lines - line_offset)
+            start_line = max(0, end_line - available_lines)
+            
+        self.message_buffer = self.formatted_messages_cache[start_line:end_line]
+        
+        # Add scroll indicators if needed
+        if self.scroll_mode or self.scroll_offset > 0:
+            self._add_scroll_indicators()
+    
+    def _get_empty_state_messages(self):
+        """Get the empty state welcome messages"""
+        chars = self.get_border_chars()
+        lines = []
+        
+        # Enhanced empty state with tips
+        empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+        lines.extend([empty_line] * 2)
+        
+        # Welcome message with colors
+        welcome_text = f"{self.theme['primary']}✨ Start a conversation by typing a message below ✨{self.theme['reset']}"
+        clean_welcome = " Start a conversation by typing a message below "
+        color_padding = len(welcome_text) - len(clean_welcome)
+        centered_line = chars['vertical'] + welcome_text.center(self.width - 2 + color_padding) + chars['vertical']
+        lines.append(centered_line)
+        
+        lines.append(empty_line)
+        
+        # Tips with colors
+        tips = [
+            f"{self.theme['muted']}• Use {self.theme['accent']}Shift+Enter{self.theme['muted']} for multi-line input{self.theme['reset']}",
+            f"{self.theme['muted']}• Press {self.theme['accent']}Tab{self.theme['muted']} to access menu mode{self.theme['reset']}",
+            f"{self.theme['muted']}• Use {self.theme['accent']}Ctrl+B{self.theme['muted']} to enable scrolling{self.theme['reset']}"
+        ]
+        
+        for tip in tips:
+            clean_tip = tip.replace(self.theme['muted'], '').replace(self.theme['accent'], '').replace(self.theme['reset'], '')
+            color_padding = len(tip) - len(clean_tip)
+            tip_line = chars['vertical'] + f" {tip}".ljust(self.width - 2 + color_padding) + chars['vertical']
+            lines.append(tip_line)
+        
+        lines.extend([empty_line] * 2)
+        return lines
+    
+    def _add_scroll_indicators(self):
+        """Add scroll indicators to the message buffer"""
+        if not (self.scroll_mode or self.scroll_offset > 0):
+            return
+            
+        chars = self.get_border_chars()
+        empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+        
+        indicators = []
+        
+        # Top indicator - show if we can scroll up (more messages above)
+        if self.scroll_offset < len(self.messages) - 1:
+            more_above = f"{self.theme['accent']}↑ More messages above (offset: {self.scroll_offset}) ↑{self.theme['reset']}"
+            clean_above = f"↑ More messages above (offset: {self.scroll_offset}) ↑"
+            color_padding = len(more_above) - len(clean_above)
+            above_line = chars['vertical'] + more_above.center(self.width - 2 + color_padding) + chars['vertical']
+            indicators.extend([above_line, empty_line])
+        
+        # Bottom indicator - show if we can scroll down (more messages below)  
+        if self.scroll_offset > 0:
+            more_below = f"{self.theme['accent']}↓ More messages below (use j or Ctrl+D) ↓{self.theme['reset']}"
+            clean_below = f"↓ More messages below (use j or Ctrl+D) ↓"
+            color_padding = len(more_below) - len(clean_below)
+            below_line = chars['vertical'] + more_below.center(self.width - 2 + color_padding) + chars['vertical']
+            indicators.extend([empty_line, below_line])
+        
+        # Add indicators to message buffer
+        if indicators:
+            self.message_buffer = indicators + self.message_buffer
     
     def get_border_chars(self):
         """Get clean ASCII border characters"""
@@ -202,7 +344,7 @@ class ConsoleUI:
     
     def draw_header(self) -> List[str]:
         """Draw the enhanced application header with colors"""
-        from app import __version__
+        from . import __version__
         chars = self.get_border_chars()
         
         lines = []
@@ -211,14 +353,21 @@ class ConsoleUI:
         title = f" {self.theme['bold']}Chat Console v{__version__}{self.theme['reset']} "
         model_info = f" {self.theme['primary']}Model: {self.selected_model}{self.theme['reset']} "
         
+        # Add scroll indicator if in scroll mode
+        if self.scroll_mode or self.scroll_offset > 0:
+            scroll_info = f" {self.theme['warning']}[SCROLL MODE]{self.theme['reset']} "
+        else:
+            scroll_info = ""
+        
         # Calculate spacing (account for color codes)
         clean_title = f" Chat Console v{__version__} "
         clean_model = f" Model: {self.selected_model} "
-        used_space = len(clean_title) + len(clean_model)
+        clean_scroll = " [SCROLL MODE] " if (self.scroll_mode or self.scroll_offset > 0) else ""
+        used_space = len(clean_title) + len(clean_model) + len(clean_scroll)
         remaining = self.width - used_space - 2
         spacing = chars['horizontal'] * max(0, remaining)
         
-        header_line = chars['top_left'] + title + spacing + model_info + chars['top_right']
+        header_line = chars['top_left'] + title + spacing + scroll_info + model_info + chars['top_right']
         lines.append(header_line)
         
         # Conversation title with color
@@ -236,18 +385,30 @@ class ConsoleUI:
         """Draw the enhanced footer with colorized controls"""
         chars = self.get_border_chars()
         
-        # Colorize controls
-        controls = (
-            f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
-            f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
-            f"[{self.theme['accent']}n{self.theme['muted']}] New  "
-            f"[{self.theme['accent']}h{self.theme['muted']}] History  "
-            f"[{self.theme['accent']}s{self.theme['muted']}] Settings  "
-            f"[{self.theme['accent']}m{self.theme['muted']}] Models{self.theme['reset']}"
-        )
+        # Show different controls based on mode
+        if self.scroll_mode or self.scroll_offset > 0:
+            # Scroll mode controls
+            controls = (
+                f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] Line ↓/↑  "
+                f"[{self.theme['accent']}Ctrl+U/D{self.theme['muted']}] Page ↑/↓  "
+                f"[{self.theme['accent']}Ctrl+G{self.theme['muted']}] Top  "
+                f"[{self.theme['accent']}Ctrl+E{self.theme['muted']}] End  "
+                f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
+            )
+            clean_controls = "[j/i] Line ↓/↑  [Ctrl+U/D] Page ↑/↓  [Ctrl+G] Top  [Ctrl+E] End  [Esc] Exit"
+        else:
+            # Normal controls
+            controls = (
+                f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
+                f"[{self.theme['accent']}Ctrl+B{self.theme['muted']}] Scroll  "
+                f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
+                f"[{self.theme['accent']}n{self.theme['muted']}] New  "
+                f"[{self.theme['accent']}h{self.theme['muted']}] History  "
+                f"[{self.theme['accent']}s{self.theme['muted']}] Settings{self.theme['reset']}"
+            )
+            clean_controls = "[Tab] Menu  [Ctrl+B] Scroll  [q] Quit  [n] New  [h] History  [s] Settings"
         
         # Calculate clean length for padding
-        clean_controls = "[Tab] Menu  [q] Quit  [n] New  [h] History  [s] Settings  [m] Models"
         color_padding = len(controls) - len(clean_controls)
         footer_line = chars['vertical'] + f" {controls} ".ljust(self.width - 2 + color_padding) + chars['vertical']
         
@@ -357,6 +518,10 @@ class ConsoleUI:
         if streaming and message.content:
             highlighted_content += f"{self.theme['accent']}▎{self.theme['reset']}"
         
+        # If no content yet, show placeholder for streaming
+        if streaming and not message.content:
+            highlighted_content = f"{self.theme['muted']}[Generating response...]{self.theme['reset']}"
+        
         # Use improved word wrapping
         lines = self._improved_word_wrap(highlighted_content, content_width)
         
@@ -381,19 +546,30 @@ class ConsoleUI:
                 
                 # Apply role color to content
                 colored_line = f"{role_color}{line}{self.theme['reset']}"
-                clean_prefix = f" 👤 {timestamp} " if message.role == "user" else f" 🤖 {timestamp} "
                 
-                formatted_line = (chars['vertical'] + prefix + 
-                                colored_line.ljust(content_width + len(colored_line) - len(line)) + 
-                                chars['vertical'])
+                # Create line and pad to exact width
+                content = prefix + colored_line
+                # Remove color codes to calculate visual width
+                import re
+                visual_content = re.sub(r'\x1b\[[0-9;]*m', '', content)
+                current_width = len(visual_content)
+                padding_needed = self.width - 2 - current_width  # -2 for border chars
+                formatted_line = (chars['vertical'] + content + 
+                                " " * max(0, padding_needed) + chars['vertical'])
             else:
                 # Continuation lines with proper indentation and color
                 prefix = "        "  # Align with content
                 role_color = self.theme['primary'] if message.role == "user" else self.theme['text']
                 colored_line = f"{role_color}{line}{self.theme['reset']}"
-                formatted_line = (chars['vertical'] + prefix + 
-                                colored_line.ljust(content_width + len(colored_line) - len(line)) + 
-                                chars['vertical'])
+                
+                # Create line and pad to exact width
+                content = prefix + colored_line
+                # Remove color codes to calculate visual width
+                visual_content = re.sub(r'\x1b\[[0-9;]*m', '', content)
+                current_width = len(visual_content)
+                padding_needed = self.width - 2 - current_width  # -2 for border chars
+                formatted_line = (chars['vertical'] + content + 
+                                " " * max(0, padding_needed) + chars['vertical'])
             formatted_lines.append(formatted_line)
         
         # Add empty line for spacing
@@ -403,47 +579,10 @@ class ConsoleUI:
         return formatted_lines
     
     def draw_messages(self) -> List[str]:
-        """Draw all messages in the conversation with enhanced styling"""
-        lines = []
-        chars = self.get_border_chars()
-        
-        if not self.messages:
-            # Enhanced empty state with tips
-            empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
-            lines.extend([empty_line] * 2)
-            
-            # Welcome message with colors
-            welcome_text = f"{self.theme['primary']}✨ Start a conversation by typing a message below ✨{self.theme['reset']}"
-            clean_welcome = " Start a conversation by typing a message below "
-            color_padding = len(welcome_text) - len(clean_welcome)
-            centered_line = chars['vertical'] + welcome_text.center(self.width - 2 + color_padding) + chars['vertical']
-            lines.append(centered_line)
-            
-            lines.append(empty_line)
-            
-            # Tips with colors
-            tips = [
-                f"{self.theme['muted']}• Use {self.theme['accent']}Shift+Enter{self.theme['muted']} for multi-line input{self.theme['reset']}",
-                f"{self.theme['muted']}• Press {self.theme['accent']}Tab{self.theme['muted']} to access menu mode{self.theme['reset']}",
-                f"{self.theme['muted']}• Use {self.theme['accent']}Up/Down arrows{self.theme['muted']} to navigate history{self.theme['reset']}"
-            ]
-            
-            for tip in tips:
-                clean_tip = tip.replace(self.theme['muted'], '').replace(self.theme['accent'], '').replace(self.theme['reset'], '')
-                color_padding = len(tip) - len(clean_tip)
-                tip_line = chars['vertical'] + f" {tip}".ljust(self.width - 2 + color_padding) + chars['vertical']
-                lines.append(tip_line)
-            
-            lines.extend([empty_line] * 2)
-        else:
-            # Display messages with enhanced formatting
-            for message in self.messages[-10:]:  # Show last 10 messages
-                is_streaming = (message == self.messages[-1] and 
-                              message.role == "assistant" and 
-                              self.generating)
-                lines.extend(self.format_message(message, streaming=is_streaming))
-        
-        return lines
+        """Draw all messages - now uses the new buffer system"""
+        # Use the new message buffer system
+        self._update_message_buffer()
+        return self.message_buffer.copy()
     
     def draw_input_area(self, current_input: str = "", prompt: str = "Type your message") -> List[str]:
         """Draw the enhanced input area with multi-line support and dynamic indicators"""
@@ -525,63 +664,115 @@ class ConsoleUI:
         
         return lines
     
-    def draw_screen(self, current_input: str = "", input_prompt: str = "Type your message", show_welcome: bool = False):
-        """Draw the complete enhanced screen with welcome message and better layout"""
-        self.clear_screen()
+    def _render_regions(self, current_input: str = "", input_prompt: str = "Type your message"):
+        """Render all screen regions into buffers"""
+        # Update all regions
+        self.screen_regions['header'] = self.draw_header()
+        self.screen_regions['footer'] = self.draw_footer()
+        self.screen_regions['input'] = self.draw_input_area(current_input, input_prompt)
+        
+        # Update message buffer using the new system
+        self._update_message_buffer()
+        self.screen_regions['messages'] = self.message_buffer.copy()
+        
+        # Ensure message area fits available space
+        header_lines = len(self.screen_regions['header'])
+        footer_lines = len(self.screen_regions['footer'])
+        input_lines = len(self.screen_regions['input'])
+        used_lines = header_lines + footer_lines + input_lines
+        available_lines = self.height - used_lines - 2
+        
+        # Pad or truncate message area
+        chars = self.get_border_chars()
+        empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
+        
+        if len(self.screen_regions['messages']) < available_lines:
+            # Pad with empty lines
+            padding_needed = available_lines - len(self.screen_regions['messages'])
+            self.screen_regions['messages'].extend([empty_line] * padding_needed)
+        else:
+            # Truncate to fit
+            self.screen_regions['messages'] = self.screen_regions['messages'][:available_lines]
+    
+    def _update_region(self, region_name: str, new_content: List[str]):
+        """Update a specific screen region without full redraw"""
+        # Store old content for comparison
+        old_content = self.screen_regions.get(region_name, [])
+        
+        # Update the region
+        self.screen_regions[region_name] = new_content.copy()
+        
+        # For now, we'll still do full redraws but this sets up the structure
+        # for targeted updates later
+        return old_content != new_content
+    
+    def draw_screen(self, current_input: str = "", input_prompt: str = "Type your message", show_welcome: bool = False, force_redraw: bool = False):
+        """Draw the complete enhanced screen with smart updates"""
         
         # Show welcome message on first run
         if show_welcome:
+            self.clear_screen()
             welcome_lines = self.draw_ascii_welcome()
             for line in welcome_lines:
                 print(line)
             print("\n" * 2)
-            time.sleep(0.1)  # Brief pause to let user see welcome
+            time.sleep(2.5)  # Pause to let user see welcome screen properly
+            # After welcome, force a full redraw
+            force_redraw = True
         
-        # Calculate layout
-        header_lines = self.draw_header()
-        footer_lines = self.draw_footer()
-        input_lines = self.draw_input_area(current_input, input_prompt)
+        # Render all regions
+        self._render_regions(current_input, input_prompt)
         
-        # Calculate available space for messages
-        used_lines = len(header_lines) + len(footer_lines) + len(input_lines)
-        available_lines = self.height - used_lines - 2
+        # For now, do a full redraw when needed
+        # Later we can optimize this to only update changed regions
+        if force_redraw or not hasattr(self, '_screen_initialized'):
+            self.clear_screen()
+            self._screen_initialized = True
         
-        # Draw header
-        for line in header_lines:
+        # Draw all regions
+        for line in self.screen_regions['header']:
             print(line)
         
-        # Draw messages
-        message_lines = self.draw_messages()
-        chars = self.get_border_chars()
-        
-        # Pad or truncate message area
-        if len(message_lines) < available_lines:
-            # Pad with empty lines
-            empty_line = chars['vertical'] + " " * (self.width - 2) + chars['vertical']
-            message_lines.extend([empty_line] * (available_lines - len(message_lines)))
-        else:
-            # Truncate to fit
-            message_lines = message_lines[-available_lines:]
-        
-        for line in message_lines:
+        for line in self.screen_regions['messages']:
             print(line)
         
-        # Draw input area
-        for line in input_lines:
+        for line in self.screen_regions['input']:
             print(line)
         
-        # Draw footer
-        for line in footer_lines:
+        for line in self.screen_regions['footer']:
             print(line)
         
-        # Position cursor for better user experience
-        cursor_offset = len(current_input) + 4
-        if self.multi_line_input:
-            cursor_offset = len(current_input) + 4  # Adjust for multi-line
-        
-        print("\033[A" * (len(footer_lines) + len(input_lines) - 1), end="")
-        print(f"\033[{cursor_offset}C", end="")
+        # Simple output flush without cursor positioning to avoid duplication
         sys.stdout.flush()
+    
+    def _suppress_all_output(self):
+        """Temporarily suppress all stdout/stderr to prevent interference"""
+        import sys
+        import os
+        
+        class DevNull:
+            def write(self, _): pass
+            def flush(self): pass
+        
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
+        devnull = DevNull()
+        sys.stdout = devnull
+        sys.stderr = devnull
+    
+    def _restore_output(self):
+        """Restore stdout/stderr"""
+        import sys
+        if hasattr(self, '_old_stdout'):
+            sys.stdout = self._old_stdout
+        if hasattr(self, '_old_stderr'):
+            sys.stderr = self._old_stderr
+
+    def update_messages_only(self):
+        """Update messages during scroll - use full redraw to avoid issues"""
+        # Just use the regular draw_screen method but force a redraw
+        # This is the safest approach to avoid any stray output
+        pass  # This method will be replaced by direct draw_screen calls
     
     def get_input(self, prompt: str = "Type your message") -> str:
         """Enhanced input with multi-line support, history navigation, and improved UX"""
@@ -590,9 +781,13 @@ class ConsoleUI:
         
         while True:
             # Only redraw screen if not currently generating to avoid interference
-            if not self.generating:
+            # Also avoid redraw if we're in scroll mode and just did a scroll operation
+            if not self.generating and not getattr(self, '_skip_redraw', False):
                 self.draw_screen(current_input, prompt, show_welcome)
                 show_welcome = False  # Only show once
+            
+            # Reset skip redraw flag
+            self._skip_redraw = False
             
             # Get single character with better handling
             if os.name == 'nt':
@@ -658,19 +853,6 @@ class ConsoleUI:
                     # In menu mode, Enter does nothing
                     continue
             
-            elif char == '\x04':  # Ctrl+D
-                # Send multi-line input
-                if self.multi_line_input:
-                    if current_input.strip():
-                        self.multi_line_input.append(current_input)
-                    result = "\n".join(self.multi_line_input)
-                    self.multi_line_input = []  # Clear multi-line buffer
-                    # Add to history
-                    if result not in self.input_history:
-                        self.input_history.append(result)
-                    self.history_index = len(self.input_history)
-                    return result
-                continue
             
             elif char == '\x03':  # Ctrl+C
                 if self.generating:
@@ -709,11 +891,101 @@ class ConsoleUI:
                 elif self.input_mode == "menu":
                     # Switch back to text mode
                     self.input_mode = "text"
+                elif self.scroll_mode:
+                    # Exit scroll mode and return to bottom
+                    self.scroll_mode = False
+                    self.scroll_offset = 0
+                continue
+            
+            # Scroll controls
+            elif char == '\x02':  # Ctrl+B - Toggle scroll mode
+                self.scroll_mode = not self.scroll_mode
+                if not self.scroll_mode:
+                    # When exiting scroll mode, return to bottom
+                    self.scroll_offset = 0
+                # Use regular draw_screen to avoid stray output
+                self.draw_screen(current_input, prompt, force_redraw=True)
+                self._skip_redraw = True
+                continue
+            
+            elif char == '\x15':  # Ctrl+U - Page up
+                # First ensure we have enough messages to scroll
+                if len(self.messages) > 1:  # Need at least 2 messages to scroll
+                    # Page up means show older messages (increase offset)
+                    page_size = max(1, self.messages_per_page // 2)  # Half page for smoother scrolling
+                    max_offset = len(self.messages) - 1
+                    self.scroll_offset = min(self.scroll_offset + page_size, max_offset)
+                    self.scroll_mode = True
+                    # Use regular draw_screen to avoid stray output
+                    self.draw_screen(current_input, prompt, force_redraw=True)
+                    self._skip_redraw = True
+                continue
+            
+            elif char == '\x04':  # Ctrl+D - Page down (when not in multi-line mode)
+                if not self.multi_line_input and self.scroll_offset > 0:
+                    page_size = max(1, self.messages_per_page // 2)
+                    self.scroll_offset = max(0, self.scroll_offset - page_size)
+                    if self.scroll_offset == 0:
+                        self.scroll_mode = False
+                    # Use regular draw_screen to avoid stray output
+                    self.draw_screen(current_input, prompt, force_redraw=True)
+                    self._skip_redraw = True
+                    continue
+                elif self.multi_line_input:
+                    # Original Ctrl+D behavior for multi-line input
+                    if current_input.strip():
+                        self.multi_line_input.append(current_input)
+                    result = "\n".join(self.multi_line_input)
+                    self.multi_line_input = []  # Clear multi-line buffer
+                    # Add to history
+                    if result not in self.input_history:
+                        self.input_history.append(result)
+                    self.history_index = len(self.input_history)
+                    # Reset scroll when sending a message
+                    self.scroll_offset = 0
+                    self.scroll_mode = False
+                    return result
+                continue
+            
+            elif char == '\x07':  # Ctrl+G - Go to top
+                if len(self.messages) > 1:
+                    # Go to the very beginning (show oldest messages)
+                    self.scroll_offset = max(0, len(self.messages) - 1)
+                    self.scroll_mode = True
+                    # Use regular draw_screen to avoid stray output
+                    self.draw_screen(current_input, prompt, force_redraw=True)
+                    self._skip_redraw = True
+                continue
+            
+            elif char == '\x05':  # Ctrl+E - Go to end (bottom)
+                self.scroll_offset = 0
+                self.scroll_mode = False
+                # Use regular draw_screen to avoid stray output
+                self.draw_screen(current_input, prompt, force_redraw=True)
+                self._skip_redraw = True
                 continue
             
             # Mode-specific handling
             if self.input_mode == "text":
-                # Text input mode
+                # Check if we're in scroll mode for vim-style navigation
+                if self.scroll_mode:
+                    if char.lower() == 'j':  # Down one line (toward newer messages)
+                        if self.scroll_offset > 0:
+                            self.scroll_offset = max(0, self.scroll_offset - 1)
+                            if self.scroll_offset == 0:
+                                self.scroll_mode = False
+                            self.draw_screen(current_input, prompt, force_redraw=True)
+                            self._skip_redraw = True
+                        continue
+                    elif char.lower() == 'i':  # Up one line (toward older messages)
+                        if len(self.messages) > 1:
+                            max_offset = len(self.messages) - 1
+                            self.scroll_offset = min(self.scroll_offset + 1, max_offset)
+                            self.draw_screen(current_input, prompt, force_redraw=True)
+                            self._skip_redraw = True
+                        continue
+                
+                # Normal text input mode
                 if char == '\x7f' or char == '\x08':  # Backspace
                     current_input = current_input[:-1]
                 elif char == '\x0a':  # Shift+Enter for multi-line (simplified detection)
@@ -755,24 +1027,177 @@ class ConsoleUI:
     
     async def _generate_title_background(self, first_message: str):
         """Generate conversation title in background after first user message"""
-        if not CONFIG.get("generate_dynamic_titles", True):
+        if not CONFIG.get("generate_dynamic_titles", True) or not self.current_conversation:
+            return
+            
+        # Ensure message is long enough to generate a meaningful title
+        if len(first_message) < 3:
             return
             
         try:
-            # Get client for title generation
-            client = await BaseModelClient.get_client_for_model(self.selected_model)
+            # Use sophisticated model prioritization like the legacy version
+            title_client = None
+            title_model = None
             
-            # Generate title
-            new_title = await generate_conversation_title(first_message, self.selected_model, client)
+            # Import needed components
+            from .config import OPENAI_API_KEY, ANTHROPIC_API_KEY
             
-            # Update conversation title in database and UI
-            if self.current_conversation and new_title and new_title != "New Conversation":
-                self.db.update_conversation_title(self.current_conversation.id, new_title)
-                self.current_conversation.title = new_title
+            # Prioritize faster, cheaper models for title generation
+            if OPENAI_API_KEY:
+                # OpenAI is most reliable for title generation
+                from .api.openai import OpenAIClient
+                title_client = await OpenAIClient.create()
+                title_model = "gpt-3.5-turbo"
+            elif ANTHROPIC_API_KEY:
+                # Anthropic is second choice
+                from .api.anthropic import AnthropicClient
+                title_client = await AnthropicClient.create()
+                title_model = "claude-3-haiku-20240307"
+            else:
+                # Fallback to current model - keep same model to preserve warming
+                selected_model_resolved = resolve_model_id(self.selected_model)
+                client_type = BaseModelClient.get_client_type_for_model(selected_model_resolved)
                 
+                # For Ollama models, use the SAME model the user selected
+                if client_type and client_type.__name__ == "OllamaClient":
+                    try:
+                        from .api.ollama import OllamaClient
+                        title_client = await OllamaClient.create()
+                        title_model = selected_model_resolved  # Use same model
+                        
+                    except Exception:
+                        # Fallback to standard approach
+                        title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
+                        title_model = selected_model_resolved
+                else:
+                    # For other providers, use the current model
+                    title_client = await BaseModelClient.get_client_for_model(selected_model_resolved)
+                    title_model = selected_model_resolved
+            
+            if not title_client or not title_model:
+                return
+            
+            # Generate title with timeout handling and fallback for Ollama
+            new_title = None
+            
+            try:
+                # For Ollama models, generate title directly to preserve warming
+                if client_type and client_type.__name__ == "OllamaClient":
+                    title_generation_task = asyncio.create_task(
+                        self._generate_title_directly(first_message, title_model, title_client)
+                    )
+                else:
+                    # For other providers, use the utils function
+                    title_generation_task = asyncio.create_task(
+                        generate_conversation_title(first_message, title_model, title_client)
+                    )
+                
+                # Wait for completion with 30-second timeout
+                new_title = await asyncio.wait_for(title_generation_task, timeout=30)
+                
+            except (asyncio.TimeoutError, Exception) as e:
+                # Cancel the task if it's still running
+                if 'title_generation_task' in locals() and not title_generation_task.done():
+                    title_generation_task.cancel()
+                
+                # For Ollama models, try fallback to small model if main model failed
+                if (client_type and client_type.__name__ == "OllamaClient" and 
+                    not isinstance(e, asyncio.TimeoutError)):
+                    try:
+                        # Try with a small model as fallback
+                        from .api.ollama import OllamaClient
+                        fallback_client = await OllamaClient.create()
+                        available_models = await fallback_client.get_available_models()
+                        
+                        # Find a small model for fallback
+                        small_fallback_models = ["smollm2:latest", "tinyllama", "gemma:2b"]
+                        fallback_model = None
+                        
+                        for small_model in small_fallback_models:
+                            if any(model.get("id", "") == small_model for model in available_models):
+                                fallback_model = small_model
+                                break
+                        
+                        if fallback_model:
+                            fallback_task = asyncio.create_task(
+                                generate_conversation_title(first_message, fallback_model, fallback_client)
+                            )
+                            new_title = await asyncio.wait_for(fallback_task, timeout=15)
+                            
+                    except Exception:
+                        # If fallback also fails, use default title
+                        new_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                else:
+                    # For timeouts or non-Ollama models, use default title
+                    new_title = f"Conversation ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+            
+            # Update conversation title if valid
+            if (new_title and 
+                new_title != "New Conversation" and 
+                not new_title.startswith("Conversation (") and
+                self.current_conversation):
+                
+                # Verify conversation still exists and is current
+                current_conv_id = self.current_conversation.id
+                if self.db.get_conversation(current_conv_id):
+                    # Update database
+                    self.db.update_conversation(current_conv_id, title=new_title)
+                    
+                    # Update local conversation object if still current
+                    if self.current_conversation and self.current_conversation.id == current_conv_id:
+                        self.current_conversation.title = new_title
+                        
         except Exception:
             # Silently fail - title generation is not critical
             pass
+    
+    async def _generate_title_directly(self, message: str, model: str, client) -> str:
+        """Generate title directly using the passed client to preserve model warming"""
+        try:
+            # Create a special prompt for title generation
+            title_prompt = [
+                {
+                    "role": "system", 
+                    "content": "Generate a brief, descriptive title (maximum 40 characters) for a conversation that starts with the following message. ONLY output the title text. DO NOT include phrases like 'Sure, here's a title' or any additional formatting, explanation, or quotes."
+                },
+                {
+                    "role": "user",
+                    "content": message
+                }
+            ]
+            
+            # Generate title using the existing client (preserves warming)
+            title = await client.generate_completion(
+                messages=title_prompt,
+                model=model,
+                temperature=0.7,
+                max_tokens=60
+            )
+            
+            # Sanitize the title - remove quotes, extra spaces and unwanted prefixes
+            if title:
+                title = title.strip().strip('"').strip("'")
+                # Remove common prefixes that models sometimes add
+                prefixes_to_remove = [
+                    "Title: ", "title: ", "Here's a title: ", "A good title would be: ",
+                    "Conversation about ", "Discussion on ", "Chat about "
+                ]
+                for prefix in prefixes_to_remove:
+                    if title.startswith(prefix):
+                        title = title[len(prefix):].strip()
+                
+                # Ensure reasonable length
+                if len(title) > 60:
+                    title = title[:57] + "..."
+                elif len(title) < 3:
+                    title = "New Conversation"
+                    
+                return title
+            
+            return "New Conversation"
+            
+        except Exception:
+            return "New Conversation"
     
     def _get_context_aware_loading_phrases(self, user_message: str) -> List[str]:
         """Generate context-aware loading phrases based on user input"""
@@ -863,7 +1288,7 @@ class ConsoleUI:
         # Rate limit updates to avoid flickering, but allow faster updates for better streaming effect
         current_time = time.time()
         if hasattr(self, '_last_display_update'):
-            if current_time - self._last_display_update < 0.05:  # Max 20 updates per second for smoother streaming
+            if current_time - self._last_display_update < 0.02:  # Max 50 updates per second for very smooth streaming
                 return
         self._last_display_update = current_time
         
@@ -953,6 +1378,59 @@ class ConsoleUI:
         
         return lines
     
+    def _show_initial_loading_screen(self):
+        """Show initial loading screen immediately when generation starts"""
+        # Clear screen and show loading state
+        self.clear_screen()
+        
+        # Get initial loading phrase
+        phrase = self._get_dynamic_loading_phrase(self._current_user_message)
+        dots = "."
+        activity_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        activity_indicator = activity_chars[0]  # Start with first spinner
+        initial_status = f"{activity_indicator} {phrase}{dots} (0s) - preparing..."
+        
+        # Draw the screen with initial loading state
+        self._draw_streaming_screen(initial_status)
+        
+        # Ensure output is flushed
+        sys.stdout.flush()
+    
+    async def _animate_loading_screen(self):
+        """Continuously animate the loading screen while generating"""
+        activity_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        dot_patterns = ["   ", ".  ", ".. ", "..."]
+        
+        while self.generating and not hasattr(self, '_streaming_started'):
+            try:
+                elapsed = int(time.time() - self.start_time)
+                
+                # Get current loading phrase
+                phrase = self._get_dynamic_loading_phrase(self._current_user_message)
+                
+                # Cycle through spinner characters
+                spinner_index = elapsed % len(activity_chars)
+                activity_indicator = activity_chars[spinner_index]
+                
+                # Cycle through dot patterns
+                dot_index = (elapsed // 2) % len(dot_patterns)
+                dots = dot_patterns[dot_index]
+                
+                # Create animated status
+                status = f"{activity_indicator} {phrase}{dots} ({elapsed}s) - preparing..."
+                
+                # Redraw screen with updated animation
+                self.clear_screen()
+                self._draw_streaming_screen(status)
+                sys.stdout.flush()
+                
+                # Update every 0.5 seconds for smooth animation
+                await asyncio.sleep(0.5)
+                
+            except Exception:
+                # If animation fails, break gracefully
+                break
+    
     async def generate_response(self, user_message: str):
         """Generate AI response with enhanced streaming and visual feedback"""
         self.generating = True
@@ -960,6 +1438,11 @@ class ConsoleUI:
         self.loading_phase_index = 0
         self._current_user_message = user_message  # Store for context-aware loading
         assistant_message = None
+        animation_task = None
+        
+        # Reset scroll position when generating new response
+        self.scroll_offset = 0
+        self.scroll_mode = False
         
         # Clear any cached context phrases for new generation
         if hasattr(self, '_current_context_phrases'):
@@ -968,6 +1451,12 @@ class ConsoleUI:
         try:
             # Add user message
             await self.add_message("user", user_message)
+            
+            # Show loading animation immediately after user message is added
+            self._show_initial_loading_screen()
+            
+            # Start animated loading screen in background
+            animation_task = asyncio.create_task(self._animate_loading_screen())
             
             # Generate title for first user message if this is a new conversation
             if (self.current_conversation and 
@@ -1000,6 +1489,9 @@ class ConsoleUI:
                 if not self.generating:
                     return
                     
+                # Signal that streaming has started (stops animation)
+                self._streaming_started = True
+                
                 full_response = content
                 assistant_message.content = content
                 
@@ -1037,6 +1529,10 @@ class ConsoleUI:
             # Save final response only if complete
             if self.current_conversation and full_response and not cancelled:
                 self.db.add_message(self.current_conversation.id, "assistant", full_response)
+            
+            # Show final screen with complete response
+            if not cancelled and full_response:
+                self.draw_screen("", "Type your message")
                 
         except KeyboardInterrupt:
             # Handle direct keyboard interrupt
@@ -1053,6 +1549,15 @@ class ConsoleUI:
                 await self.add_message("assistant", error_msg)
         finally:
             self.generating = False
+            # Clean up animation task and reset streaming flag
+            if hasattr(self, '_streaming_started'):
+                delattr(self, '_streaming_started')
+            # Cancel animation task if it's still running
+            try:
+                if animation_task and not animation_task.done():
+                    animation_task.cancel()
+            except:
+                pass
     
     def show_history(self):
         """Show conversation history"""
@@ -1427,7 +1932,7 @@ class ConsoleUI:
         elif choice == "5":
             print("Testing Ollama connection...")
             try:
-                from app.api.ollama import OllamaClient
+                from .api.ollama import OllamaClient
                 client = await OllamaClient.create()
                 models = await client.get_available_models()
                 print(f"✓ Connection successful! Found {len(models)} local models.")
@@ -1479,7 +1984,7 @@ class ConsoleUI:
         try:
             # Get Ollama client with output suppression
             with self._suppress_output():
-                from app.api.ollama import OllamaClient
+                from .api.ollama import OllamaClient
                 client = await OllamaClient.create()
                 
                 # Get local models
@@ -1527,7 +2032,7 @@ class ConsoleUI:
         try:
             # Get Ollama client with output suppression
             with self._suppress_output():
-                from app.api.ollama import OllamaClient
+                from .api.ollama import OllamaClient
                 client = await OllamaClient.create()
             
             print("Loading available models... (this may take a moment)")
@@ -1601,7 +2106,7 @@ class ConsoleUI:
         try:
             # Get Ollama client with output suppression
             with self._suppress_output():
-                from app.api.ollama import OllamaClient
+                from .api.ollama import OllamaClient
                 client = await OllamaClient.create()
             
             print(f"\nSearching for '{query}'...")
@@ -1667,7 +2172,7 @@ class ConsoleUI:
         try:
             # Get Ollama client with output suppression
             with self._suppress_output():
-                from app.api.ollama import OllamaClient
+                from .api.ollama import OllamaClient
                 client = await OllamaClient.create()
             
             # Track download progress
@@ -1716,7 +2221,7 @@ class ConsoleUI:
                 if confirm == "DELETE":
                     try:
                         with self._suppress_output():
-                            from app.api.ollama import OllamaClient
+                            from .api.ollama import OllamaClient
                             client = await OllamaClient.create()
                             await client.delete_model(model_id)
                         print(f"✓ {model_id} deleted successfully!")
@@ -1742,7 +2247,7 @@ class ConsoleUI:
     async def _show_model_details(self, model_id):
         """Show detailed information about a specific model"""
         try:
-            from app.api.ollama import OllamaClient
+            from .api.ollama import OllamaClient
             client = await OllamaClient.create()
             details = await client.get_model_details(model_id)
             
@@ -1798,7 +2303,7 @@ class ConsoleUI:
     async def _switch_model(self):
         """Switch current model (combines local and available models)"""
         try:
-            from app.api.ollama import OllamaClient
+            from .api.ollama import OllamaClient
             client = await OllamaClient.create()
             local_models = await client.get_available_models()
             await self._switch_model_menu(local_models)
@@ -1807,6 +2312,7 @@ class ConsoleUI:
             
         input("\nPress Enter to continue...")
     
+    
     async def run(self):
         """Enhanced main application loop with welcome experience"""
         # Create initial conversation
@@ -1814,6 +2320,9 @@ class ConsoleUI:
         
         # Show welcome screen first
         self.draw_screen("", "Type your message to begin your AI conversation", show_welcome=True)
+        
+        # Brief pause after welcome before starting input loop
+        await asyncio.sleep(0.5)
         
         while self.running:
             try:
@@ -1883,14 +2392,18 @@ def setup_signal_handlers():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-async def main():
-    """Main entry point for console version"""
-    parser = argparse.ArgumentParser(description="Chat Console - Pure Terminal Version")
-    parser.add_argument("--model", help="Initial model to use")
-    parser.add_argument("--style", help="Response style")
-    parser.add_argument("message", nargs="?", help="Initial message to send")
+# Main async function for this interface module
+async def run_console_interface(args=None):
+    """Run the console interface with optional args"""
+    import argparse
     
-    args = parser.parse_args()
+    if args is None:
+        parser = argparse.ArgumentParser(description="Chat Console - Pure Terminal Version")
+        parser.add_argument("--model", help="Initial model to use")
+        parser.add_argument("--style", help="Response style")
+        parser.add_argument("message", nargs="?", help="Initial message to send")
+        
+        args = parser.parse_args()
     
     # Setup signal handling
     setup_signal_handlers()
@@ -1904,7 +2417,7 @@ async def main():
         console.selected_style = args.style
     
     # If a message was provided, send it directly for testing
-    if args.message:
+    if hasattr(args, 'message') and args.message:
         await console.create_new_conversation()
         print(f"Sending message: {args.message}")
         await console.generate_response(args.message)
@@ -1915,11 +2428,38 @@ async def main():
     
     print("\nGoodbye!")
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the console interface"""
+    import threading
+    
     try:
-        asyncio.run(main())
+        # Check if there's already a running event loop
+        try:
+            loop = asyncio.get_running_loop()
+            # If we get here, there's already a loop running
+            
+            def run_in_thread():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    new_loop.run_until_complete(run_console_interface())
+                finally:
+                    new_loop.close()
+            
+            thread = threading.Thread(target=run_in_thread)
+            thread.start()
+            thread.join()
+            
+        except RuntimeError:
+            # No running loop, we can use asyncio.run
+            asyncio.run(run_console_interface())
+            
     except KeyboardInterrupt:
         print("\nGoodbye!")
+        sys.exit(0)
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()

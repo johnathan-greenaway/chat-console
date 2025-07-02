@@ -547,8 +547,9 @@ class OllamaClient(BaseModelClient):
                     # Update the model usage timestamp to keep it hot
                     self.update_model_usage(model)
                     
-                    # Set a flag to track if we've yielded any content
+                    # Set a flag to track if we've yielded any real content (not loading messages)
                     has_yielded_content = False
+                    has_yielded_real_content = False
                     
                     async for line in response.content:
                         # Check cancellation periodically
@@ -574,6 +575,7 @@ class OllamaClient(BaseModelClient):
                                                 if "loading model" in error_msg.lower():
                                                     # Yield a user-friendly message and keep trying
                                                     yield "The model is still loading. Please wait a moment..."
+                                                    has_yielded_content = True  # We did yield something
                                                     # Add delay before continuing
                                                     await asyncio.sleep(2)
                                                     continue
@@ -583,6 +585,7 @@ class OllamaClient(BaseModelClient):
                                                 response_text = data["response"]
                                                 if response_text:  # Only yield non-empty responses
                                                     has_yielded_content = True
+                                                    has_yielded_real_content = True  # This is actual model content
                                                     chunk_length = len(response_text)
                                                     # Only log occasionally to reduce console spam
                                                     if chunk_length % 20 == 0:
@@ -603,9 +606,9 @@ class OllamaClient(BaseModelClient):
                             # Continue instead of breaking to try processing more chunks
                             continue
                     
-                    # If we didn't yield any content, yield a default message
-                    if not has_yielded_content:
-                        debug_log("No content was yielded from stream, providing fallback response")
+                    # If we didn't yield any real content (only loading messages), yield a default message
+                    if not has_yielded_real_content:
+                        debug_log("No real content was yielded from stream, providing fallback response")
                         yield "I'm sorry, but I couldn't generate a response. Please try again or try a different model."
                     
                     logger.info("Streaming completed successfully")

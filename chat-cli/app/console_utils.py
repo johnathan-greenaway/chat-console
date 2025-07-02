@@ -55,9 +55,18 @@ async def console_streaming_response(
             style=style
         ):
             if chunk:
-                # For Ollama, break down large chunks into smaller pieces for smoother streaming
-                if is_ollama and len(chunk) > 1:
-                    # Split chunk into smaller pieces (words or characters)
+                # Check if this is an error message that should not be streamed word by word
+                is_error_message = (
+                    "The model is still loading" in chunk or
+                    "I'm sorry, but I couldn't generate a response" in chunk or
+                    chunk.startswith("Error:") or
+                    chunk.startswith("Could not connect")
+                )
+                
+                # For Ollama, only break down chunks if they contain multiple words AND are not error messages
+                if (is_ollama and len(chunk) > 10 and ' ' in chunk and 
+                    chunk.count(' ') > 1 and not is_error_message):
+                    # Split large multi-word chunks into individual words for smoother streaming
                     words = chunk.split(' ')
                     for i, word in enumerate(words):
                         if i > 0:
@@ -72,37 +81,20 @@ async def console_streaming_response(
                         yield word
                         
                         # Small delay between words for streaming effect
-                        await asyncio.sleep(0.03)
+                        await asyncio.sleep(0.02)
                 else:
-                    buffer.append(chunk)
-                    current_time = time.time()
+                    # Use the chunk as-is (for normal content or error messages)
+                    full_content += chunk
                     
-                    # Update based on time interval or buffer size
-                    should_update = (
-                        current_time - last_update >= update_interval or
-                        len(buffer) >= buffer_size or
-                        len(full_content) < 100  # Always update quickly for first few chars
-                    )
+                    # Update display immediately for each chunk
+                    if update_callback:
+                        update_callback(full_content)
                     
-                    if should_update:
-                        # Process buffered chunks
-                        new_content = ''.join(buffer)
-                        full_content += new_content
-                        buffer = []
-                        last_update = current_time
-                        
-                        # Call update callback with accumulated content
-                        if update_callback:
-                            update_callback(full_content)
-                        
-                        # Yield the new chunk for compatibility
-                        yield new_content
-                        
-                        # Provider-specific delays
-                        if is_openai and not model.startswith(("o1", "o3", "o4")):
-                            await asyncio.sleep(0.01)  # Minimal delay for fast OpenAI models
-                        else:
-                            await asyncio.sleep(0.015)  # Default delay
+                    yield chunk
+                    
+                    # Small delay to make streaming visible (but not for error messages)
+                    if is_ollama and not is_error_message:
+                        await asyncio.sleep(0.01)
         
         # Process any remaining buffer content
         if buffer:
