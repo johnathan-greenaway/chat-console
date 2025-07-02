@@ -20,7 +20,7 @@ import shutil
 
 from .models import Message, Conversation
 from .database import ChatDatabase
-from .config import CONFIG, save_config
+from .config import CONFIG, save_config, update_last_used_model
 from .utils import resolve_model_id, generate_conversation_title
 from .console_utils import console_streaming_response, apply_style_prefix
 from .api.base import BaseModelClient
@@ -36,6 +36,8 @@ class ConsoleUI:
         self.messages: List[Message] = []
         self.selected_model = resolve_model_id(CONFIG["default_model"])
         self.selected_style = CONFIG["default_style"]
+        # Update last used model on startup
+        update_last_used_model(self.selected_model)
         self.running = True
         self.generating = False
         self.input_mode = "text"  # "text" or "menu"
@@ -1650,6 +1652,7 @@ class ConsoleUI:
                 if 0 <= idx < len(models):
                     old_model = self.selected_model
                     self.selected_model = models[idx]
+                    update_last_used_model(self.selected_model)
                     print(f"Model changed from {old_model} to {self.selected_model}")
                     input("Press Enter to continue...")
         except (ValueError, KeyboardInterrupt):
@@ -2298,6 +2301,7 @@ class ConsoleUI:
             if 0 <= idx < len(local_models):
                 old_model = self.selected_model
                 self.selected_model = local_models[idx].get("id", "unknown")
+                update_last_used_model(self.selected_model)
                 print(f"\n✓ Switched from {old_model} to {self.selected_model}")
     
     async def _switch_model(self):

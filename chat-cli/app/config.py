@@ -148,6 +148,7 @@ DEFAULT_CONFIG = {
         }
     },
     "default_style": "default",
+    "last_used_model": None,  # Track the last model used by the user
     "max_history_items": 100,
     "highlight_code": True,
     "auto_save": True,
@@ -196,6 +197,12 @@ def save_config(config):
     """Save the configuration to disk"""
     with open(CONFIG_PATH, 'w') as f:
         json.dump(config, f, indent=2)
+
+def update_last_used_model(model_id):
+    """Update the last used model in config"""
+    global CONFIG
+    CONFIG["last_used_model"] = model_id
+    save_config(CONFIG)
 
 # Current configuration
 CONFIG = load_config()
