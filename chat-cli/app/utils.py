@@ -719,9 +719,14 @@ async def ensure_ollama_running() -> bool:
     Returns True if Ollama is running after check/start attempt.
     """
     import requests
+    from .config import CONFIG
+    
+    # Get the configured Ollama URL (could be localhost or remote/WSL host)
+    ollama_url = CONFIG.get("ollama_base_url", "http://localhost:11434").rstrip('/')
+    
     try:
-        logger.info("Checking if Ollama is running...")
-        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        logger.info(f"Checking if Ollama is running at {ollama_url}...")
+        response = requests.get(f"{ollama_url}/api/tags", timeout=2)
         if response.status_code == 200:
             logger.info("Ollama is running")
             return True
@@ -729,39 +734,48 @@ async def ensure_ollama_running() -> bool:
             logger.warning(f"Ollama returned status code: {response.status_code}")
             return False
     except requests.exceptions.ConnectionError:
-        logger.info("Ollama not running, attempting to start...")
-        try:
-            # Try to start Ollama
-            process = subprocess.Popen(
-                ["ollama", "serve"], 
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            # Wait a moment for it to start
-            await asyncio.sleep(2)  # Use asyncio.sleep instead of time.sleep
-            
-            # Check if process is still running
-            if process.poll() is None:
-                logger.info("Ollama server started successfully")
-                # Check if we can connect
-                try:
-                    response = requests.get("http://localhost:11434/api/tags", timeout=2)
-                    if response.status_code == 200:
-                        logger.info("Successfully connected to Ollama")
-                        return True
-                    else:
-                        logger.error(f"Ollama returned status code: {response.status_code}")
-                except Exception as e:
-                    logger.error(f"Failed to connect to Ollama after starting: {str(e)}")
-            else:
-                stdout, stderr = process.communicate()
-                logger.error(f"Ollama failed to start. stdout: {stdout}, stderr: {stderr}")
-        except FileNotFoundError:
-            logger.error("Ollama command not found. Please ensure Ollama is installed.")
-        except Exception as e:
-            logger.error(f"Error starting Ollama: {str(e)}")
+        logger.info(f"Could not connect to Ollama at {ollama_url}")
+        
+        # Only try to start Ollama locally if the URL is localhost
+        if "localhost" in ollama_url or "127.0.0.1" in ollama_url:
+            logger.info("Attempting to start local Ollama service...")
+            try:
+                # Try to start Ollama
+                process = subprocess.Popen(
+                    ["ollama", "serve"], 
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                
+                # Wait a moment for it to start
+                await asyncio.sleep(2)  # Use asyncio.sleep instead of time.sleep
+                
+                # Check if process is still running
+                if process.poll() is None:
+                    logger.info("Ollama server started successfully")
+                    # Check if we can connect
+                    try:
+                        response = requests.get(f"{ollama_url}/api/tags", timeout=2)
+                        if response.status_code == 200:
+                            logger.info("Successfully connected to Ollama")
+                            return True
+                        else:
+                            logger.error(f"Ollama returned status code: {response.status_code}")
+                    except Exception as e:
+                        logger.error(f"Failed to connect to Ollama after starting: {str(e)}")
+                else:
+                    stdout, stderr = process.communicate()
+                    logger.error(f"Ollama failed to start. stdout: {stdout}, stderr: {stderr}")
+            except FileNotFoundError:
+                logger.error("Ollama command not found. Please ensure Ollama is installed.")
+            except Exception as e:
+                logger.error(f"Error starting Ollama: {str(e)}")
+        else:
+            # Remote Ollama URL (e.g., WSL accessing Windows host)
+            logger.info(f"Ollama not available at {ollama_url}. This appears to be a remote URL.")
+            logger.info("Please ensure Ollama is running on the remote host.")
+            return False
     except Exception as e:
         logger.error(f"Error checking Ollama status: {str(e)}")
     
