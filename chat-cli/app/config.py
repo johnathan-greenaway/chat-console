@@ -15,19 +15,7 @@ CONFIG_PATH = APP_DIR / "config.json"
 # API Keys and Provider Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-# For WSL, try Windows host first
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-if os.path.exists("/proc/version"):
-    try:
-        with open("/proc/version", "r") as f:
-            if "microsoft" in f.read().lower():
-                # In WSL, try host.docker.internal first (works in WSL2)
-                # Fall back to localhost if not set
-                DEFAULT_OLLAMA_URL = "http://host.docker.internal:11434"
-    except:
-        pass
-
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 def check_provider_availability():
     """Check which providers are available"""
@@ -42,7 +30,7 @@ def check_provider_availability():
     try:
         response = requests.get(OLLAMA_BASE_URL + "/api/tags", timeout=2)
         providers["ollama"] = response.status_code == 200
-    except:
+    except (requests.RequestException, ValueError, OSError):
         # If can't connect to configured URL, don't mark as unavailable yet
         # The ensure_ollama_running function will handle starting it if needed
         providers["ollama"] = True  # Assume available, will verify later

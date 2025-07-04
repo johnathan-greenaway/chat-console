@@ -118,7 +118,7 @@ class ConsoleUI:
             devnull_fd = os.open(os.devnull, os.O_WRONLY)
             os.dup2(devnull_fd, 2)  # Redirect stderr (fd 2) to /dev/null
             os.close(devnull_fd)
-        except:
+        except (OSError, IOError):
             pass  # If redirection fails, continue anyway
         
         # Disable all known loggers completely
@@ -818,7 +818,7 @@ class ConsoleUI:
                                     char = '\x1b'  # Just escape
                             else:
                                 char = '\x1b'  # Just escape
-                        except:
+                        except (OSError, IOError, ValueError):
                             char = '\x1b'
                 finally:
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -1558,7 +1558,7 @@ class ConsoleUI:
             try:
                 if animation_task and not animation_task.done():
                     animation_task.cancel()
-            except:
+            except (asyncio.CancelledError, RuntimeError):
                 pass
     
     def show_history(self):

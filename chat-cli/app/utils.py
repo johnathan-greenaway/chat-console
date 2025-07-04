@@ -719,10 +719,10 @@ async def ensure_ollama_running() -> bool:
     Returns True if Ollama is running after check/start attempt.
     """
     import requests
-    from .config import CONFIG
+    from .config import CONFIG, OLLAMA_BASE_URL
     
     # Get the configured Ollama URL (could be localhost or remote/WSL host)
-    ollama_url = CONFIG.get("ollama_base_url", "http://localhost:11434").rstrip('/')
+    ollama_url = OLLAMA_BASE_URL.rstrip('/')
     
     try:
         logger.info(f"Checking if Ollama is running at {ollama_url}...")

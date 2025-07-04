@@ -233,7 +233,7 @@ class OllamaClient(BaseModelClient):
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.base_url}/api/tags",
-                    timeout=5,
+                    timeout=aiohttp.ClientTimeout(total=5),
                     headers={"Accept": "application/json"}
                 ) as response:
                     response.raise_for_status()
@@ -263,22 +263,22 @@ class OllamaClient(BaseModelClient):
                     logger.info(f"Found {len(models)} Ollama models")
                     return models
                     
-        except aiohttp.ClientConnectorError:
+        except aiohttp.ClientConnectorError as e:
             error_msg = f"Could not connect to Ollama server at {self.base_url}. Please ensure Ollama is running and the URL is correct."
             logger.error(error_msg)
-            raise Exception(error_msg)
-        except aiohttp.ClientTimeout:
+            raise Exception(error_msg) from e
+        except asyncio.TimeoutError as e:
             error_msg = f"Connection to Ollama server at {self.base_url} timed out after 5 seconds. The server might be busy or unresponsive."
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise Exception(error_msg) from e
         except aiohttp.ClientError as e:
             error_msg = f"Ollama API error: {str(e)}"
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise Exception(error_msg) from e
         except Exception as e:
             error_msg = f"Unexpected error getting models: {str(e)}"
             logger.error(error_msg)
-            raise Exception(error_msg)
+            raise Exception(error_msg) from e
             
     async def generate_completion(self, messages: List[Dict[str, str]],
                                 model: str,
@@ -304,7 +304,7 @@ class OllamaClient(BaseModelClient):
                             "temperature": temperature,
                             "stream": False
                         },
-                        timeout=gen_timeout
+                        timeout=aiohttp.ClientTimeout(total=gen_timeout)
                     ) as response:
                         response.raise_for_status()
                         data = await response.json()
@@ -320,7 +320,7 @@ class OllamaClient(BaseModelClient):
                 last_error = "Could not connect to Ollama server. Make sure Ollama is running and accessible at " + self.base_url
             except aiohttp.ClientResponseError as e:
                 last_error = f"Ollama API error: {e.status} - {e.message}"
-            except aiohttp.ClientTimeout:
+            except asyncio.TimeoutError:
                 last_error = "Request to Ollama server timed out"
             except json.JSONDecodeError:
                 last_error = "Invalid JSON response from Ollama server"
@@ -443,7 +443,7 @@ class OllamaClient(BaseModelClient):
                         async with session.post(
                             f"{self.base_url}/api/generate",
                             json=test_payload,
-                            timeout=test_timeout
+                            timeout=aiohttp.ClientTimeout(total=test_timeout)
                         ) as response:
                             if response.status != 200:
                                 logger.warning(f"Model test request failed with status {response.status}")
@@ -481,7 +481,7 @@ class OllamaClient(BaseModelClient):
                         async with session.post(
                             f"{self.base_url}/api/pull",
                             json=pull_payload,
-                            timeout=pull_timeout
+                            timeout=aiohttp.ClientTimeout(total=pull_timeout)
                         ) as pull_response:
                             if pull_response.status != 200:
                                 logger.error("Failed to pull model")
@@ -536,7 +536,7 @@ class OllamaClient(BaseModelClient):
                     response = await session.post(
                         f"{self.base_url}/api/generate",
                         json=request_payload,
-                        timeout=gen_timeout
+                        timeout=aiohttp.ClientTimeout(total=gen_timeout)
                     )
                     response.raise_for_status()
                     debug_log(f"Response status: {response.status}")
@@ -625,7 +625,7 @@ class OllamaClient(BaseModelClient):
             except aiohttp.ClientResponseError as e:
                 last_error = f"Ollama API error: {e.status} - {e.message}"
                 debug_log(f"ClientResponseError: {last_error}")
-            except aiohttp.ClientTimeout:
+            except asyncio.TimeoutError:
                 last_error = "Request to Ollama server timed out"
                 debug_log(f"ClientTimeout: {last_error}")
             except asyncio.CancelledError:
@@ -694,7 +694,7 @@ class OllamaClient(BaseModelClient):
                     async with session.post(
                         f"{self.base_url}/api/pull",
                         json=pull_payload,
-                        timeout=pull_timeout
+                        timeout=aiohttp.ClientTimeout(total=pull_timeout)
                     ) as pull_response:
                         # We don't need to process the full pull, just initiate it
                         if pull_response.status != 200:
@@ -713,7 +713,7 @@ class OllamaClient(BaseModelClient):
                         "temperature": 0.7,
                         "stream": False
                     },
-                    timeout=gen_timeout
+                    timeout=aiohttp.ClientTimeout(total=gen_timeout)
                 ) as response:
                     if response.status != 200:
                         logger.error(f"Failed to preload model {model_id}, status: {response.status}")
@@ -785,7 +785,7 @@ class OllamaClient(BaseModelClient):
                 async with session.post(
                     f"{self.base_url}/api/show",
                     json={"name": model_id},
-                    timeout=5
+                    timeout=aiohttp.ClientTimeout(total=5)
                 ) as response:
                     response.raise_for_status()
                     data = await response.json()
@@ -847,7 +847,7 @@ class OllamaClient(BaseModelClient):
                     logger.info(f"Fetching all models from Ollama web: {search_url}")
                     async with session.get(
                         search_url,
-                        timeout=20,  # Longer timeout for comprehensive scrape
+                        timeout=aiohttp.ClientTimeout(total=20),  # Longer timeout for comprehensive scrape
                         headers={"User-Agent": "Mozilla/5.0 (compatible; chat-console/1.0)"}
                     ) as response:
                         if response.status == 200:
@@ -1459,7 +1459,7 @@ class OllamaClient(BaseModelClient):
                 async with session.post(
                     f"{self.base_url}/api/pull",
                     json={"name": model_id},
-                    timeout=3600  # 1 hour timeout for large models
+                    timeout=aiohttp.ClientTimeout(total=3600)  # 1 hour timeout for large models
                 ) as response:
                     response.raise_for_status()
                     async for line in response.content:
@@ -1482,7 +1482,7 @@ class OllamaClient(BaseModelClient):
                 async with session.delete(
                     f"{self.base_url}/api/delete",
                     json={"name": model_id},
-                    timeout=30
+                    timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
                     response.raise_for_status()
                     logger.info(f"Model {model_id} deleted successfully")
