@@ -544,7 +544,7 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
 
         # Check Ollama availability and try to start if not running # Keep SimpleChatApp on_mount
         from app.utils import ensure_ollama_running # Keep SimpleChatApp on_mount
-        if not ensure_ollama_running(): # Keep SimpleChatApp on_mount
+        if not await ensure_ollama_running(): # Keep SimpleChatApp on_mount
             api_issues.append("- Ollama server not running and could not be started") # Keep SimpleChatApp on_mount
         else: # Keep SimpleChatApp on_mount
             # Check for available models # Keep SimpleChatApp on_mount

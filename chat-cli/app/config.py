@@ -25,13 +25,15 @@ def check_provider_availability():
         "ollama": False
     }
     
-    # Check if Ollama is running
+    # Check if Ollama is running at configured URL
     import requests
     try:
         response = requests.get(OLLAMA_BASE_URL + "/api/tags", timeout=2)
         providers["ollama"] = response.status_code == 200
-    except:
-        pass
+    except (requests.RequestException, ValueError, OSError):
+        # If can't connect to configured URL, don't mark as unavailable yet
+        # The ensure_ollama_running function will handle starting it if needed
+        providers["ollama"] = True  # Assume available, will verify later
         
     return providers
 
@@ -148,6 +150,7 @@ DEFAULT_CONFIG = {
         }
     },
     "default_style": "default",
+    "last_used_model": None,  # Track the last model used by the user
     "max_history_items": 100,
     "highlight_code": True,
     "auto_save": True,
@@ -196,6 +199,12 @@ def save_config(config):
     """Save the configuration to disk"""
     with open(CONFIG_PATH, 'w') as f:
         json.dump(config, f, indent=2)
+
+def update_last_used_model(model_id):
+    """Update the last used model in config"""
+    global CONFIG
+    CONFIG["last_used_model"] = model_id
+    save_config(CONFIG)
 
 # Current configuration
 CONFIG = load_config()
