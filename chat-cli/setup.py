@@ -43,6 +43,7 @@ setup(
             "chat=app.main:main",
             "chat-console-classic=app.classic_main:main",
             "c-c-c=app.classic_main:main",
+            "ask=app.ask:main",
         ],
     },
 )
