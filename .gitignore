@@ -3,3 +3,4 @@ chat-cli/CLAUDE.md
 **/.claude/settings.local.json
 env/bin/dotenv
 env/*
+chat-cli/debug_chat_issue.py
