@@ -1,0 +1,3 @@
+#!/bin/bash
+# Wrapper script to use Windows Ollama
+exec chat --ollama-host windows "$@"
