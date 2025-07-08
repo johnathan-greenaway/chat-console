@@ -1711,9 +1711,9 @@ class ConsoleUI:
             print("Current Advanced Settings:")
             print(f"  Code Highlighting: {'On' if CONFIG.get('highlight_code', True) else 'Off'}")
             print(f"  Dynamic Titles: {'On' if CONFIG.get('generate_dynamic_titles', True) else 'Off'}")
-            print(f"  Model Preloading: {'On' if CONFIG.get('preload_models', True) else 'Off'}")
+            print(f"  Model Preloading: {'On' if CONFIG.get('ollama_model_preload', True) else 'Off'}")
             print(f"  Ollama URL: {CONFIG.get('ollama_base_url', 'http://localhost:11434')}")
-            print(f"  Inactive Timeout: {CONFIG.get('ollama_inactive_timeout', 30)} minutes")
+            print(f"  Inactive Timeout: {CONFIG.get('ollama_inactive_timeout_minutes', 30)} minutes")
             print()
             
             print("What would you like to configure?")
@@ -1838,7 +1838,7 @@ class ConsoleUI:
         
         print("Current Performance Settings:")
         print(f"  Dynamic Title Generation: {'On' if CONFIG.get('generate_dynamic_titles', True) else 'Off'}")
-        print(f"  Model Preloading: {'On' if CONFIG.get('preload_models', True) else 'Off'}")
+        print(f"  Model Preloading: {'On' if CONFIG.get('ollama_model_preload', True) else 'Off'}")
         print(f"  History Limit: {CONFIG.get('history_limit', 100)} conversations")
         print(f"  Message Limit: {CONFIG.get('message_limit', 50)} per conversation")
         print()
@@ -1858,8 +1858,8 @@ class ConsoleUI:
             print(f"Dynamic title generation {'enabled' if not current else 'disabled'}!")
             
         elif choice == "2":
-            current = CONFIG.get('preload_models', True)
-            CONFIG['preload_models'] = not current
+            current = CONFIG.get('ollama_model_preload', True)
+            CONFIG['ollama_model_preload'] = not current
             print(f"Model preloading {'enabled' if not current else 'disabled'}!")
             
         elif choice == "3":
@@ -1881,6 +1881,8 @@ class ConsoleUI:
                 print("Invalid number!")
         
         if choice in ["1", "2", "3", "4"]:
+            # Save config after any performance setting change
+            save_config(CONFIG)
             input("\nPress Enter to continue...")
     
     async def _configure_ollama_settings(self):
@@ -1892,7 +1894,7 @@ class ConsoleUI:
         
         print("Current Ollama Settings:")
         print(f"  Base URL: {CONFIG.get('ollama_base_url', 'http://localhost:11434')}")
-        print(f"  Inactive Timeout: {CONFIG.get('ollama_inactive_timeout', 30)} minutes")
+        print(f"  Inactive Timeout: {CONFIG.get('ollama_inactive_timeout_minutes', 30)} minutes")
         print(f"  Auto Start: {'On' if CONFIG.get('ollama_auto_start', True) else 'Off'}")
         print(f"  Model Cleanup: {'On' if CONFIG.get('ollama_cleanup_models', True) else 'Off'}")
         print()
@@ -1915,9 +1917,9 @@ class ConsoleUI:
                 
         elif choice == "2":
             try:
-                timeout = int(input(f"Enter inactive timeout in minutes (current: {CONFIG.get('ollama_inactive_timeout', 30)}): "))
+                timeout = int(input(f"Enter inactive timeout in minutes (current: {CONFIG.get('ollama_inactive_timeout_minutes', 30)}): "))
                 if timeout > 0:
-                    CONFIG['ollama_inactive_timeout'] = timeout
+                    CONFIG['ollama_inactive_timeout_minutes'] = timeout
                     print(f"Inactive timeout set to {timeout} minutes!")
             except ValueError:
                 print("Invalid number!")
@@ -1942,6 +1944,10 @@ class ConsoleUI:
             except Exception as e:
                 print(f"✗ Connection failed: {str(e)}")
         
+        if choice in ["1", "2", "3", "4"]:
+            # Save config after any Ollama setting change
+            save_config(CONFIG)
+            
         if choice in ["1", "2", "3", "4", "5"]:
             input("\nPress Enter to continue...")
     
