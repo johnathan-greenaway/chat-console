@@ -2071,8 +2071,17 @@ class ConsoleUI:
                         name = model.get("name", "unknown")
                         description = model.get("description", "")
                         size = model.get("parameter_size", "Unknown size")
+                        variants = model.get("variants", [])
                         
-                        print(f"{model_index:2d}. {name} ({size})")
+                        # Show model with variants if available
+                        if variants:
+                            variants_str = ", ".join(str(v) for v in variants[:3])
+                            if len(variants) > 3:
+                                variants_str += f", +{len(variants)-3} more"
+                            print(f"{model_index:2d}. {name} - Variants: {variants_str}")
+                        else:
+                            print(f"{model_index:2d}. {name} ({size})")
+                            
                         if description:
                             print(f"    {description[:60]}...")
                         
@@ -2127,9 +2136,19 @@ class ConsoleUI:
             query_lower = query.lower()
             
             for model in all_models:
-                if (query_lower in model.get("name", "").lower() or
-                    query_lower in model.get("description", "").lower() or
-                    query_lower in model.get("model_family", "").lower()):
+                # Check name, description, and model family
+                name_match = query_lower in model.get("name", "").lower()
+                desc_match = query_lower in model.get("description", "").lower()
+                family_match = query_lower in model.get("model_family", "").lower()
+                
+                # Also check variants if available
+                variants_match = False
+                if "variants" in model and model["variants"]:
+                    variants_text = " ".join([str(v).lower() for v in model["variants"]])
+                    if query_lower in variants_text:
+                        variants_match = True
+                
+                if name_match or desc_match or family_match or variants_match:
                     matching_models.append(model)
             
             if not matching_models:
@@ -2143,8 +2162,17 @@ class ConsoleUI:
                     description = model.get("description", "")
                     size = model.get("parameter_size", "Unknown size")
                     family = model.get("model_family", "Unknown")
+                    variants = model.get("variants", [])
                     
-                    print(f"{i+1:2d}. {name} ({family}, {size})")
+                    # Build display line with variants if available
+                    if variants:
+                        variants_str = ", ".join(str(v) for v in variants[:3])
+                        if len(variants) > 3:
+                            variants_str += f", +{len(variants)-3} more"
+                        print(f"{i+1:2d}. {name} ({family}) - Variants: {variants_str}")
+                    else:
+                        print(f"{i+1:2d}. {name} ({family}, {size})")
+                    
                     if description:
                         print(f"    {description[:70]}...")
                     print()
