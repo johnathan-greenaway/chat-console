@@ -2093,14 +2093,14 @@ class ConsoleUI:
                 
                 print(f"\nShowing top models by family (total: {len(available_models)})")
                 print("\nOptions:")
-                print("Enter model number to download")
+                print("Enter model number to view details")
                 print("s) Search for specific models")
                 print("Enter) Back to model browser")
                 
                 choice = input("\n> ").strip()
                 
                 if choice in model_map:
-                    await self._download_model(model_map[choice])
+                    await self._show_model_details(model_map[choice])
                 elif choice.lower() == "s":
                     await self._search_models()
                     
@@ -2110,7 +2110,7 @@ class ConsoleUI:
         input("\nPress Enter to continue...")
     
     async def _search_models(self):
-        """Search for models by name or description"""
+        """Search for models with automatic variant fetching and unified selection"""
         self.clear_screen()
         print("=" * self.width)
         print("SEARCH OLLAMA MODELS".center(self.width))
@@ -2154,43 +2154,304 @@ class ConsoleUI:
             if not matching_models:
                 print(f"No models found matching '{query}'")
             else:
-                print(f"\nFound {len(matching_models)} models matching '{query}':\n")
+                print(f"\nFound {len(matching_models)} models matching '{query}'. Fetching variants...")
                 
-                model_map = {}
-                for i, model in enumerate(matching_models[:20]):  # Show first 20 matches
-                    name = model.get("name", "unknown")
-                    description = model.get("description", "")
-                    size = model.get("parameter_size", "Unknown size")
-                    family = model.get("model_family", "Unknown")
-                    variants = model.get("variants", [])
-                    
-                    # Build display line with variants if available
-                    if variants:
-                        variants_str = ", ".join(str(v) for v in variants[:3])
-                        if len(variants) > 3:
-                            variants_str += f", +{len(variants)-3} more"
-                        print(f"{i+1:2d}. {name} ({family}) - Variants: {variants_str}")
-                    else:
-                        print(f"{i+1:2d}. {name} ({family}, {size})")
-                    
-                    if description:
-                        print(f"    {description[:70]}...")
-                    print()
-                    
-                    model_map[str(i+1)] = model
-                
-                if len(matching_models) > 20:
-                    print(f"... and {len(matching_models) - 20} more matches")
-                
-                print("\nEnter model number to download (or press Enter to continue):")
-                choice = input("> ").strip()
-                
-                if choice in model_map:
-                    await self._download_model(model_map[choice])
+                # Get detailed variants for each matching model
+                await self._show_unified_model_variants(matching_models[:10], client, query)  # Limit to top 10 matches
                     
         except Exception as e:
             print(f"Error searching models: {str(e)}")
             
+        input("\nPress Enter to continue...")
+    
+    async def _show_unified_model_variants(self, matching_models, client, query):
+        """Show all model variants in a unified, numbered list for easy selection"""
+        print("\n" + "="*60)
+        print(f"AVAILABLE MODELS FOR '{query.upper()}'")
+        print("="*60)
+        
+        all_variants = []
+        variant_map = {}
+        
+        # Progress indicator
+        print(f"\nFetching variants for {len(matching_models)} models...")
+        
+        for i, model in enumerate(matching_models, 1):
+            model_name = model.get("name", "unknown")
+            print(f"[{i}/{len(matching_models)}] Getting variants for {model_name}...")
+            
+            try:
+                # Get detailed variants using the scraping method
+                with self._suppress_output():
+                    detailed_model = await client.get_model_with_variants(model_name)
+                
+                variants = detailed_model.get("detailed_variants", [])
+                
+                if variants:
+                    # Add each variant to our unified list
+                    for variant in variants:
+                        tag = variant.get("tag", "latest")
+                        size = variant.get("size", "Unknown")
+                        pulls = variant.get("pulls", "")
+                        updated = variant.get("updated", "")
+                        
+                        # Create full model name
+                        full_name = f"{model_name}:{tag}" if tag != "latest" else model_name
+                        
+                        all_variants.append({
+                            "model_name": model_name,
+                            "tag": tag,
+                            "size": size,
+                            "pulls": pulls,
+                            "updated": updated,
+                            "full_name": full_name,
+                            "description": model.get("description", ""),
+                            "family": model.get("model_family", "Unknown")
+                        })
+                else:
+                    # Add base model if no variants found
+                    all_variants.append({
+                        "model_name": model_name,
+                        "tag": "latest",
+                        "size": model.get("parameter_size", "Unknown"),
+                        "pulls": "",
+                        "updated": "",
+                        "full_name": model_name,
+                        "description": model.get("description", ""),
+                        "family": model.get("model_family", "Unknown")
+                    })
+                    
+            except Exception as e:
+                print(f"    Warning: Could not get variants for {model_name}: {str(e)}")
+                # Add base model as fallback
+                all_variants.append({
+                    "model_name": model_name,
+                    "tag": "latest",
+                    "size": model.get("parameter_size", "Unknown"),
+                    "pulls": "",
+                    "updated": "",
+                    "full_name": model_name,
+                    "description": model.get("description", ""),
+                    "family": model.get("model_family", "Unknown")
+                })
+        
+        # Display unified list
+        self.clear_screen()
+        print("=" * self.width)
+        print(f"AVAILABLE MODELS FOR '{query.upper()}' ({len(all_variants)} variants)".center(self.width))
+        print("=" * self.width)
+        
+        if not all_variants:
+            print("No model variants found.")
+            return
+        
+        # Sort by model name, then by tag preference (latest first, then by size)
+        def sort_key(variant):
+            model_name = variant["model_name"]
+            tag = variant["tag"]
+            # Prioritize latest, then sort by size if possible
+            if tag == "latest":
+                return (model_name, "0_latest")
+            return (model_name, tag)
+        
+        all_variants.sort(key=sort_key)
+        
+        # Display variants with numbers
+        for i, variant in enumerate(all_variants, 1):
+            full_name = variant["full_name"]
+            size = variant["size"]
+            family = variant["family"]
+            description = variant["description"]
+            
+            # Format the display line
+            print(f"{i:2d}. {full_name:<25} ({size:<10}) - {family}")
+            if description and len(description) > 10:
+                print(f"    {description[:65]}...")
+            
+            variant_map[str(i)] = variant
+        
+        print("\n" + "="*60)
+        print(f"Found {len(all_variants)} downloadable models")
+        print("\nOptions:")
+        print("Enter number to download that model")
+        print("Enter) Back to search")
+        
+        choice = input("\n> ").strip()
+        
+        if choice in variant_map:
+            selected_variant = variant_map[choice]
+            await self._download_selected_variant(selected_variant)
+    
+    async def _download_selected_variant(self, variant):
+        """Download a selected model variant with confirmation"""
+        full_name = variant["full_name"]
+        size = variant["size"]
+        model_name = variant["model_name"]
+        tag = variant["tag"]
+        
+        print(f"\n" + "="*50)
+        print(f"DOWNLOAD: {full_name}")
+        print(f"Size: {size}")
+        print(f"Family: {variant.get('family', 'Unknown')}")
+        if variant.get("description"):
+            print(f"Description: {variant['description']}")
+        print("="*50)
+        
+        print(f"\nThis will download {full_name} to your local Ollama installation.")
+        print("Depending on the model size and your connection, this may take several minutes.")
+        print("\nPress Ctrl+C at any time to cancel the download.")
+        
+        confirm = input(f"\nDownload {full_name}? (y/N): ").strip().lower()
+        
+        if confirm == 'y':
+            try:
+                # Get Ollama client
+                with self._suppress_output():
+                    from .api.ollama import OllamaClient
+                    client = await OllamaClient.create()
+                
+                print(f"\nStarting download of {full_name}...")
+                print("This will show progress as the model downloads.\n")
+                
+                # Pull the model with progress indication
+                async for progress in client.pull_model(full_name):
+                    if "status" in progress:
+                        status = progress["status"]
+                        if "completed" in progress and "total" in progress:
+                            completed = progress["completed"]
+                            total = progress["total"]
+                            percentage = (completed / total) * 100 if total > 0 else 0
+                            print(f"\r{status}: {percentage:.1f}% ({completed}/{total})", end="", flush=True)
+                        else:
+                            print(f"\r{status}", end="", flush=True)
+                
+                print(f"\n\n✅ Successfully downloaded {full_name}!")
+                print("The model is now available for use in your chats.")
+                
+            except KeyboardInterrupt:
+                print("\n\n❌ Download cancelled by user.")
+            except Exception as e:
+                print(f"\n\n❌ Error downloading {full_name}: {str(e)}")
+                print("This might be due to network issues, insufficient disk space, or Ollama service problems.")
+        else:
+            print("Download cancelled.")
+        
+        input("\nPress Enter to continue...")
+    
+    async def _show_model_details(self, model_info):
+        """Show detailed model information including all available variants"""
+        model_name = model_info.get("name", "unknown")
+        
+        self.clear_screen()
+        print("=" * self.width)
+        print(f"MODEL DETAILS: {model_name.upper()}".center(self.width))
+        print("=" * self.width)
+        
+        print(f"Name: {model_name}")
+        print(f"Family: {model_info.get('model_family', 'Unknown')}")
+        print(f"Description: {model_info.get('description', 'No description available')}")
+        print()
+        
+        print("Loading detailed variant information...")
+        
+        try:
+            # Get detailed model information with variants
+            with self._suppress_output():
+                from .api.ollama import OllamaClient
+                client = await OllamaClient.create()
+                detailed_model = await client.get_model_with_variants(model_name)
+            
+            variants = detailed_model.get("detailed_variants", [])
+            
+            if variants:
+                print(f"\nAvailable variants for {model_name}:")
+                print("-" * 60)
+                print(f"{'Tag':<20} {'Size':<15} {'Pulls':<10} {'Updated'}")
+                print("-" * 60)
+                
+                variant_map = {}
+                for i, variant in enumerate(variants, 1):
+                    tag = variant.get("tag", "unknown")
+                    size = variant.get("size", "Unknown")
+                    pulls = variant.get("pulls", "")
+                    updated = variant.get("updated", "")
+                    
+                    # Format pulls nicely
+                    pulls_str = f"{pulls:,}" if pulls else ""
+                    
+                    print(f"{i:2d}. {tag:<17} {size:<15} {pulls_str:<10} {updated}")
+                    variant_map[str(i)] = variant
+                
+                print("-" * 60)
+                print(f"\nFound {len(variants)} variants")
+                print("\nOptions:")
+                print("Enter variant number to download")
+                print("d) Download base model")
+                print("Enter) Back to search")
+                
+                choice = input("\n> ").strip()
+                
+                if choice in variant_map:
+                    selected_variant = variant_map[choice]
+                    full_name = selected_variant.get("full_name", f"{model_name}:{selected_variant.get('tag', 'latest')}")
+                    await self._download_specific_model(full_name, selected_variant.get("size", "Unknown"))
+                elif choice.lower() == "d":
+                    await self._download_specific_model(model_name, model_info.get("parameter_size", "Unknown"))
+            else:
+                print(f"\nNo detailed variants found for {model_name}")
+                print("This might be due to network issues or the model page format has changed.")
+                print("\nOptions:")
+                print("d) Download base model anyway")
+                print("Enter) Back to search")
+                
+                choice = input("\n> ").strip()
+                
+                if choice.lower() == "d":
+                    await self._download_specific_model(model_name, model_info.get("parameter_size", "Unknown"))
+                    
+        except Exception as e:
+            print(f"Error getting detailed model info: {str(e)}")
+            print("\nOptions:")
+            print("d) Download base model anyway")
+            print("Enter) Back to search")
+            
+            choice = input("\n> ").strip()
+            
+            if choice.lower() == "d":
+                await self._download_specific_model(model_name, model_info.get("parameter_size", "Unknown"))
+    
+    async def _download_specific_model(self, model_name, size_info):
+        """Download a specific model variant"""
+        print(f"\nDownloading {model_name} ({size_info})...")
+        print("This may take several minutes depending on model size and connection.")
+        print("Press Ctrl+C to cancel.\n")
+        
+        confirm = input(f"Download {model_name}? (y/N): ").strip().lower()
+        if confirm != 'y':
+            return
+            
+        try:
+            # Get Ollama client with output suppression
+            with self._suppress_output():
+                from .api.ollama import OllamaClient
+                client = await OllamaClient.create()
+            
+            # Use the pull functionality
+            print(f"Pulling {model_name}...")
+            print("This will show progress as the model downloads.\n")
+            
+            # Pull the model (this will show download progress)
+            await client.pull_model(model_name)
+            
+            print(f"\n✓ Successfully downloaded {model_name}!")
+            print("The model is now available for use.")
+            
+        except KeyboardInterrupt:
+            print("\nDownload cancelled by user.")
+        except Exception as e:
+            print(f"\nError downloading model: {str(e)}")
+            print("This might be due to network issues or insufficient disk space.")
+        
         input("\nPress Enter to continue...")
     
     async def _download_model(self, model_info):
@@ -2296,21 +2557,43 @@ class ConsoleUI:
             if "error" in details:
                 print(f"Error getting details: {details['error']}")
             else:
-                print(f"Name: {model_id}")
+                print(f"Name: {details.get('name', model_id)}")
                 
-                if details.get("size"):
-                    size_gb = details["size"] / (1024**3)
-                    print(f"Size: {size_gb:.1f} GB")
+                # Handle web-scraped data format
+                if details.get("source") == "web_scraping":
+                    if details.get("description"):
+                        print(f"Description: {details['description']}")
+                    
+                    if details.get("downloads"):
+                        print(f"Downloads: {details['downloads']}")
+                    
+                    if details.get("last_updated"):
+                        print(f"Last Updated: {details['last_updated']}")
+                    
+                    if details.get("variants"):
+                        print(f"\nAvailable Variants:")
+                        print("-" * 40)
+                        for variant in details['variants']:
+                            print(f"  {variant['name']} - {variant['size']}")
+                    
+                    if details.get("url"):
+                        print(f"\nMore info: {details['url']}")
                 
-                if details.get("modified_at"):
-                    print(f"Modified: {details['modified_at']}")
-                
-                if details.get("parameters"):
-                    print(f"\nParameters: {details['parameters']}")
-                
-                if details.get("modelfile"):
-                    print(f"\nModelfile (first 500 chars):")
-                    print("-" * 40)
+                # Handle API response format
+                else:
+                    if details.get("size"):
+                        size_gb = details["size"] / (1024**3)
+                        print(f"Size: {size_gb:.1f} GB")
+                    
+                    if details.get("modified_at"):
+                        print(f"Modified: {details['modified_at']}")
+                    
+                    if details.get("parameters"):
+                        print(f"\nParameters: {details['parameters']}")
+                    
+                    if details.get("modelfile"):
+                        print(f"\nModelfile (first 500 chars):")
+                        print("-" * 40)
                     print(details["modelfile"][:500])
                     if len(details["modelfile"]) > 500:
                         print("...")
