@@ -1288,16 +1288,36 @@ class OllamaClient(BaseModelClient):
                     "model_family": model_name.split(':')[0].capitalize()
                 }
             
-            # Get detailed variants from the model page
-            variants = await self._scrape_model_variants(model_name)
+            # Use existing variants data from registry instead of web scraping
+            detailed_variants = []
+            registry_variants = base_model.get("variants", [])
+            
+            if registry_variants:
+                logger.info(f"Found {len(registry_variants)} variants in registry for {model_name}: {registry_variants}")
+                
+                # Convert registry variants to detailed format
+                for variant in registry_variants:
+                    # Create full model name
+                    full_name = f"{model_name}:{variant}" if variant != "latest" else model_name
+                    
+                    # Try to extract size from variant name
+                    size = self._extract_size_from_variant(variant)
+                    
+                    detailed_variants.append({
+                        "tag": variant,
+                        "size": size,
+                        "pulls": None,
+                        "updated": None,
+                        "full_name": full_name
+                    })
+                    
+                logger.info(f"Created {len(detailed_variants)} detailed variants for {model_name}")
+            else:
+                logger.info(f"No variants found in registry for {model_name}")
             
             # Combine the information
             detailed_model = base_model.copy()
-            detailed_model["detailed_variants"] = variants
-            
-            # If we have variants, update the basic variants list
-            if variants:
-                detailed_model["variants"] = [v["tag"] for v in variants]
+            detailed_model["detailed_variants"] = detailed_variants
             
             return detailed_model
             
@@ -1309,6 +1329,26 @@ class OllamaClient(BaseModelClient):
                 "model_family": "Unknown",
                 "error": str(e)
             }
+    
+    def _extract_size_from_variant(self, variant: str) -> str:
+        """Extract size from variant name like '2b', '7b', '27b', etc."""
+        import re
+        
+        # Look for patterns like 2b, 7b, 27b, 70b, etc.
+        size_pattern = re.compile(r'(\d+(?:\.\d+)?)\s*([bBmMgG])', re.IGNORECASE)
+        match = size_pattern.search(variant)
+        
+        if match:
+            number = match.group(1)
+            unit = match.group(2).upper()
+            return f"{number}{unit}"
+        
+        # Handle special cases
+        if variant in ['instruct', 'chat', 'code', 'vision']:
+            return "Unknown"
+        
+        # If we can't parse it, return the variant itself
+        return variant if variant != "latest" else "Unknown"
             
     async def list_available_models_from_registry(self, query: str = "") -> List[Dict[str, Any]]:
         """List available models from Ollama registry with cache support"""

@@ -2093,14 +2093,16 @@ class ConsoleUI:
                 
                 print(f"\nShowing top models by family (total: {len(available_models)})")
                 print("\nOptions:")
-                print("Enter model number to view details")
+                print("Enter model number to view variants and download")
                 print("s) Search for specific models")
                 print("Enter) Back to model browser")
                 
                 choice = input("\n> ").strip()
                 
                 if choice in model_map:
-                    await self._show_model_details(model_map[choice])
+                    # Use the new unified flow for browsing too
+                    selected_model = model_map[choice]
+                    await self._show_unified_model_variants([selected_model], client, selected_model.get("name", "unknown"))
                 elif choice.lower() == "s":
                     await self._search_models()
                     
@@ -2164,6 +2166,30 @@ class ConsoleUI:
             
         input("\nPress Enter to continue...")
     
+    def _extract_size_from_tag(self, tag):
+        """Extract size from model tag like '2b', '7b', '27b', etc."""
+        import re
+        
+        # Look for patterns like 2b, 7b, 27b, 70b, etc.
+        size_pattern = re.compile(r'(\d+(?:\.\d+)?)\s*([bBmMgG])', re.IGNORECASE)
+        match = size_pattern.search(tag)
+        
+        if match:
+            number = match.group(1)
+            unit = match.group(2).upper()
+            return f"{number}{unit}"
+        
+        # Handle special cases
+        if 'instruct' in tag.lower():
+            return "Unknown"
+        if 'code' in tag.lower():
+            return "Unknown"
+        if 'vision' in tag.lower():
+            return "Unknown"
+        
+        # If we can't parse it, return the tag itself
+        return tag if tag != "latest" else "Unknown"
+    
     async def _show_unified_model_variants(self, matching_models, client, query):
         """Show all model variants in a unified, numbered list for easy selection"""
         print("\n" + "="*60)
@@ -2198,6 +2224,10 @@ class ConsoleUI:
                         # Create full model name
                         full_name = f"{model_name}:{tag}" if tag != "latest" else model_name
                         
+                        # Try to extract size from tag if size is Unknown
+                        if size == "Unknown" and tag != "latest":
+                            size = self._extract_size_from_tag(tag)
+                        
                         all_variants.append({
                             "model_name": model_name,
                             "tag": tag,
@@ -2210,10 +2240,16 @@ class ConsoleUI:
                         })
                 else:
                     # Add base model if no variants found
+                    # For models that already have tags in their names, extract the size
+                    base_size = model.get("parameter_size", "Unknown")
+                    if base_size == "Unknown" and ":" in model_name:
+                        tag_part = model_name.split(":")[-1]
+                        base_size = self._extract_size_from_tag(tag_part)
+                    
                     all_variants.append({
                         "model_name": model_name,
                         "tag": "latest",
-                        "size": model.get("parameter_size", "Unknown"),
+                        "size": base_size,
                         "pulls": "",
                         "updated": "",
                         "full_name": model_name,
@@ -2224,10 +2260,15 @@ class ConsoleUI:
             except Exception as e:
                 print(f"    Warning: Could not get variants for {model_name}: {str(e)}")
                 # Add base model as fallback
+                fallback_size = model.get("parameter_size", "Unknown")
+                if fallback_size == "Unknown" and ":" in model_name:
+                    tag_part = model_name.split(":")[-1]
+                    fallback_size = self._extract_size_from_tag(tag_part)
+                
                 all_variants.append({
                     "model_name": model_name,
                     "tag": "latest",
-                    "size": model.get("parameter_size", "Unknown"),
+                    "size": fallback_size,
                     "pulls": "",
                     "updated": "",
                     "full_name": model_name,
@@ -2286,8 +2327,6 @@ class ConsoleUI:
         """Download a selected model variant with confirmation"""
         full_name = variant["full_name"]
         size = variant["size"]
-        model_name = variant["model_name"]
-        tag = variant["tag"]
         
         print(f"\n" + "="*50)
         print(f"DOWNLOAD: {full_name}")
@@ -2301,9 +2340,14 @@ class ConsoleUI:
         print("Depending on the model size and your connection, this may take several minutes.")
         print("\nPress Ctrl+C at any time to cancel the download.")
         
-        confirm = input(f"\nDownload {full_name}? (y/N): ").strip().lower()
+        # Flush output to ensure the prompt is visible
+        sys.stdout.flush()
         
-        if confirm == 'y':
+        # Show the prompt and ensure it's visible
+        print(f"\nDownload {full_name}? (y/N): ", end='', flush=True)
+        confirm = input().strip().lower()
+        
+        if confirm in ['y', 'yes']:
             try:
                 # Get Ollama client
                 with self._suppress_output():
@@ -2311,19 +2355,63 @@ class ConsoleUI:
                     client = await OllamaClient.create()
                 
                 print(f"\nStarting download of {full_name}...")
-                print("This will show progress as the model downloads.\n")
+                print("Progress will be shown below:")
+                print("-" * 60)
                 
-                # Pull the model with progress indication
-                async for progress in client.pull_model(full_name):
-                    if "status" in progress:
-                        status = progress["status"]
-                        if "completed" in progress and "total" in progress:
-                            completed = progress["completed"]
-                            total = progress["total"]
-                            percentage = (completed / total) * 100 if total > 0 else 0
-                            print(f"\r{status}: {percentage:.1f}% ({completed}/{total})", end="", flush=True)
-                        else:
-                            print(f"\r{status}", end="", flush=True)
+                # Track download progress with better visual indicators
+                last_status = ""
+                progress_bar_width = 40
+                has_shown_progress = False
+                
+                try:
+                    async for progress in client.pull_model(full_name):
+                        has_shown_progress = True
+                        
+                        if "status" in progress:
+                            status = progress["status"]
+                            
+                            # Handle different progress message formats
+                            if "completed" in progress and "total" in progress:
+                                completed = progress["completed"]
+                                total = progress["total"]
+                                percentage = (completed / total) * 100 if total > 0 else 0
+                                
+                                # Create progress bar
+                                filled_width = int(progress_bar_width * percentage / 100)
+                                bar = "█" * filled_width + "░" * (progress_bar_width - filled_width)
+                                
+                                # Format bytes nicely
+                                if total > 1024 * 1024 * 1024:  # GB
+                                    completed_gb = completed / (1024 * 1024 * 1024)
+                                    total_gb = total / (1024 * 1024 * 1024)
+                                    size_str = f"{completed_gb:.1f}GB/{total_gb:.1f}GB"
+                                else:  # MB
+                                    completed_mb = completed / (1024 * 1024)
+                                    total_mb = total / (1024 * 1024)
+                                    size_str = f"{completed_mb:.1f}MB/{total_mb:.1f}MB"
+                                
+                                # Extract the layer ID from status if present  
+                                if "pulling" in status and len(status.split()) > 1:
+                                    layer_id = status.split()[-1][:12]  # First 12 chars of layer hash
+                                    display_status = f"pulling {layer_id}"
+                                else:
+                                    display_status = status
+                                
+                                print(f"\r📦 {display_status}: [{bar}] {percentage:.1f}% ({size_str})", end="", flush=True)
+                            else:
+                                # For status messages without progress (like "pulling manifest")
+                                if status != last_status:
+                                    if last_status and "pulling" in last_status:  # Add newline after progress bars
+                                        print()
+                                    print(f"📦 {status}...", end="", flush=True)
+                                    last_status = status
+                                else:
+                                    print(".", end="", flush=True)  # Show activity dots
+                
+                except Exception as stream_error:
+                    print(f"\nProgress stream error: {stream_error}")
+                    if not has_shown_progress:
+                        print("Download may still be proceeding in background...")
                 
                 print(f"\n\n✅ Successfully downloaded {full_name}!")
                 print("The model is now available for use in your chats.")
@@ -2540,10 +2628,10 @@ class ConsoleUI:
             idx = int(choice) - 1
             if 0 <= idx < len(local_models):
                 model_id = local_models[idx].get("id", "unknown")
-                await self._show_model_details(model_id)
+                await self._show_local_model_details(model_id)
     
-    async def _show_model_details(self, model_id):
-        """Show detailed information about a specific model"""
+    async def _show_local_model_details(self, model_id):
+        """Show detailed information about a specific locally installed model"""
         try:
             from .api.ollama import OllamaClient
             client = await OllamaClient.create()
