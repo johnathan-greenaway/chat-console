@@ -39,6 +39,7 @@ class ConsoleUI:
         # Update last used model on startup
         update_last_used_model(self.selected_model)
         self.running = True
+        self._exit_to_chat = False
         self.generating = False
         self.input_mode = "text"  # "text" or "menu"
         self.multi_line_input = []
@@ -1954,6 +1955,10 @@ class ConsoleUI:
     async def show_model_browser(self):
         """Show Ollama model browser for managing local and available models"""
         while True:
+            # Check if we should exit to chat
+            if self._exit_to_chat:
+                self._exit_to_chat = False  # Reset flag
+                break
             self.clear_screen()
             print("=" * self.width)
             print("OLLAMA MODEL BROWSER".center(self.width))
@@ -1973,8 +1978,14 @@ class ConsoleUI:
                     await self._list_local_models()
                 elif choice == "2":
                     await self._list_available_models()
+                    # Check if user chose to start chat after download
+                    if self._exit_to_chat:
+                        break
                 elif choice == "3":
                     await self._search_models()
+                    # Check if user chose to start chat after download
+                    if self._exit_to_chat:
+                        break
                 elif choice == "4":
                     await self._switch_model()
                 elif choice == "0" or choice == "":
@@ -2103,6 +2114,9 @@ class ConsoleUI:
                     # Use the new unified flow for browsing too
                     selected_model = model_map[choice]
                     await self._show_unified_model_variants([selected_model], client, selected_model.get("name", "unknown"))
+                    # Check if user chose to start chat after download
+                    if self._exit_to_chat:
+                        return
                 elif choice.lower() == "s":
                     await self._search_models()
                     
@@ -2160,6 +2174,9 @@ class ConsoleUI:
                 
                 # Get detailed variants for each matching model
                 await self._show_unified_model_variants(matching_models[:10], client, query)  # Limit to top 10 matches
+                # Check if user chose to start chat after download
+                if self._exit_to_chat:
+                    return
                     
         except Exception as e:
             print(f"Error searching models: {str(e)}")
@@ -2322,6 +2339,9 @@ class ConsoleUI:
         if choice in variant_map:
             selected_variant = variant_map[choice]
             await self._download_selected_variant(selected_variant)
+            # Check if user chose to start chat after download
+            if self._exit_to_chat:
+                return
     
     async def _download_selected_variant(self, variant):
         """Download a selected model variant with confirmation"""
@@ -2443,11 +2463,13 @@ class ConsoleUI:
             print("4. 📋 Return to model menu")
             print()
             
-            choice = input("Enter your choice (1-4): ").strip()
+            choice = input("\n> ").strip()
             
             if choice == "1":
                 # Start chat with the downloaded model
                 await self._start_chat_with_model(model_id)
+                # Exit all the way back to main chat by setting a flag
+                self._exit_to_chat = True
                 return
             elif choice == "2":
                 # Return to search results - just return to continue the search flow
@@ -2458,8 +2480,7 @@ class ConsoleUI:
                 await self._search_models()
                 return
             elif choice == "4":
-                # Return to main model browser menu
-                await self._ollama_model_browser()
+                # Return to main model browser menu - this will exit the current flow
                 return
             else:
                 print("\n❌ Invalid choice. Please enter 1, 2, 3, or 4.")
@@ -2474,11 +2495,12 @@ class ConsoleUI:
             config["default_model"] = model_id
             save_config(config)
             
-            print(f"\n✅ Configuration updated to use {model_id} as default model.")
-            print("🚀 Starting chat...")
+            # Also update the current selected model in the UI
+            from app.utils import resolve_model_id
+            self.selected_model = resolve_model_id(model_id)
             
-            # Exit model browser and return to main chat
-            self.should_exit = True
+            print(f"\n✅ Configuration updated to use {model_id} as default model.")
+            print("🚀 Returning to chat...")
             
         except Exception as e:
             print(f"\n❌ Error updating configuration: {str(e)}")
