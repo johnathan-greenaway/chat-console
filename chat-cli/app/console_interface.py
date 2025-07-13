@@ -2835,6 +2835,11 @@ class ConsoleUI:
                     continue
                 elif user_input == "##MODELS##":
                     await self.show_model_browser()
+                    # If user chose to start chat with new model, force screen redraw and input focus
+                    if self._exit_to_chat:
+                        self._exit_to_chat = False  # Reset flag
+                        # Force a full screen redraw to show the new model and get ready for input
+                        self.draw_screen("", f"Ready to chat with {self.selected_model}", force_redraw=True)
                     continue
                 
                 # Handle legacy single-letter commands for backward compatibility
@@ -2852,6 +2857,11 @@ class ConsoleUI:
                     continue
                 elif user_input.lower() == 'm':
                     await self.show_model_browser()
+                    # If user chose to start chat with new model, force screen redraw and input focus
+                    if self._exit_to_chat:
+                        self._exit_to_chat = False  # Reset flag
+                        # Force a full screen redraw to show the new model and get ready for input
+                        self.draw_screen("", f"Ready to chat with {self.selected_model}", force_redraw=True)
                     continue
                 
                 # Generate response
