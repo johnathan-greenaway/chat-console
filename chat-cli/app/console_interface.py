@@ -2416,6 +2416,10 @@ class ConsoleUI:
                 print(f"\n\n✅ Successfully downloaded {full_name}!")
                 print("The model is now available for use in your chats.")
                 
+                # Show post-download options
+                await self._show_post_download_options(full_name)
+                return
+                
             except KeyboardInterrupt:
                 print("\n\n❌ Download cancelled by user.")
             except Exception as e:
@@ -2425,6 +2429,60 @@ class ConsoleUI:
             print("Download cancelled.")
         
         input("\nPress Enter to continue...")
+    
+    async def _show_post_download_options(self, model_id: str) -> None:
+        """Show options after successful model download"""
+        while True:
+            print("\n" + "=" * self.width)
+            print("WHAT WOULD YOU LIKE TO DO NEXT?".center(self.width))
+            print("=" * self.width)
+            print()
+            print("1. 🚀 Start chat with model")
+            print("2. 🔍 Return to search results")
+            print("3. 🔎 Return to search")
+            print("4. 📋 Return to model menu")
+            print()
+            
+            choice = input("Enter your choice (1-4): ").strip()
+            
+            if choice == "1":
+                # Start chat with the downloaded model
+                await self._start_chat_with_model(model_id)
+                return
+            elif choice == "2":
+                # Return to search results - just return to continue the search flow
+                return
+            elif choice == "3":
+                # Return to search input - clear current search and go back
+                self.search_query = ""
+                await self._search_models()
+                return
+            elif choice == "4":
+                # Return to main model browser menu
+                await self._ollama_model_browser()
+                return
+            else:
+                print("\n❌ Invalid choice. Please enter 1, 2, 3, or 4.")
+                input("Press Enter to continue...")
+    
+    async def _start_chat_with_model(self, model_id: str) -> None:
+        """Start a chat with the downloaded model and update config"""
+        try:
+            # Update the configuration to use this model
+            from app.config import load_config, save_config
+            config = load_config()
+            config["default_model"] = model_id
+            save_config(config)
+            
+            print(f"\n✅ Configuration updated to use {model_id} as default model.")
+            print("🚀 Starting chat...")
+            
+            # Exit model browser and return to main chat
+            self.should_exit = True
+            
+        except Exception as e:
+            print(f"\n❌ Error updating configuration: {str(e)}")
+            input("Press Enter to continue...")
     
     async def _show_model_details(self, model_info):
         """Show detailed model information including all available variants"""
