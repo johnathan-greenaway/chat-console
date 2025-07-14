@@ -4,3 +4,10 @@ chat-cli/CLAUDE.md
 env/bin/dotenv
 env/*
 chat-cli/debug_chat_issue.py
+test_complete_flow.py
+test_download_progress.py
+test_enhanced_experience.py
+test_final_complete.py
+test_final_gemma_search.py
+test_improved_search.py
+test_progress_display.py

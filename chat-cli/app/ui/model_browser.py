@@ -862,10 +862,11 @@ class ModelBrowser(Container):
             progress_bar.update(progress=100)
             progress_label.update("100%")
             
-            self.notify(f"Model {model_id} downloaded successfully", severity="success")
-            
             # Refresh local models
             await self.load_local_models()
+            
+            # Show post-download options
+            await self._show_post_download_options(model_id)
             
         except Exception as e:
             self.notify(f"Error pulling model: {str(e)}", severity="error")
@@ -879,6 +880,87 @@ class ModelBrowser(Container):
                 await asyncio.sleep(3)
                 progress_area.remove_class("visible")
             self.app.call_later(hide_progress)
+    
+    async def _show_post_download_options(self, model_id: str) -> None:
+        """Show options after successful model download"""
+        from textual.widgets import Button, Vertical
+        from textual.containers import Center
+        from textual.screen import ModalScreen
+        
+        class PostDownloadModal(ModalScreen):
+            def __init__(self, model_id: str, parent: 'ModelBrowser'):
+                super().__init__()
+                self.model_id = model_id
+                self.parent = parent
+            
+            def compose(self):
+                with Center():
+                    with Vertical(id="post-download-dialog"):
+                        yield Button(f"✅ Model {self.model_id} downloaded successfully!", disabled=True, variant="success")
+                        yield Button("🚀 Start chat with model", id="start-chat")
+                        yield Button("🔍 Return to search results", id="return-search-results") 
+                        yield Button("🔎 Return to search", id="return-search")
+                        yield Button("📋 Return to model menu", id="return-menu")
+            
+            async def on_button_pressed(self, event: Button.Pressed) -> None:
+                if event.button.id == "start-chat":
+                    # Update config with selected model and start chat
+                    await self.parent._start_chat_with_model(self.model_id)
+                elif event.button.id == "return-search-results":
+                    # Return to the last search results
+                    self.parent._return_to_search_results()
+                elif event.button.id == "return-search":
+                    # Go back to search input
+                    self.parent._return_to_search()
+                elif event.button.id == "return-menu":
+                    # Return to main model browser menu
+                    self.parent._return_to_menu()
+                
+                self.dismiss()
+        
+        # Show the modal
+        await self.app.push_screen(PostDownloadModal(model_id, self))
+    
+    async def _start_chat_with_model(self, model_id: str) -> None:
+        """Start a chat with the downloaded model and update config"""
+        try:
+            # Update the configuration to use this model
+            from app.config import load_config, save_config
+            config = load_config()
+            config["default_model"] = model_id
+            save_config(config)
+            
+            # Close model browser and start chat
+            self.app.pop_screen()  # Close model browser
+            self.notify(f"Starting chat with {model_id}...", severity="success")
+            
+        except Exception as e:
+            self.notify(f"Error starting chat: {str(e)}", severity="error")
+    
+    def _return_to_search_results(self) -> None:
+        """Return to the last search results view"""
+        # Switch to available tab if we're not already there
+        if self.current_tab != "available":
+            self.current_tab = "available"
+            self.refresh_display()
+    
+    def _return_to_search(self) -> None:
+        """Return to search input and clear results"""
+        # Clear search and switch to available tab
+        search_input = self.query_one("#search-input", Input)
+        search_input.value = ""
+        self.search_query = ""
+        self.current_tab = "available"
+        self.refresh_display()
+    
+    def _return_to_menu(self) -> None:
+        """Return to the main model browser menu"""
+        # Reset to local tab and clear any search
+        search_input = self.query_one("#search-input", Input)
+        search_input.value = ""
+        self.search_query = ""
+        self.current_tab = "local"
+        self.refresh_display()
     
     async def _delete_selected_model(self) -> None:
         """Delete the selected model from local storage"""

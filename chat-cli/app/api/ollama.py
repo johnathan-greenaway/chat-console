@@ -779,7 +779,24 @@ class OllamaClient(BaseModelClient):
             
     async def get_model_details(self, model_id: str) -> Dict[str, Any]:
         """Get detailed information about a specific Ollama model"""
+        # Handle case where model_id might be a dict instead of string
+        if isinstance(model_id, dict):
+            logger.warning(f"get_model_details received dict instead of string: {model_id}")
+            # Extract the model name from the dict
+            model_id = model_id.get("name", "")
+            if not model_id:
+                return {
+                    "error": "Invalid model_id: expected string but got dict with no 'name' field",
+                    "modelfile": None,
+                    "parameters": None,
+                    "size": 0,
+                    "created_at": None,
+                    "modified_at": None
+                }
+        
         logger.info(f"Getting details for model: {model_id}")
+        
+        # First try the API endpoint for locally installed models
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -791,17 +808,133 @@ class OllamaClient(BaseModelClient):
                     data = await response.json()
                     logger.debug(f"Ollama model details response: {data}")
                     return data
-        except Exception as e:
-            logger.error(f"Error getting model details: {str(e)}")
-            # Return a dict with error info instead of raising an exception
-            return {
-                "error": str(e),
-                "modelfile": None,
-                "parameters": None,
-                "size": 0,
-                "created_at": None,
-                "modified_at": None
-            }
+        except Exception as api_error:
+            logger.info(f"API call failed for {model_id}: {str(api_error)}, trying web scraping")
+            
+            # Fallback to web scraping from ollama.com
+            try:
+                return await self._scrape_model_details_from_web(model_id)
+            except Exception as scrape_error:
+                logger.error(f"Web scraping also failed: {str(scrape_error)}")
+                # Return a dict with error info instead of raising an exception
+                return {
+                    "error": f"API: {str(api_error)} | Web: {str(scrape_error)}",
+                    "modelfile": None,
+                    "parameters": None,
+                    "size": 0,
+                    "created_at": None,
+                    "modified_at": None
+                }
+    
+    async def _scrape_model_details_from_web(self, model_id: str) -> Dict[str, Any]:
+        """Scrape model details from ollama.com/library/{model_id}"""
+        import re
+        from bs4 import BeautifulSoup
+        
+        # Handle case where model_id might be a dict instead of string
+        if isinstance(model_id, dict):
+            logger.warning(f"_scrape_model_details_from_web received dict instead of string: {model_id}")
+            model_id = model_id.get("name", "")
+            if not model_id:
+                raise ValueError("Invalid model_id: expected string but got dict with no 'name' field")
+        
+        base_model_name = model_id.split(':')[0]  # Remove tag if present
+        url = f"https://ollama.com/library/{base_model_name}"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                html = await response.text()
+                
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Extract model variants from the Models section
+                variants = []
+                models_section = soup.find('h2', string='Models')
+                if models_section:
+                    # Look for the specific table with model variants
+                    table = models_section.find_next('table')
+                    if table:
+                        # Check if this table has Name, Size, Context columns (model variants table)
+                        headers = table.find('tr')
+                        if headers:
+                            header_texts = [th.get_text(strip=True) for th in headers.find_all(['th', 'td'])]
+                            if 'Name' in header_texts and 'Size' in header_texts:
+                                for row in table.find_all('tr')[1:]:  # Skip header row
+                                    cells = row.find_all('td')
+                                    if cells and len(cells) >= 2:
+                                        variant_name = cells[0].get_text(strip=True)
+                                        size = cells[1].get_text(strip=True)
+                                        # Only add if it looks like a model variant (not benchmark results)
+                                        if ':' in variant_name or 'latest' in variant_name:
+                                            variants.append({
+                                                "name": variant_name,
+                                                "size": size
+                                            })
+                
+                # If no variants found in table, try alternative approach
+                if not variants:
+                    # Look for model variants in different ways
+                    variant_elements = soup.find_all('a', href=re.compile(f'/library/{base_model_name}:'))
+                    seen_variants = set()
+                    for elem in variant_elements:
+                        href = elem.get('href', '')
+                        if ':' in href:
+                            variant_name = href.split('/')[-1]  # Extract model:tag from URL
+                            if variant_name not in seen_variants:
+                                seen_variants.add(variant_name)
+                                variants.append({
+                                    "name": variant_name,
+                                    "size": "Unknown"
+                                })
+                    
+                    # Also try looking for code blocks with model names
+                    if not variants:
+                        code_blocks = soup.find_all('code')
+                        for code in code_blocks:
+                            text = code.get_text(strip=True)
+                            if text.startswith(f'{base_model_name}:') and text not in seen_variants:
+                                seen_variants.add(text)
+                                variants.append({
+                                    "name": text,
+                                    "size": "Unknown"
+                                })
+                
+                # Extract description
+                description = ""
+                desc_elem = soup.find('meta', {'name': 'description'})
+                if desc_elem:
+                    description = desc_elem.get('content', '')
+                
+                # Extract download count - look for number followed by "Downloads" or "pulls"
+                downloads = "Unknown"
+                download_pattern = re.compile(r'(\d+(?:\.\d+)?[KMB]?)\s*(?:Downloads|pulls)', re.IGNORECASE)
+                download_match = download_pattern.search(html)
+                if download_match:
+                    downloads = download_match.group(1)
+                else:
+                    # Try alternative pattern
+                    download_pattern2 = re.compile(r'>(\d+(?:\.\d+)?[KMB]?)<.*?Downloads', re.IGNORECASE)
+                    download_match2 = download_pattern2.search(html)
+                    if download_match2:
+                        downloads = download_match2.group(1)
+                
+                # Extract last updated - look for "Updated" followed by time
+                updated = "Unknown"
+                updated_pattern = re.compile(r'Updated\s+(\w+\s+ago)', re.IGNORECASE)
+                updated_match = updated_pattern.search(html)
+                if updated_match:
+                    updated = updated_match.group(1)
+                
+                return {
+                    "name": base_model_name,
+                    "description": description,
+                    "variants": variants,
+                    "downloads": downloads,
+                    "last_updated": updated,
+                    "source": "web_scraping",
+                    "url": url
+                }
     
     async def _fetch_and_cache_models(self) -> List[Dict[str, Any]]:
         """Fetch models from Ollama website and cache them for 24 hours"""
@@ -1067,6 +1200,155 @@ class OllamaClient(BaseModelClient):
             logger.error(f"Error during model fetch and cache: {str(e)}")
             # Return an empty list in case of catastrophic failure
             return []
+    
+    async def _scrape_model_variants(self, model_name: str) -> List[Dict[str, Any]]:
+        """Scrape variants from individual model page (/library/model-name)"""
+        logger.info(f"Scraping variants for model: {model_name}")
+        variants = []
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                model_url = f"https://ollama.com/library/{model_name}"
+                
+                async with session.get(
+                    model_url,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; chat-console/1.0)"}
+                ) as response:
+                    if response.status == 200:
+                        html = await response.text()
+                        
+                        # Look for the Models table in the HTML
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(html, 'html.parser')
+                        
+                        # Find tables that might contain model variants
+                        tables = soup.find_all('table')
+                        for table in tables:
+                            # Look for headers that indicate this is the Models table
+                            headers = table.find_all('th')
+                            if any('tag' in th.get_text().lower() or 'size' in th.get_text().lower() for th in headers):
+                                rows = table.find_all('tr')[1:]  # Skip header row
+                                
+                                for row in rows:
+                                    cells = row.find_all('td')
+                                    if len(cells) >= 2:
+                                        tag = cells[0].get_text().strip()
+                                        size = cells[1].get_text().strip() if len(cells) > 1 else "Unknown"
+                                        
+                                        # Parse additional info if available
+                                        pulls = None
+                                        updated = None
+                                        if len(cells) > 2:
+                                            # Look for pulls/downloads info
+                                            for cell in cells[2:]:
+                                                text = cell.get_text().strip()
+                                                if 'pull' in text.lower() or 'download' in text.lower():
+                                                    try:
+                                                        pulls = int(''.join(filter(str.isdigit, text)))
+                                                    except:
+                                                        pass
+                                                elif 'ago' in text.lower() or 'month' in text.lower():
+                                                    updated = text
+                                        
+                                        variants.append({
+                                            "tag": tag,
+                                            "size": size,
+                                            "pulls": pulls,
+                                            "updated": updated,
+                                            "full_name": f"{model_name}:{tag}" if tag != "latest" else model_name
+                                        })
+                        
+                        logger.info(f"Found {len(variants)} variants for {model_name}")
+                        
+        except Exception as e:
+            logger.warning(f"Error scraping variants for {model_name}: {str(e)}")
+            
+        return variants
+    
+    async def get_model_with_variants(self, model_name: str) -> Dict[str, Any]:
+        """Get detailed model information including all available variants"""
+        logger.info(f"Getting detailed info for model: {model_name}")
+        
+        try:
+            # First get basic model info from registry
+            all_models = await self.list_available_models_from_registry("")
+            base_model = None
+            
+            for model in all_models:
+                if model.get("name") == model_name:
+                    base_model = model
+                    break
+            
+            if not base_model:
+                # Create a basic model entry if not found in registry
+                base_model = {
+                    "name": model_name,
+                    "description": f"{model_name} model",
+                    "model_family": model_name.split(':')[0].capitalize()
+                }
+            
+            # Use existing variants data from registry instead of web scraping
+            detailed_variants = []
+            registry_variants = base_model.get("variants", [])
+            
+            if registry_variants:
+                logger.info(f"Found {len(registry_variants)} variants in registry for {model_name}: {registry_variants}")
+                
+                # Convert registry variants to detailed format
+                for variant in registry_variants:
+                    # Create full model name
+                    full_name = f"{model_name}:{variant}" if variant != "latest" else model_name
+                    
+                    # Try to extract size from variant name
+                    size = self._extract_size_from_variant(variant)
+                    
+                    detailed_variants.append({
+                        "tag": variant,
+                        "size": size,
+                        "pulls": None,
+                        "updated": None,
+                        "full_name": full_name
+                    })
+                    
+                logger.info(f"Created {len(detailed_variants)} detailed variants for {model_name}")
+            else:
+                logger.info(f"No variants found in registry for {model_name}")
+            
+            # Combine the information
+            detailed_model = base_model.copy()
+            detailed_model["detailed_variants"] = detailed_variants
+            
+            return detailed_model
+            
+        except Exception as e:
+            logger.error(f"Error getting detailed model info for {model_name}: {str(e)}")
+            return {
+                "name": model_name,
+                "description": f"{model_name} model",
+                "model_family": "Unknown",
+                "error": str(e)
+            }
+    
+    def _extract_size_from_variant(self, variant: str) -> str:
+        """Extract size from variant name like '2b', '7b', '27b', etc."""
+        import re
+        
+        # Look for patterns like 2b, 7b, 27b, 70b, etc.
+        size_pattern = re.compile(r'(\d+(?:\.\d+)?)\s*([bBmMgG])', re.IGNORECASE)
+        match = size_pattern.search(variant)
+        
+        if match:
+            number = match.group(1)
+            unit = match.group(2).upper()
+            return f"{number}{unit}"
+        
+        # Handle special cases
+        if variant in ['instruct', 'chat', 'code', 'vision']:
+            return "Unknown"
+        
+        # If we can't parse it, return the variant itself
+        return variant if variant != "latest" else "Unknown"
             
     async def list_available_models_from_registry(self, query: str = "") -> List[Dict[str, Any]]:
         """List available models from Ollama registry with cache support"""
@@ -1453,6 +1735,13 @@ class OllamaClient(BaseModelClient):
             
     async def pull_model(self, model_id: str) -> AsyncGenerator[Dict[str, Any], None]:
         """Pull a model from Ollama registry with progress updates"""
+        # Handle case where model_id might be a dict instead of string
+        if isinstance(model_id, dict):
+            logger.warning(f"pull_model received dict instead of string: {model_id}")
+            model_id = model_id.get("name", "")
+            if not model_id:
+                raise ValueError("Invalid model_id: expected string but got dict with no 'name' field")
+        
         logger.info(f"Pulling model: {model_id}")
         try:
             async with aiohttp.ClientSession() as session:
@@ -1476,6 +1765,13 @@ class OllamaClient(BaseModelClient):
             
     async def delete_model(self, model_id: str) -> None:
         """Delete a model from Ollama"""
+        # Handle case where model_id might be a dict instead of string
+        if isinstance(model_id, dict):
+            logger.warning(f"delete_model received dict instead of string: {model_id}")
+            model_id = model_id.get("name", "")
+            if not model_id:
+                raise ValueError("Invalid model_id: expected string but got dict with no 'name' field")
+        
         logger.info(f"Deleting model: {model_id}")
         try:
             async with aiohttp.ClientSession() as session:
