@@ -35,6 +35,8 @@ setup(
         "anthropic>=0.5.0",
         "openai>=0.27.0",
         "python-dotenv>=0.21.0",
+        "beautifulsoup4>=4.11.0",
+        "aiohttp>=3.8.0",
     ],
     entry_points={
         "console_scripts": [

@@ -7,7 +7,7 @@ Chat Console now intelligently handles Ollama connections, especially for WSL us
 ## How It Works
 
 1. **Automatic Detection**: The app checks the configured Ollama URL (default: `http://localhost:11434`)
-2. **WSL Auto-Configuration**: In WSL environments, it automatically tries `http://host.docker.internal:11434` to connect to Windows host
+2. **WSL Auto-Configuration**: In WSL environments, it automatically detects the Windows host IP to connect to Ollama running on Windows
 3. **Smart Service Management**: Only attempts to start Ollama locally if:
    - The URL is localhost/127.0.0.1
    - AND Ollama is not already running
@@ -17,7 +17,7 @@ Chat Console now intelligently handles Ollama connections, especially for WSL us
 
 ### Option 1: Environment Variable
 ```bash
-export OLLAMA_BASE_URL="http://host.docker.internal:11434"  # For WSL
+export OLLAMA_BASE_URL="http://$(ip route show default | awk '{print $3}'):11434"  # For WSL
 # or
 export OLLAMA_BASE_URL="http://192.168.1.100:11434"  # For remote Ollama
 ```
@@ -26,7 +26,7 @@ export OLLAMA_BASE_URL="http://192.168.1.100:11434"  # For remote Ollama
 The configuration is stored in `~/.terminalchat/config.json`:
 ```json
 {
-  "ollama_base_url": "http://host.docker.internal:11434"
+  "ollama_base_url": "http://192.168.1.100:11434"
 }
 ```
 
@@ -36,12 +36,12 @@ The configuration is stored in `~/.terminalchat/config.json`:
 
 1. **Install Ollama on Windows**: Download from https://ollama.ai
 2. **Start Ollama on Windows**: It will run on `http://localhost:11434`
-3. **Access from WSL**: The app will automatically try `host.docker.internal:11434`
+3. **Access from WSL**: The app will automatically detect the Windows host IP and connect
 
 ### Manual Configuration (if needed)
 ```bash
 # In WSL, set the environment variable
-export OLLAMA_BASE_URL="http://host.docker.internal:11434"
+export OLLAMA_BASE_URL="http://$(ip route show default | awk '{print $3}'):11434"
 
 # Or use the Windows host IP directly
 export OLLAMA_BASE_URL="http://$(cat /etc/resolv.conf | grep nameserver | awk '{print $2}'):11434"
