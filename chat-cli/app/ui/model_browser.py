@@ -433,7 +433,7 @@ class ModelBrowser(Container):
         finally:
             self.is_loading = False
     
-    async def load_available_models(self) -> None:
+    async def load_available_models(self, force_refresh: bool = False) -> None:
         """Load available models from Ollama registry"""
         self.is_loading = True
         
@@ -443,12 +443,12 @@ class ModelBrowser(Container):
             query = search_input.value.strip()
             
             # Debug to track model loading
-            logger.info(f"Loading available models, query: '{query}'")
+            logger.info(f"Loading available models, query: '{query}', force_refresh: {force_refresh}")
             
             # Load models from registry - don't apply the query here, get ALL models
             try:
                 # First try the API-based registry
-                self.available_models = await self.ollama_client.list_available_models_from_registry("")
+                self.available_models = await self.ollama_client.list_available_models_from_registry("", force_refresh=force_refresh)
                 logger.info(f"Got {len(self.available_models)} models from registry")
                 
                 # If no models found, use the curated list
@@ -638,11 +638,12 @@ class ModelBrowser(Container):
             else:
                 self.app.call_later(self.load_available_models)
         elif button_id == "refresh-button":
-            # Refresh current tab
+            # Refresh current tab (force refresh for available models)
             if self.current_tab == "local":
                 self.app.call_later(self.load_local_models)
             else:
-                self.app.call_later(self.load_available_models)
+                # Force refresh the cache when refresh button is clicked
+                self.app.call_later(lambda: self.load_available_models(force_refresh=True))
         elif button_id == "run-button":
             # Set model in the main app
             self.app.call_later(self._run_selected_model)
