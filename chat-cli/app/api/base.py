@@ -64,7 +64,7 @@ class BaseModelClient(ABC):
             # Check if this model was selected from a specific provider in the UI
             # This would be stored in a temporary attribute on the app instance
             try:
-                from ..main import SimpleChatApp
+                from ..classic_main import SimpleChatApp
                 import inspect
                 frame = inspect.currentframe()
                 while frame:
@@ -145,7 +145,7 @@ class BaseModelClient(ABC):
             # Check if this model was selected from a specific provider in the UI
             provider = None
             try:
-                from ..main import SimpleChatApp
+                from ..classic_main import SimpleChatApp
                 import inspect
                 frame = inspect.currentframe()
                 while frame:

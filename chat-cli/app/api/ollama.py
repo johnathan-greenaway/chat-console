@@ -1350,17 +1350,17 @@ class OllamaClient(BaseModelClient):
         # If we can't parse it, return the variant itself
         return variant if variant != "latest" else "Unknown"
             
-    async def list_available_models_from_registry(self, query: str = "") -> List[Dict[str, Any]]:
+    async def list_available_models_from_registry(self, query: str = "", force_refresh: bool = False) -> List[Dict[str, Any]]:
         """List available models from Ollama registry with cache support"""
-        logger.info(f"Fetching available models from Ollama registry, query: '{query}'")
+        logger.info(f"Fetching available models from Ollama registry, query: '{query}', force_refresh: {force_refresh}")
         
         # Check if we need to update the cache
-        need_cache_update = True
+        need_cache_update = True if force_refresh else True
         models_from_cache = []
         
         try:
-            # Try to read from cache first
-            if self.models_cache_path.exists():
+            # Try to read from cache first (unless force refresh is requested)
+            if not force_refresh and self.models_cache_path.exists():
                 try:
                     with open(self.models_cache_path, 'r') as f:
                         cache_data = json.load(f)
