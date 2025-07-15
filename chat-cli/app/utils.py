@@ -882,7 +882,7 @@ def resolve_model_id(model_id_or_name: str) -> str:
                 break
 
     # Special case for Ollama models with version format (model:version)
-    if (provider == "ollama" or any(name in input_lower for name in ["llama", "mistral", "codellama", "gemma"])) and ":" in input_lower and not input_lower.startswith("claude-"):
+    if (provider == "ollama" or any(name in input_lower for name in ["llama", "mistral", "codellama", "gemma", "smollm", "phi", "qwen", "falcon", "orca", "vicuna", "tinyllama", "neural", "stable"]) or ":" in input_lower) and ":" in input_lower and not input_lower.startswith("claude-"):
         logger.info(f"Input '{input_lower}' appears to be an Ollama model with version, returning as-is")
         return model_id_or_name
 

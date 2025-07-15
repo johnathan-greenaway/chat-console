@@ -17,6 +17,7 @@ Features
 *   Markdown rendering
 *   SQLite database for persistent storage
 
+
 Installation
 ------------
 
@@ -58,6 +59,49 @@ Or use the short alias:
 You can also start it with an initial prompt:
 
     chat-console "Explain quantum computing"
+
+### Ask Feature - Quick AI Assistance
+
+The `ask` command provides quick AI assistance with terminal output and errors. It can automatically capture your recent terminal activity and send it to an AI model for analysis and suggestions.
+
+**Basic Usage:**
+
+    ask "Why did this command fail?"
+    ask "What does this error mean?"
+
+**Automatic Terminal Capture:**
+
+The ask command will automatically try to capture recent terminal output using various methods:
+- **tmux sessions**: Captures pane content if you're using tmux
+- **GNU screen**: Captures screen content if you're using screen  
+- **Kitty terminal**: Uses kitty's built-in capture API
+- **Clipboard detection**: Checks clipboard for terminal-like content
+
+**Manual Input Options:**
+
+    ask --paste "What's wrong here?"           # Manually paste terminal output
+    ask --history "Explain recent commands"    # Include command history
+    ask --model gpt-4 "Help with this error"  # Use specific model
+
+**Examples:**
+
+    # After getting an error, just run:
+    ask "help me fix this"
+    
+    # For installation issues:
+    ask "why did the installation fail?"
+    
+    # Include recent command history:
+    ask --history "what went wrong with my setup?"
+    
+    # Use a specific model:
+    ask --model claude-3-opus "explain this error"
+
+**Tips:**
+- Works best in tmux, screen, or kitty terminal for automatic capture
+- If auto-capture fails, use `--paste` to manually provide output
+- The ask command uses your last-used model from the main chat interface
+- For Ollama models, make sure they're downloaded first: `ollama pull model-name`
 
 ### Keyboard Shortcuts
 

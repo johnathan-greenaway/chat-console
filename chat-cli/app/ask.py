@@ -32,23 +32,46 @@ def get_terminal_scrollback():
     # Method 2: Try to get from screen if running in screen
     if os.environ.get('STY'):
         try:
-            # Screen doesn't have a simple capture command, skip for now
-            pass
+            # Try screen hardcopy command
+            subprocess.run(['screen', '-X', 'hardcopy', '/tmp/screen_capture.txt'], timeout=5)
+            if os.path.exists('/tmp/screen_capture.txt'):
+                with open('/tmp/screen_capture.txt', 'r') as f:
+                    content = f.read()
+                os.remove('/tmp/screen_capture.txt')
+                return content
         except:
             pass
     
-    # Method 3: Try to read from terminal buffer using escape sequences
-    # This is tricky and doesn't work in all terminals
-    try:
-        # Request terminal to send scrollback (limited support)
-        sys.stdout.write('\033[?1049h')  # Save screen
-        sys.stdout.write('\033[H\033[2J')  # Clear screen
-        sys.stdout.write('\033[?1049l')  # Restore screen
-        sys.stdout.flush()
-    except:
-        pass
+    # Method 3: Try kitty terminal if available
+    if os.environ.get('KITTY_WINDOW_ID'):
+        try:
+            result = subprocess.run(['kitty', '@', 'get-text', '--ansi'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout
+        except:
+            pass
     
-    # Method 4: Fallback - ask user to paste or describe
+    # Method 4: Try to get from clipboard (might contain terminal output)
+    clipboard_tools = [
+        ['xclip', '-selection', 'clipboard', '-o'],
+        ['xsel', '--clipboard', '--output'],
+        ['pbpaste'],  # macOS
+        ['powershell.exe', '-command', 'Get-Clipboard']  # Windows via WSL
+    ]
+    
+    for tool_cmd in clipboard_tools:
+        try:
+            if subprocess.run(['which', tool_cmd[0]], capture_output=True).returncode == 0:
+                result = subprocess.run(tool_cmd, capture_output=True, text=True, timeout=2)
+                if result.returncode == 0 and result.stdout.strip():
+                    # Only return if it looks like terminal output (has prompts, commands, etc.)
+                    if any(indicator in result.stdout for indicator in ['$', '>', '❯', '❯', 'Error', 'error', 'failed', 'installed', 'Successfully']):
+                        return result.stdout
+        except:
+            continue
+    
+    # Method 5: Fallback - ask user to paste or describe
     return None
 
 
@@ -93,6 +116,16 @@ async def ask_ai(context_text, question=None):
     
     model_id = resolve_model_id(model_id)
     
+    # Check if model is available in config
+    if model_id not in CONFIG["available_models"]:
+        print(f"⚠️  Model '{model_id}' not found in available models.")
+        print("This might be an Ollama model that needs to be downloaded.")
+        print("\nTip: Try running 'ollama pull {model_id}' first, or use a different model.")
+        print("\nAvailable models:")
+        for available_id, info in CONFIG["available_models"].items():
+            print(f"  - {available_id}: {info['display_name']}")
+        return None
+    
     # Update last used model
     update_last_used_model(model_id)
     
@@ -123,7 +156,8 @@ Please analyze this and provide helpful guidance."""
         # Prepare messages
         messages = [{"role": "user", "content": prompt}]
         
-        print(f"🤖 Asking {CONFIG['available_models'][model_id]['display_name']}...")
+        model_display_name = CONFIG["available_models"][model_id]["display_name"]
+        print(f"🤖 Asking {model_display_name}...")
         print("─" * 60)
         
         # Stream the response
@@ -137,7 +171,15 @@ Please analyze this and provide helpful guidance."""
         return response_text
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        error_msg = str(e)
+        if "Connection refused" in error_msg or "Failed to connect" in error_msg:
+            print(f"❌ Connection Error: Cannot connect to the model server.")
+            print("For Ollama models, make sure Ollama is running: 'ollama serve'")
+        elif "not found" in error_msg.lower():
+            print(f"❌ Model Error: Model '{model_id}' not found.")
+            print("For Ollama models, try: 'ollama pull {model_id}'")
+        else:
+            print(f"❌ Error: {error_msg}")
         return None
 
 
