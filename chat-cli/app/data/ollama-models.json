@@ -1,5 +1,5 @@
 {
-  "last_updated": "2025-07-12T22:18:35.159343",
+  "last_updated": "2025-07-18T02:33:35.109287",
   "models": [
     {
       "name": "gemma3",
@@ -19,6 +19,21 @@
       "parameter_size": "1B"
     },
     {
+      "name": "gemma3n",
+      "description": "Gemma3n is a newer, optimized version of Gemma3 with enhanced performance.",
+      "variants": [
+        "e4b",
+        "f8",
+        "latest"
+      ],
+      "stats": {
+        "pulls": "500K",
+        "tags": 3,
+        "last_updated": "1 week ago"
+      },
+      "parameter_size": "E4B"
+    },
+    {
       "name": "qwq",
       "description": "QwQ is the reasoning model of the Qwen series.",
       "variants": [
@@ -31,6 +46,24 @@
         "last_updated": "2 weeks ago"
       },
       "parameter_size": "32B"
+    },
+    {
+      "name": "qwen2.5-coder",
+      "description": "Qwen2.5-Coder is a powerful code generation model from the Qwen series, optimized for programming tasks.",
+      "variants": [
+        "0.5b",
+        "1.5b",
+        "3b",
+        "7b",
+        "14b",
+        "32b"
+      ],
+      "stats": {
+        "pulls": "2.5M",
+        "tags": 12,
+        "last_updated": "1 week ago"
+      },
+      "parameter_size": "0.5B"
     },
     {
       "name": "deepseek-r1",

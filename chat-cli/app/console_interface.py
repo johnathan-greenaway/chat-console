@@ -1599,8 +1599,20 @@ class ConsoleUI:
             print("SETTINGS".center(self.width))
             print("=" * self.width)
             
-            print(f"Current Model: {CONFIG['available_models'][self.selected_model]['display_name']}")
-            print(f"Current Style: {CONFIG['user_styles'][self.selected_style]['name']}")
+            # Get current model display name with fallback
+            try:
+                current_model_name = CONFIG['available_models'][self.selected_model]['display_name']
+            except KeyError:
+                current_model_name = f"{self.selected_model} (Ollama)"
+            
+            # Get current style name with fallback
+            try:
+                current_style_name = CONFIG['user_styles'][self.selected_style]['name']
+            except KeyError:
+                current_style_name = self.selected_style
+                
+            print(f"Current Model: {current_model_name}")
+            print(f"Current Style: {current_style_name}")
             print()
             print("What would you like to change?")
             print("1. Model")
