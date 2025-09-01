@@ -1,7 +1,7 @@
-Chat CLI
+Chat Console
 ========
 
-Chat CLI is a comprehensive terminal-based interface for interacting with various Large Language Models (LLMs) directly from your command line. This application provides an intuitive TUI (Text User Interface) for conducting AI conversations with multiple model providers.
+Chat Console is a comprehensive terminal-based interface for interacting with various Large Language Models (LLMs) directly from your command line. This application provides an intuitive TUI (Text User Interface) for conducting AI conversations with multiple model providers.
 
 Features
 --------
