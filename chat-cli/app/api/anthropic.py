@@ -68,6 +68,75 @@ class AnthropicClient(BaseModelClient):
         
         return styles.get(style, "")
     
+    async def list_models(self) -> List[Dict[str, Any]]:
+        """Fetch available models from Anthropic API"""
+        try:
+            # Note: Anthropic doesn't have a public models API endpoint like OpenAI
+            # We'll use a curated list of known available models
+            # This could be updated to check model availability by making a test request
+            
+            return self._get_known_models()
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch Anthropic models: {e}")
+            return self._get_fallback_models()
+    
+    def _get_known_models(self) -> List[Dict[str, Any]]:
+        """Return known Anthropic models with proper ordering"""
+        # These are the current Claude models as of the latest API documentation
+        models = [
+            {
+                'id': 'claude-3-5-sonnet-20241022',
+                'name': 'Claude 3.5 Sonnet (Latest)', 
+                'created': 20241022,
+                'owned_by': 'anthropic'
+            },
+            {
+                'id': 'claude-3-5-sonnet-20240620', 
+                'name': 'Claude 3.5 Sonnet',
+                'created': 20240620,
+                'owned_by': 'anthropic'
+            },
+            {
+                'id': 'claude-3-5-haiku-20241022',
+                'name': 'Claude 3.5 Haiku',
+                'created': 20241022,
+                'owned_by': 'anthropic'
+            },
+            {
+                'id': 'claude-3-opus-20240229',
+                'name': 'Claude 3 Opus',
+                'created': 20240229,
+                'owned_by': 'anthropic'
+            },
+            {
+                'id': 'claude-3-sonnet-20240229',
+                'name': 'Claude 3 Sonnet',
+                'created': 20240229,
+                'owned_by': 'anthropic'
+            },
+            {
+                'id': 'claude-3-haiku-20240307',
+                'name': 'Claude 3 Haiku',
+                'created': 20240307,
+                'owned_by': 'anthropic'
+            },
+        ]
+        
+        # Sort by creation date (newest first)
+        models.sort(key=lambda x: -x['created'])
+        return models
+    
+    def _get_fallback_models(self) -> List[Dict[str, Any]]:
+        """Return fallback models when model list fails"""
+        return [
+            {'id': 'claude-3-5-sonnet-20241022', 'name': 'Claude 3.5 Sonnet (Latest)', 'created': 0, 'owned_by': 'anthropic'},
+            {'id': 'claude-3-5-sonnet-20240620', 'name': 'Claude 3.5 Sonnet', 'created': 0, 'owned_by': 'anthropic'},
+            {'id': 'claude-3-opus-20240229', 'name': 'Claude 3 Opus', 'created': 0, 'owned_by': 'anthropic'},
+            {'id': 'claude-3-sonnet-20240229', 'name': 'Claude 3 Sonnet', 'created': 0, 'owned_by': 'anthropic'},
+            {'id': 'claude-3-haiku-20240307', 'name': 'Claude 3 Haiku', 'created': 0, 'owned_by': 'anthropic'},
+        ]
+    
     async def generate_completion(self, messages: List[Dict[str, str]], 
                            model: str, 
                            style: Optional[str] = None, 
