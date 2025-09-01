@@ -1283,6 +1283,34 @@ class ConsoleUI:
         phrase_index = int(elapsed // 2) % len(phrases)
         return phrases[phrase_index]
     
+    def _update_screen_buffered(self, status_message: str):
+        """Update screen using double buffering to prevent flashing"""
+        # Move cursor to home position instead of clearing
+        print("\033[H", end='')  # Move cursor to top-left
+        
+        # Draw the complete screen content
+        header_lines = self.draw_header()
+        footer_lines = self.draw_footer()
+        input_lines = self._draw_streaming_input_area(status_message)
+        message_lines = self.draw_messages()
+        
+        # Build all screen lines with proper clearing
+        all_lines = header_lines + message_lines + input_lines + footer_lines
+        
+        # Output each line with clearing to end of line to prevent artifacts
+        for i, line in enumerate(all_lines):
+            # Clear to end of line to overwrite any previous content
+            print(f"\033[{i+1};1H{line}\033[K", end='')
+        
+        # Clear any remaining lines below our content
+        total_content_lines = len(all_lines)
+        if total_content_lines < self.height:
+            for i in range(total_content_lines + 1, self.height + 1):
+                print(f"\033[{i};1H\033[K", end='')
+        
+        # Position cursor at bottom for any future output
+        print(f"\033[{self.height};1H", end='', flush=True)
+    
     def _update_streaming_display(self, content: str):
         """Update display with real-time streaming content and context-aware status"""
         if not self.generating:
@@ -1291,12 +1319,11 @@ class ConsoleUI:
         # Rate limit updates to avoid flickering, but allow faster updates for better streaming effect
         current_time = time.time()
         if hasattr(self, '_last_display_update'):
-            if current_time - self._last_display_update < 0.02:  # Max 50 updates per second for very smooth streaming
+            # Increased minimum time between updates to reduce flashing (from 0.02 to 0.05)
+            # This gives ~20 updates per second instead of 50, which is still smooth but less flashy
+            if current_time - self._last_display_update < 0.05:  # Max 20 updates per second
                 return
         self._last_display_update = current_time
-        
-        # Clear screen and redraw with current content
-        self.clear_screen()
         
         # Update the last assistant message with current content
         if self.messages and self.messages[-1].role == "assistant":
@@ -1313,8 +1340,8 @@ class ConsoleUI:
         activity_indicator = activity_chars[elapsed % len(activity_chars)]
         streaming_status = f"{activity_indicator} {phrase}{dots} ({elapsed}s) - {len(content)} chars"
         
-        # Draw the full screen with current state
-        self._draw_streaming_screen(streaming_status)
+        # Use buffered screen update instead of clearing
+        self._update_screen_buffered(streaming_status)
         
         # Ensure output is flushed
         sys.stdout.flush()
