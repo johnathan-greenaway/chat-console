@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class ModelSelector(Container):
     """Widget for selecting the AI model to use"""
     
-    # Rams-inspired selector styling
+    # Provider-first two-step selector styling
     DEFAULT_CSS = """
     ModelSelector {
         width: 100%;
@@ -27,20 +27,49 @@ class ModelSelector(Container):
         border: solid #333333 1;
     }
     
-    #selector-container {
+    #provider-container {
         width: 100%;
+        height: 4;
         layout: horizontal;
-        height: auto;
-        padding: 0;
+        padding: 0 1;
+        align: center middle;
+    }
+    
+    #provider-label {
+        width: 20%;
+        height: 3;
+        content-align: left middle;
+        color: #E8E8E8;
+        text-style: bold;
     }
     
     #provider-select {
-        width: 30%;
+        width: 1fr;
         height: 3;
-        margin-right: 1;
         background: #0C0C0C;
         color: #E8E8E8;
-        border: solid #333333 1;
+        border: solid #00FF41 1;
+    }
+    
+    #model-container {
+        width: 100%;
+        height: 4;
+        layout: horizontal;
+        padding: 0 1;
+        align: center middle;
+        display: none;
+    }
+    
+    #model-container.show {
+        display: block;
+    }
+    
+    #model-label {
+        width: 20%;
+        height: 3;
+        content-align: left middle;
+        color: #E8E8E8;
+        text-style: bold;
     }
     
     #model-select, #custom-model-input {
@@ -92,22 +121,28 @@ class ModelSelector(Container):
             self.selected_provider = "ollama"
         
     def compose(self) -> ComposeResult:
-        """Set up the model selector"""
-        with Container(id="selector-container"):
+        """Set up the two-step model selector"""
+        # Step 1: Provider selection
+        with Container(id="provider-container"):
+            yield Label("Provider:", id="provider-label")
+            
             # Provider options including Ollama
             provider_options = [
                 ("OpenAI", "openai"),
-                ("Anthropic", "anthropic"),
+                ("Anthropic", "anthropic"), 
                 ("Ollama", "ollama")
             ]
             
-            # Provider selector
             yield Select(
                 provider_options,
                 id="provider-select",
                 value=self.selected_provider,
                 allow_blank=False
             )
+        
+        # Step 2: Model selection (initially hidden)
+        with Container(id="model-container"):
+            yield Label("Model:", id="model-label")
             
             # Get initial model options synchronously
             initial_options = []
@@ -136,27 +171,32 @@ class ModelSelector(Container):
                 value=self.selected_model if is_custom else "",
                 placeholder="Enter custom model name",
                 id="custom-model-input",
-                classes="" if is_custom else "hide"
+                classes="show" if is_custom else ""
             )
 
     async def on_mount(self) -> None:
         """Initialize model options after mount"""
-        # Always update model options to ensure we have the latest
-        model_select = self.query_one("#model-select", Select)
-        model_options = await self._get_model_options(self.selected_provider)
-        model_select.set_options(model_options)
-        
-        # Handle model selection
-        if self.selected_model in [opt[1] for opt in model_options]:
-            model_select.value = self.selected_model
-            model_select.remove_class("hide")
-            self.query_one("#custom-model-input").add_class("hide")
-        else:
-            model_select.value = "custom"
-            model_select.add_class("hide")
-            custom_input = self.query_one("#custom-model-input")
-            custom_input.value = self.selected_model
-            custom_input.remove_class("hide")
+        # Show model container if we have a selected provider
+        if self.selected_provider:
+            model_container = self.query_one("#model-container")
+            model_container.add_class("show")
+            
+            # Always update model options to ensure we have the latest
+            model_select = self.query_one("#model-select", Select)
+            model_options = await self._get_model_options(self.selected_provider)
+            model_select.set_options(model_options)
+            
+            # Handle model selection
+            if self.selected_model in [opt[1] for opt in model_options]:
+                model_select.value = self.selected_model
+                model_select.remove_class("hide")
+                self.query_one("#custom-model-input").remove_class("show")
+            else:
+                model_select.value = "custom"
+                model_select.add_class("hide")
+                custom_input = self.query_one("#custom-model-input")
+                custom_input.value = self.selected_model
+                custom_input.add_class("show")
 
         # Set initial focus on the provider selector after mount completes
         def _focus_provider():
@@ -264,6 +304,10 @@ class ModelSelector(Container):
             if hasattr(self.app, 'selected_provider'):
                 self.app.selected_provider = self.selected_provider
                 logger.info(f"Updated app.selected_provider to: {self.selected_provider}")
+            
+            # Show model container now that provider is selected
+            model_container = self.query_one("#model-container")
+            model_container.add_class("show")
                 
             # Update model options
             model_select = self.query_one("#model-select", Select)
@@ -295,7 +339,7 @@ class ModelSelector(Container):
                         # Use the original ID for the select widget to avoid invalid value errors
                         model_select.value = original_id
                         model_select.remove_class("hide")
-                        self.query_one("#custom-model-input").add_class("hide")
+                        self.query_one("#custom-model-input").remove_class("show")
                         self.post_message(self.ModelSelected(resolved_id))
                     else:
                         # Fall back to custom if no valid model found
@@ -303,7 +347,7 @@ class ModelSelector(Container):
                         model_select.value = "custom"
                         model_select.add_class("hide")
                         custom_input = self.query_one("#custom-model-input")
-                        custom_input.remove_class("hide")
+                        custom_input.add_class("show")
                         custom_input.focus()
                 except (IndexError, TypeError) as e:
                     logger.error(f"Error selecting first model: {e}")
@@ -312,7 +356,7 @@ class ModelSelector(Container):
                     model_select.value = "custom"
                     model_select.add_class("hide")
                     custom_input = self.query_one("#custom-model-input")
-                    custom_input.remove_class("hide")
+                    custom_input.add_class("show")
                     custom_input.focus()
                 
         elif event.select.id == "model-select":
@@ -321,14 +365,14 @@ class ModelSelector(Container):
                 model_select = self.query_one("#model-select")
                 custom_input = self.query_one("#custom-model-input")
                 model_select.add_class("hide")
-                custom_input.remove_class("hide")
+                custom_input.add_class("show")
                 custom_input.focus()
             else:
                 # Hide custom input
                 model_select = self.query_one("#model-select")
                 custom_input = self.query_one("#custom-model-input")
                 model_select.remove_class("hide")
-                custom_input.add_class("hide")
+                custom_input.remove_class("show")
                 # Resolve the model ID before storing and sending
                 resolved_id = resolve_model_id(event.value)
                 logger.info(f"on_select_changed: Original ID '{event.value}' resolved to '{resolved_id}'")
@@ -372,20 +416,20 @@ class ModelSelector(Container):
             custom_input = self.query_one("#custom-model-input")
             model_select.value = original_id
             model_select.remove_class("hide")
-            custom_input.add_class("hide")
+            custom_input.remove_class("show")
         elif resolved_id in available_options:
             # If the resolved ID is in options, use that
             custom_input = self.query_one("#custom-model-input")
             model_select.value = resolved_id
             model_select.remove_class("hide")
-            custom_input.add_class("hide")
+            custom_input.remove_class("show")
         else:
             # Use custom input for models not in the select options
             custom_input = self.query_one("#custom-model-input")
             model_select.value = "custom"
             model_select.add_class("hide")
             custom_input.value = resolved_id
-            custom_input.remove_class("hide")
+            custom_input.add_class("show")
 
 class StyleSelector(Container):
     """Widget for selecting the AI response style"""
