@@ -178,25 +178,28 @@ class ModelManager:
     
     def _estimate_max_tokens(self, model_id: str, provider: str) -> int:
         """Estimate max tokens for a model"""
+        # Convert to lowercase for case-insensitive matching
+        model_id_lower = model_id.lower()
+        
         # These are rough estimates based on known model capabilities
         if provider == 'openai':
             # Check most specific patterns first
-            if any(x in model_id for x in ['o1', 'o3', 'o4']):
+            if any(x in model_id_lower for x in ['o1', 'o3', 'o4']):
                 return 128000  # Reasoning models have high context
-            elif 'gpt-4o' in model_id or 'gpt-4-turbo' in model_id:
+            elif 'gpt-4o' in model_id_lower or 'gpt-4-turbo' in model_id_lower:
                 return 128000  # GPT-4o and GPT-4 Turbo have 128k context
-            elif '32k' in model_id:
+            elif '32k' in model_id_lower:
                 return 32768
-            elif '16k' in model_id:
+            elif '16k' in model_id_lower:
                 return 16384  
-            elif 'gpt-4' in model_id:
+            elif 'gpt-4' in model_id_lower:
                 return 8192  # Base GPT-4
             else:
                 return 4096  # Default for GPT-3.5 and others
         elif provider == 'anthropic':
-            if 'opus' in model_id:
+            if 'opus' in model_id_lower:
                 return 200000  # Claude 3 Opus has 200k context
-            elif 'sonnet' in model_id or 'haiku' in model_id:
+            elif 'sonnet' in model_id_lower or 'haiku' in model_id_lower:
                 return 200000  # Claude 3.5 models have 200k context
             else:
                 return 100000  # Conservative default

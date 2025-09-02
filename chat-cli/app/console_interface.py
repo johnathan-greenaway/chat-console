@@ -1734,36 +1734,47 @@ class ConsoleUI:
             except (ValueError, KeyboardInterrupt):
                 break
     
+    def _process_fetched_models(self, dynamic_models, force_refresh=False):
+        """Process fetched models and update configuration
+        
+        Args:
+            dynamic_models: Formatted models for config
+            force_refresh: Whether to save config immediately
+            
+        Returns:
+            dict: Available models dictionary
+        """
+        providers_to_refresh = ['openai', 'anthropic']
+        
+        # Merge with existing static models (like Ollama)
+        available_models = CONFIG["available_models"].copy()
+        
+        # Remove old dynamic models and add fresh ones
+        for model_id in list(available_models.keys()):
+            if available_models[model_id].get('provider') in providers_to_refresh:
+                del available_models[model_id]
+        
+        # Add fetched models
+        available_models.update(dynamic_models)
+        
+        # Update global config
+        CONFIG["available_models"] = available_models
+        
+        if force_refresh:
+            save_config(CONFIG)
+        
+        return available_models
+    
     async def _fetch_and_update_models_async(self, force_refresh=False):
         """Async version - Fetch and update models from APIs
         
         Returns:
             dict: Available models dictionary
         """
-        providers_to_refresh = ['openai', 'anthropic']
-        
         try:
             all_models = await model_manager.get_all_models(force_refresh)
             dynamic_models = model_manager.format_models_for_config(all_models)
-            
-            # Merge with existing static models (like Ollama)
-            available_models = CONFIG["available_models"].copy()
-            
-            # Remove old dynamic models and add fresh ones
-            for model_id in list(available_models.keys()):
-                if available_models[model_id].get('provider') in providers_to_refresh:
-                    del available_models[model_id]
-            
-            # Add fetched models
-            available_models.update(dynamic_models)
-            
-            # Update global config
-            CONFIG["available_models"] = available_models
-            
-            if force_refresh:
-                save_config(CONFIG)
-            
-            return available_models
+            return self._process_fetched_models(dynamic_models, force_refresh)
             
         except Exception as e:
             print(f"{self.theme['error']}Failed to fetch models: {e}{self.theme['reset']}")
@@ -1776,31 +1787,11 @@ class ConsoleUI:
         Returns:
             dict: Available models dictionary
         """
-        providers_to_refresh = ['openai', 'anthropic']
-        
         try:
             # Use asyncio.run for synchronous contexts
             all_models = asyncio.run(model_manager.get_all_models(force_refresh))
             dynamic_models = model_manager.format_models_for_config(all_models)
-            
-            # Merge with existing static models (like Ollama)
-            available_models = CONFIG["available_models"].copy()
-            
-            # Remove old dynamic models and add fresh ones
-            for model_id in list(available_models.keys()):
-                if available_models[model_id].get('provider') in providers_to_refresh:
-                    del available_models[model_id]
-            
-            # Add fetched models
-            available_models.update(dynamic_models)
-            
-            # Update global config
-            CONFIG["available_models"] = available_models
-            
-            if force_refresh:
-                save_config(CONFIG)
-            
-            return available_models
+            return self._process_fetched_models(dynamic_models, force_refresh)
             
         except Exception as e:
             print(f"{self.theme['error']}Failed to fetch models: {e}{self.theme['reset']}")
