@@ -1718,7 +1718,7 @@ class ConsoleUI:
                 
                 if choice == "1":
                     # Model selection
-                    self._select_model()
+                    await self._select_model()
                 elif choice == "2":
                     # Style selection
                     self._select_style()
@@ -1734,8 +1734,8 @@ class ConsoleUI:
             except (ValueError, KeyboardInterrupt):
                 break
     
-    def _fetch_and_update_models(self, force_refresh=False):
-        """Fetch and update models from APIs
+    async def _fetch_and_update_models_async(self, force_refresh=False):
+        """Async version - Fetch and update models from APIs
         
         Returns:
             dict: Available models dictionary
@@ -1743,6 +1743,43 @@ class ConsoleUI:
         providers_to_refresh = ['openai', 'anthropic']
         
         try:
+            all_models = await model_manager.get_all_models(force_refresh)
+            dynamic_models = model_manager.format_models_for_config(all_models)
+            
+            # Merge with existing static models (like Ollama)
+            available_models = CONFIG["available_models"].copy()
+            
+            # Remove old dynamic models and add fresh ones
+            for model_id in list(available_models.keys()):
+                if available_models[model_id].get('provider') in providers_to_refresh:
+                    del available_models[model_id]
+            
+            # Add fetched models
+            available_models.update(dynamic_models)
+            
+            # Update global config
+            CONFIG["available_models"] = available_models
+            
+            if force_refresh:
+                save_config(CONFIG)
+            
+            return available_models
+            
+        except Exception as e:
+            print(f"{self.theme['error']}Failed to fetch models: {e}{self.theme['reset']}")
+            print(f"{self.theme['muted']}Using cached models...{self.theme['reset']}")
+            return CONFIG["available_models"]
+    
+    def _fetch_and_update_models(self, force_refresh=False):
+        """Sync wrapper - Fetch and update models from APIs
+        
+        Returns:
+            dict: Available models dictionary
+        """
+        providers_to_refresh = ['openai', 'anthropic']
+        
+        try:
+            # Use asyncio.run for synchronous contexts
             all_models = asyncio.run(model_manager.get_all_models(force_refresh))
             dynamic_models = model_manager.format_models_for_config(all_models)
             
@@ -1786,7 +1823,7 @@ class ConsoleUI:
             display_name = info.get("display_name", model_id)
             print(f"{marker} {idx:2d}. {display_name}")
     
-    def _select_model(self):
+    async def _select_model(self):
         """Enhanced model selection submenu with dynamic model fetching"""
         
         while True:  # Use loop instead of recursion
@@ -1797,8 +1834,8 @@ class ConsoleUI:
             
             print(f"{self.theme['muted']}Fetching latest models...{self.theme['reset']}")
             
-            # Fetch latest models using helper method
-            available_models = self._fetch_and_update_models()
+            # Fetch latest models using async helper method
+            available_models = await self._fetch_and_update_models_async()
             
             self.clear_screen()
             print("=" * self.width)
@@ -1837,10 +1874,10 @@ class ConsoleUI:
             try:
                 choice = input("> ").strip()
                 if choice.lower() == 'r':
-                    # Force refresh models using helper method
+                    # Force refresh models using async helper method
                     print(f"{self.theme['muted']}Refreshing models from APIs...{self.theme['reset']}")
                     try:
-                        self._fetch_and_update_models(force_refresh=True)
+                        await self._fetch_and_update_models_async(force_refresh=True)
                         print(f"{self.theme['success']}Models refreshed successfully!{self.theme['reset']}")
                     except Exception as e:
                         print(f"{self.theme['error']}Failed to refresh models: {e}{self.theme['reset']}")
