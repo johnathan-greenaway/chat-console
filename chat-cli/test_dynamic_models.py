@@ -5,7 +5,6 @@ Test script for dynamic model fetching
 
 import asyncio
 from app.model_manager import model_manager
-from app.console_interface import ConsoleUI
 
 def display_models_summary():
     """Display a summary of the dynamic model fetching system"""

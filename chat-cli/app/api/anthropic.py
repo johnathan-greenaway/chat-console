@@ -129,13 +129,8 @@ class AnthropicClient(BaseModelClient):
     
     def _get_fallback_models(self) -> List[Dict[str, Any]]:
         """Return fallback models when model list fails"""
-        return [
-            {'id': 'claude-3-5-sonnet-20241022', 'name': 'Claude 3.5 Sonnet (Latest)', 'created': 0, 'owned_by': 'anthropic'},
-            {'id': 'claude-3-5-sonnet-20240620', 'name': 'Claude 3.5 Sonnet', 'created': 0, 'owned_by': 'anthropic'},
-            {'id': 'claude-3-opus-20240229', 'name': 'Claude 3 Opus', 'created': 0, 'owned_by': 'anthropic'},
-            {'id': 'claude-3-sonnet-20240229', 'name': 'Claude 3 Sonnet', 'created': 0, 'owned_by': 'anthropic'},
-            {'id': 'claude-3-haiku-20240307', 'name': 'Claude 3 Haiku', 'created': 0, 'owned_by': 'anthropic'},
-        ]
+        # Derive fallback models from _get_known_models to ensure consistency
+        return [{**model, 'created': 0} for model in self._get_known_models()]
     
     async def generate_completion(self, messages: List[Dict[str, str]], 
                            model: str, 

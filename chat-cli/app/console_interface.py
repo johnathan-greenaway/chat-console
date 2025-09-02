@@ -1734,6 +1734,60 @@ class ConsoleUI:
             except (ValueError, KeyboardInterrupt):
                 break
     
+    def _fetch_and_update_models(self, force_refresh=False):
+        """Fetch and update models from APIs
+        
+        Returns:
+            dict: Available models dictionary
+        """
+        import asyncio
+        
+        providers_to_refresh = ['openai', 'anthropic']
+        
+        try:
+            all_models = asyncio.run(model_manager.get_all_models(force_refresh))
+            dynamic_models = model_manager.format_models_for_config(all_models)
+            
+            # Merge with existing static models (like Ollama)
+            available_models = CONFIG["available_models"].copy()
+            
+            # Remove old dynamic models and add fresh ones
+            for model_id in list(available_models.keys()):
+                if available_models[model_id].get('provider') in providers_to_refresh:
+                    del available_models[model_id]
+            
+            # Add fetched models
+            available_models.update(dynamic_models)
+            
+            # Update global config
+            CONFIG["available_models"] = available_models
+            
+            if force_refresh:
+                save_config(CONFIG)
+            
+            return available_models
+            
+        except Exception as e:
+            print(f"{self.theme['error']}Failed to fetch models: {e}{self.theme['reset']}")
+            print(f"{self.theme['muted']}Using cached models...{self.theme['reset']}")
+            return CONFIG["available_models"]
+    
+    def _display_provider_models(self, provider, models, model_list):
+        """Display models for a specific provider
+        
+        Args:
+            provider: Provider name
+            models: List of (model_id, info) tuples
+            model_list: List to append model IDs to
+        """
+        print(f"\n{self.theme['primary']}{provider.upper()}{self.theme['reset']}")
+        for model_id, info in models:
+            model_list.append(model_id)
+            idx = len(model_list)
+            marker = f"{self.theme['accent']}►{self.theme['reset']}" if model_id == self.selected_model else " "
+            display_name = info.get("display_name", model_id)
+            print(f"{marker} {idx:2d}. {display_name}")
+    
     def _select_model(self):
         """Enhanced model selection submenu with dynamic model fetching"""
         self.clear_screen()
@@ -1743,31 +1797,8 @@ class ConsoleUI:
         
         print(f"{self.theme['muted']}Fetching latest models...{self.theme['reset']}")
         
-        # Fetch latest models
-        try:
-            import asyncio
-            all_models = asyncio.run(model_manager.get_all_models())
-            dynamic_models = model_manager.format_models_for_config(all_models)
-            
-            # Merge with existing static models (like Ollama)
-            available_models = CONFIG["available_models"].copy()
-            
-            # Remove old dynamic models and add fresh ones
-            providers_to_refresh = ['openai', 'anthropic']
-            for model_id in list(available_models.keys()):
-                if available_models[model_id].get('provider') in providers_to_refresh:
-                    del available_models[model_id]
-            
-            # Add fetched models
-            available_models.update(dynamic_models)
-            
-            # Update global config temporarily (don't save yet)
-            CONFIG["available_models"] = available_models
-            
-        except Exception as e:
-            print(f"{self.theme['error']}Failed to fetch models: {e}{self.theme['reset']}")
-            print(f"{self.theme['muted']}Using cached models...{self.theme['reset']}")
-            available_models = CONFIG["available_models"]
+        # Fetch latest models using helper method
+        available_models = self._fetch_and_update_models()
         
         self.clear_screen()
         print("=" * self.width)
@@ -1788,47 +1819,28 @@ class ConsoleUI:
                 key=lambda x: (-x[1].get('created', 0), x[1].get('display_name', x[0]))
             )
         
-        # Display models grouped by provider
+        # Display models grouped by provider using helper method
         model_list = []
-        for provider in ['openai', 'anthropic', 'ollama']:  # Preferred order
+        
+        # Show preferred providers first
+        for provider in ['openai', 'anthropic', 'ollama']:
             if provider in models_by_provider:
-                print(f"\n{self.theme['primary']}{provider.upper()}{self.theme['reset']}")
-                for model_id, info in models_by_provider[provider]:
-                    model_list.append(model_id)
-                    idx = len(model_list)
-                    marker = f"{self.theme['accent']}►{self.theme['reset']}" if model_id == self.selected_model else " "
-                    display_name = info.get("display_name", model_id)
-                    print(f"{marker} {idx:2d}. {display_name}")
+                self._display_provider_models(provider, models_by_provider[provider], model_list)
         
         # Show models from other providers
         for provider, models in models_by_provider.items():
             if provider not in ['openai', 'anthropic', 'ollama']:
-                print(f"\n{self.theme['primary']}{provider.upper()}{self.theme['reset']}")
-                for model_id, info in models:
-                    model_list.append(model_id)
-                    idx = len(model_list)
-                    marker = f"{self.theme['accent']}►{self.theme['reset']}" if model_id == self.selected_model else " "
-                    display_name = info.get("display_name", model_id)
-                    print(f"{marker} {idx:2d}. {display_name}")
+                self._display_provider_models(provider, models, model_list)
         
         print(f"\n{self.theme['muted']}Enter model number to select (r to refresh, Enter to cancel):{self.theme['reset']}")
         
         try:
             choice = input("> ").strip()
             if choice.lower() == 'r':
-                # Force refresh models
+                # Force refresh models using helper method
                 print(f"{self.theme['muted']}Refreshing models from APIs...{self.theme['reset']}")
                 try:
-                    all_models = asyncio.run(model_manager.get_all_models(force_refresh=True))
-                    dynamic_models = model_manager.format_models_for_config(all_models)
-                    
-                    # Update and save config
-                    for model_id in list(CONFIG["available_models"].keys()):
-                        if CONFIG["available_models"][model_id].get('provider') in providers_to_refresh:
-                            del CONFIG["available_models"][model_id]
-                    
-                    CONFIG["available_models"].update(dynamic_models)
-                    save_config(CONFIG)
+                    self._fetch_and_update_models(force_refresh=True)
                     print(f"{self.theme['success']}Models refreshed successfully!{self.theme['reset']}")
                 except Exception as e:
                     print(f"{self.theme['error']}Failed to refresh models: {e}{self.theme['reset']}")
@@ -1838,7 +1850,6 @@ class ConsoleUI:
             elif choice and choice.isdigit():
                 idx = int(choice) - 1
                 if 0 <= idx < len(model_list):
-                    old_model = self.selected_model
                     self.selected_model = model_list[idx]
                     update_last_used_model(self.selected_model)
                     

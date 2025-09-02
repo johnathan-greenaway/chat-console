@@ -49,7 +49,6 @@ class OpenAIClient(BaseModelClient):
         """Fetch available models from OpenAI API"""
         try:
             models_response = await self.client.models.list()
-            models = []
             
             # Filter to only include relevant chat models
             relevant_models = []
