@@ -45,6 +45,82 @@ class OpenAIClient(BaseModelClient):
         
         return styles.get(style, "")
     
+    async def list_models(self) -> List[Dict[str, Any]]:
+        """Fetch available models from OpenAI API"""
+        try:
+            models_response = await self.client.models.list()
+            
+            # Filter to only include relevant chat models
+            relevant_models = []
+            for model in models_response.data:
+                model_id = model.id
+                
+                # Include GPT models and reasoning models
+                if any(prefix in model_id.lower() for prefix in [
+                    'gpt-3.5', 'gpt-4', 'o1', 'o3', 'o4',
+                    # Add other model families as they become available
+                ]):
+                    relevant_models.append({
+                        'id': model_id,
+                        'name': self._generate_display_name(model_id),
+                        'created': model.created,
+                        'owned_by': model.owned_by
+                    })
+            
+            # Sort by creation date (newest first) and then by name
+            relevant_models.sort(key=lambda x: (-x['created'], x['name']))
+            
+            return relevant_models
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch OpenAI models: {e}")
+            # Return fallback list
+            return self._get_fallback_models()
+    
+    def _generate_display_name(self, model_id: str) -> str:
+        """Generate a user-friendly display name from model ID"""
+        # Custom mappings for known models
+        display_names = {
+            'gpt-3.5-turbo': 'GPT-3.5 Turbo',
+            'gpt-3.5-turbo-16k': 'GPT-3.5 Turbo (16k)',
+            'gpt-4': 'GPT-4',
+            'gpt-4-32k': 'GPT-4 (32k)',
+            'gpt-4-turbo': 'GPT-4 Turbo',
+            'gpt-4-turbo-preview': 'GPT-4 Turbo Preview',
+            'gpt-4o': 'GPT-4o',
+            'gpt-4o-mini': 'GPT-4o Mini',
+            'o1-preview': 'o1 Preview (Reasoning)',
+            'o1-mini': 'o1 Mini (Reasoning)',
+            'o1': 'o1 (Reasoning)',
+            'o3': 'o3 (Reasoning)',
+            'o3-mini': 'o3 Mini (Reasoning)',
+            'o4-mini': 'o4 Mini (Reasoning)',
+        }
+        
+        if model_id in display_names:
+            return display_names[model_id]
+        
+        # Generate display name from ID
+        name = model_id.replace('-', ' ').title()
+        if any(p in model_id.lower() for p in ['o1', 'o3', 'o4']):
+            name += ' (Reasoning)'
+        return name
+    
+    def _get_fallback_models(self) -> List[Dict[str, Any]]:
+        """Return fallback models when API fetch fails"""
+        fallback_ids = [
+            'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo',
+            'o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini'
+        ]
+        return [
+            {
+                'id': model_id,
+                'name': self._generate_display_name(model_id),
+                'created': 0,
+                'owned_by': 'openai'
+            } for model_id in fallback_ids
+        ]
+    
     async def generate_completion(self, messages: List[Dict[str, str]], 
                            model: str, 
                            style: Optional[str] = None, 
