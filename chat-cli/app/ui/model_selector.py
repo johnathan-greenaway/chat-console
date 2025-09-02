@@ -151,7 +151,7 @@ class ModelSelector(Container):
                     initial_options.append((model_info["display_name"], model_id))
             
             # Ensure we have at least the custom option
-            if not initial_options or self.selected_model not in [opt[1] for opt in initial_options]:
+            if not initial_options or self.selected_model not in {opt[1] for opt in initial_options}:
                 initial_options.append(("Custom Model...", "custom"))
                 is_custom = True
                 initial_value = "custom"
@@ -187,7 +187,7 @@ class ModelSelector(Container):
             model_select.set_options(model_options)
             
             # Handle model selection
-            if self.selected_model in [opt[1] for opt in model_options]:
+            if self.selected_model in {opt[1] for opt in model_options}:
                 model_select.value = self.selected_model
                 model_select.remove_class("hide")
                 self.query_one("#custom-model-input").remove_class("show")
@@ -409,7 +409,7 @@ class ModelSelector(Container):
         # Update the UI based on whether this is a known model or custom
         # Check if the original ID is in the available options
         model_select = self.query_one("#model-select", Select)
-        available_options = [opt[1] for opt in model_select.options]
+        available_options = {opt[1] for opt in model_select.options}
         
         if original_id in available_options:
             # Use the original ID for the select widget
