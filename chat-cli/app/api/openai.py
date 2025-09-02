@@ -102,23 +102,23 @@ class OpenAIClient(BaseModelClient):
         
         # Generate display name from ID
         name = model_id.replace('-', ' ').title()
-        if 'o1' in model_id.lower() or 'o3' in model_id.lower() or 'o4' in model_id.lower():
+        if any(p in model_id.lower() for p in ['o1', 'o3', 'o4']):
             name += ' (Reasoning)'
         return name
     
     def _get_fallback_models(self) -> List[Dict[str, Any]]:
         """Return fallback models when API fetch fails"""
+        fallback_ids = [
+            'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo',
+            'o1', 'o1-mini', 'o3', 'o3-mini', 'o4-mini'
+        ]
         return [
-            {'id': 'gpt-4o', 'name': 'GPT-4o', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'gpt-4o-mini', 'name': 'GPT-4o Mini', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'gpt-4-turbo', 'name': 'GPT-4 Turbo', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'gpt-4', 'name': 'GPT-4', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'gpt-3.5-turbo', 'name': 'GPT-3.5 Turbo', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'o1', 'name': 'o1 (Reasoning)', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'o1-mini', 'name': 'o1 Mini (Reasoning)', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'o3', 'name': 'o3 (Reasoning)', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'o3-mini', 'name': 'o3 Mini (Reasoning)', 'created': 0, 'owned_by': 'openai'},
-            {'id': 'o4-mini', 'name': 'o4 Mini (Reasoning)', 'created': 0, 'owned_by': 'openai'},
+            {
+                'id': model_id,
+                'name': self._generate_display_name(model_id),
+                'created': 0,
+                'owned_by': 'openai'
+            } for model_id in fallback_ids
         ]
     
     async def generate_completion(self, messages: List[Dict[str, str]], 

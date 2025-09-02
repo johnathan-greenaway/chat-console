@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 import logging
 
-from .config import CONFIG_PATH, AVAILABLE_PROVIDERS
+from .config import AVAILABLE_PROVIDERS
 from .api.openai import OpenAIClient
 from .api.anthropic import AnthropicClient
 
@@ -40,7 +40,7 @@ class ModelManager:
                 data = json.load(f)
                 self._models_cache = data.get('models', {})
                 self._cache_timestamps = data.get('timestamps', {})
-        except Exception as e:
+        except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Failed to load models cache: {e}")
             
     def _save_cache_to_disk(self):
@@ -180,14 +180,17 @@ class ModelManager:
         """Estimate max tokens for a model"""
         # These are rough estimates based on known model capabilities
         if provider == 'openai':
-            if '32k' in model_id:
+            # Check most specific patterns first
+            if any(x in model_id for x in ['o1', 'o3', 'o4']):
+                return 128000  # Reasoning models have high context
+            elif 'gpt-4o' in model_id or 'gpt-4-turbo' in model_id:
+                return 128000  # GPT-4o and GPT-4 Turbo have 128k context
+            elif '32k' in model_id:
                 return 32768
             elif '16k' in model_id:
                 return 16384  
             elif 'gpt-4' in model_id:
-                return 8192
-            elif any(x in model_id for x in ['o1', 'o3', 'o4']):
-                return 128000  # Reasoning models have high context
+                return 8192  # Base GPT-4
             else:
                 return 4096  # Default for GPT-3.5 and others
         elif provider == 'anthropic':

@@ -1740,8 +1740,6 @@ class ConsoleUI:
         Returns:
             dict: Available models dictionary
         """
-        import asyncio
-        
         providers_to_refresh = ['openai', 'anthropic']
         
         try:
@@ -1790,77 +1788,84 @@ class ConsoleUI:
     
     def _select_model(self):
         """Enhanced model selection submenu with dynamic model fetching"""
-        self.clear_screen()
-        print("=" * self.width)
-        print("MODEL SELECTION".center(self.width))
-        print("=" * self.width)
         
-        print(f"{self.theme['muted']}Fetching latest models...{self.theme['reset']}")
-        
-        # Fetch latest models using helper method
-        available_models = self._fetch_and_update_models()
-        
-        self.clear_screen()
-        print("=" * self.width)
-        print("MODEL SELECTION".center(self.width))
-        print("=" * self.width)
-        
-        # Group models by provider
-        models_by_provider = {}
-        for model_id, info in available_models.items():
-            provider = info.get('provider', 'unknown')
-            if provider not in models_by_provider:
-                models_by_provider[provider] = []
-            models_by_provider[provider].append((model_id, info))
-        
-        # Sort models within each provider by creation date and name
-        for provider in models_by_provider:
-            models_by_provider[provider].sort(
-                key=lambda x: (-x[1].get('created', 0), x[1].get('display_name', x[0]))
-            )
-        
-        # Display models grouped by provider using helper method
-        model_list = []
-        
-        # Show preferred providers first
-        for provider in ['openai', 'anthropic', 'ollama']:
-            if provider in models_by_provider:
-                self._display_provider_models(provider, models_by_provider[provider], model_list)
-        
-        # Show models from other providers
-        for provider, models in models_by_provider.items():
-            if provider not in ['openai', 'anthropic', 'ollama']:
-                self._display_provider_models(provider, models, model_list)
-        
-        print(f"\n{self.theme['muted']}Enter model number to select (r to refresh, Enter to cancel):{self.theme['reset']}")
-        
-        try:
-            choice = input("> ").strip()
-            if choice.lower() == 'r':
-                # Force refresh models using helper method
-                print(f"{self.theme['muted']}Refreshing models from APIs...{self.theme['reset']}")
-                try:
-                    self._fetch_and_update_models(force_refresh=True)
-                    print(f"{self.theme['success']}Models refreshed successfully!{self.theme['reset']}")
-                except Exception as e:
-                    print(f"{self.theme['error']}Failed to refresh models: {e}{self.theme['reset']}")
-                input("Press Enter to continue...")
-                return self._select_model()  # Restart model selection
-                
-            elif choice and choice.isdigit():
-                idx = int(choice) - 1
-                if 0 <= idx < len(model_list):
-                    self.selected_model = model_list[idx]
-                    update_last_used_model(self.selected_model)
-                    
-                    # Save updated config
-                    save_config(CONFIG)
-                    
-                    display_name = CONFIG["available_models"][self.selected_model]["display_name"]
-                    print(f"{self.theme['success']}Model changed to: {display_name}{self.theme['reset']}")
+        while True:  # Use loop instead of recursion
+            self.clear_screen()
+            print("=" * self.width)
+            print("MODEL SELECTION".center(self.width))
+            print("=" * self.width)
+            
+            print(f"{self.theme['muted']}Fetching latest models...{self.theme['reset']}")
+            
+            # Fetch latest models using helper method
+            available_models = self._fetch_and_update_models()
+            
+            self.clear_screen()
+            print("=" * self.width)
+            print("MODEL SELECTION".center(self.width))
+            print("=" * self.width)
+            
+            # Group models by provider
+            models_by_provider = {}
+            for model_id, info in available_models.items():
+                provider = info.get('provider', 'unknown')
+                if provider not in models_by_provider:
+                    models_by_provider[provider] = []
+                models_by_provider[provider].append((model_id, info))
+            
+            # Sort models within each provider by creation date and name
+            for provider in models_by_provider:
+                models_by_provider[provider].sort(
+                    key=lambda x: (-x[1].get('created', 0), x[1].get('display_name', x[0]))
+                )
+            
+            # Display models grouped by provider using helper method
+            model_list = []
+            
+            # Show preferred providers first
+            for provider in ['openai', 'anthropic', 'ollama']:
+                if provider in models_by_provider:
+                    self._display_provider_models(provider, models_by_provider[provider], model_list)
+            
+            # Show models from other providers
+            for provider, models in models_by_provider.items():
+                if provider not in ['openai', 'anthropic', 'ollama']:
+                    self._display_provider_models(provider, models, model_list)
+            
+            print(f"\n{self.theme['muted']}Enter model number to select (r to refresh, Enter to cancel):{self.theme['reset']}")
+            
+            try:
+                choice = input("> ").strip()
+                if choice.lower() == 'r':
+                    # Force refresh models using helper method
+                    print(f"{self.theme['muted']}Refreshing models from APIs...{self.theme['reset']}")
+                    try:
+                        self._fetch_and_update_models(force_refresh=True)
+                        print(f"{self.theme['success']}Models refreshed successfully!{self.theme['reset']}")
+                    except Exception as e:
+                        print(f"{self.theme['error']}Failed to refresh models: {e}{self.theme['reset']}")
                     input("Press Enter to continue...")
-        except (ValueError, KeyboardInterrupt):
-            pass
+                    continue  # Loop back to show refreshed models
+                
+                elif choice and choice.isdigit():
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(model_list):
+                        self.selected_model = model_list[idx]
+                        update_last_used_model(self.selected_model)
+                        
+                        # Save updated config
+                        save_config(CONFIG)
+                        
+                        display_name = CONFIG["available_models"][self.selected_model]["display_name"]
+                        print(f"{self.theme['success']}Model changed to: {display_name}{self.theme['reset']}")
+                        input("Press Enter to continue...")
+                        break  # Exit the loop after successful selection
+                else:
+                    # User pressed Enter or invalid option - exit
+                    break
+                    
+            except (ValueError, KeyboardInterrupt):
+                break  # Exit on error or interrupt
     
     def _select_style(self):
         """Style selection submenu"""
