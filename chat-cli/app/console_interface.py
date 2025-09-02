@@ -24,13 +24,13 @@ from .config import CONFIG, save_config, update_last_used_model
 from .utils import resolve_model_id, generate_conversation_title
 from .console_utils import console_streaming_response, apply_style_prefix
 from .api.base import BaseModelClient
+from .model_manager import model_manager
 
 class ConsoleUI:
     """Pure console UI following Rams design principles with Gemini-inspired enhancements"""
     
     def __init__(self):
-        self.width = min(shutil.get_terminal_size().columns, 120)
-        self.height = shutil.get_terminal_size().lines
+        self._update_terminal_size()
         self.db = ChatDatabase()
         self.current_conversation: Optional[Conversation] = None
         self.messages: List[Message] = []
@@ -72,6 +72,10 @@ class ConsoleUI:
         
         # Suppress verbose logging for console mode
         self._setup_console_logging()
+        
+        # Resize handling
+        self._resize_flag = False
+        self._setup_resize_handler()
     
     def _load_theme(self) -> Dict[str, str]:
         """Load color theme configuration"""
@@ -100,6 +104,23 @@ class ConsoleUI:
                 'primary', 'secondary', 'accent', 'success', 'warning', 
                 'error', 'muted', 'text', 'reset', 'bold', 'dim'
             ]}
+    
+    def _update_terminal_size(self):
+        """Update terminal dimensions with bounds checking"""
+        size = shutil.get_terminal_size()
+        # Set reasonable bounds - minimum 40 columns, 10 lines
+        self.width = min(max(size.columns, 40), 200)  # Cap at 200 for readability
+        self.height = max(size.lines, 10)
+    
+    def _setup_resize_handler(self):
+        """Setup terminal resize signal handler"""
+        if hasattr(signal, 'SIGWINCH'):
+            signal.signal(signal.SIGWINCH, self._handle_resize)
+    
+    def _handle_resize(self, signum=None, frame=None):
+        """Handle terminal resize signal"""
+        self._resize_flag = True
+        self._update_terminal_size()
     
     def _setup_console_logging(self):
         """Completely disable all logging and debug output"""
@@ -354,7 +375,13 @@ class ConsoleUI:
         
         # Top border with title and model info
         title = f" {self.theme['bold']}Chat Console v{__version__}{self.theme['reset']} "
-        model_info = f" {self.theme['primary']}Model: {self.selected_model}{self.theme['reset']} "
+        
+        # Truncate model name if needed for narrow terminals
+        max_model_len = max(10, self.width - 40)  # Reserve space for title and scroll
+        model_display = self.selected_model
+        if len(model_display) > max_model_len:
+            model_display = model_display[:max_model_len-3] + "..."
+        model_info = f" {self.theme['primary']}Model: {model_display}{self.theme['reset']} "
         
         # Add scroll indicator if in scroll mode
         if self.scroll_mode or self.scroll_offset > 0:
@@ -364,7 +391,7 @@ class ConsoleUI:
         
         # Calculate spacing (account for color codes)
         clean_title = f" Chat Console v{__version__} "
-        clean_model = f" Model: {self.selected_model} "
+        clean_model = f" Model: {model_display} "
         clean_scroll = " [SCROLL MODE] " if (self.scroll_mode or self.scroll_offset > 0) else ""
         used_space = len(clean_title) + len(clean_model) + len(clean_scroll)
         remaining = self.width - used_space - 2
@@ -373,8 +400,11 @@ class ConsoleUI:
         header_line = chars['top_left'] + title + spacing + scroll_info + model_info + chars['top_right']
         lines.append(header_line)
         
-        # Conversation title with color
+        # Conversation title with color and truncation for narrow terminals
         conv_title = self.current_conversation.title if self.current_conversation else "New Conversation"
+        max_title_len = max(20, self.width - 4)
+        if len(conv_title) > max_title_len:
+            conv_title = conv_title[:max_title_len-3] + "..."
         colored_title = f" {self.theme['secondary']}{conv_title}{self.theme['reset']} "
         title_line = chars['vertical'] + colored_title.ljust(self.width - 2 + len(self.theme['secondary']) + len(self.theme['reset'])) + chars['vertical']
         lines.append(title_line)
@@ -388,28 +418,57 @@ class ConsoleUI:
         """Draw the enhanced footer with colorized controls"""
         chars = self.get_border_chars()
         
-        # Show different controls based on mode
+        # Show different controls based on mode and terminal width
         if self.scroll_mode or self.scroll_offset > 0:
-            # Scroll mode controls
-            controls = (
-                f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] Line ↓/↑  "
-                f"[{self.theme['accent']}Ctrl+U/D{self.theme['muted']}] Page ↑/↓  "
-                f"[{self.theme['accent']}Ctrl+G{self.theme['muted']}] Top  "
-                f"[{self.theme['accent']}Ctrl+E{self.theme['muted']}] End  "
-                f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
-            )
-            clean_controls = "[j/i] Line ↓/↑  [Ctrl+U/D] Page ↑/↓  [Ctrl+G] Top  [Ctrl+E] End  [Esc] Exit"
+            # Scroll mode controls - adapt to terminal width
+            if self.width >= 80:
+                controls = (
+                    f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] Line ↓/↑  "
+                    f"[{self.theme['accent']}Ctrl+U/D{self.theme['muted']}] Page ↑/↓  "
+                    f"[{self.theme['accent']}Ctrl+G{self.theme['muted']}] Top  "
+                    f"[{self.theme['accent']}Ctrl+E{self.theme['muted']}] End  "
+                    f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
+                )
+                clean_controls = "[j/i] Line ↓/↑  [Ctrl+U/D] Page ↑/↓  [Ctrl+G] Top  [Ctrl+E] End  [Esc] Exit"
+            elif self.width >= 60:
+                controls = (
+                    f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] ↓/↑  "
+                    f"[{self.theme['accent']}U/D{self.theme['muted']}] Page  "
+                    f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
+                )
+                clean_controls = "[j/i] ↓/↑  [U/D] Page  [Esc] Exit"
+            else:
+                controls = (
+                    f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] ↓/↑  "
+                    f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
+                )
+                clean_controls = "[j/i] ↓/↑  [Esc] Exit"
         else:
-            # Normal controls
-            controls = (
-                f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
-                f"[{self.theme['accent']}Ctrl+B{self.theme['muted']}] Scroll  "
-                f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
-                f"[{self.theme['accent']}n{self.theme['muted']}] New  "
-                f"[{self.theme['accent']}h{self.theme['muted']}] History  "
-                f"[{self.theme['accent']}s{self.theme['muted']}] Settings{self.theme['reset']}"
-            )
-            clean_controls = "[Tab] Menu  [Ctrl+B] Scroll  [q] Quit  [n] New  [h] History  [s] Settings"
+            # Normal controls - adapt to terminal width
+            if self.width >= 80:
+                controls = (
+                    f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
+                    f"[{self.theme['accent']}Ctrl+B{self.theme['muted']}] Scroll  "
+                    f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
+                    f"[{self.theme['accent']}n{self.theme['muted']}] New  "
+                    f"[{self.theme['accent']}h{self.theme['muted']}] History  "
+                    f"[{self.theme['accent']}s{self.theme['muted']}] Settings{self.theme['reset']}"
+                )
+                clean_controls = "[Tab] Menu  [Ctrl+B] Scroll  [q] Quit  [n] New  [h] History  [s] Settings"
+            elif self.width >= 60:
+                controls = (
+                    f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
+                    f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
+                    f"[{self.theme['accent']}n{self.theme['muted']}] New  "
+                    f"[{self.theme['accent']}h{self.theme['muted']}] History{self.theme['reset']}"
+                )
+                clean_controls = "[Tab] Menu  [q] Quit  [n] New  [h] History"
+            else:
+                controls = (
+                    f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
+                    f"[{self.theme['accent']}q{self.theme['muted']}] Quit{self.theme['reset']}"
+                )
+                clean_controls = "[Tab] Menu  [q] Quit"
         
         # Calculate clean length for padding
         color_padding = len(controls) - len(clean_controls)
@@ -711,6 +770,12 @@ class ConsoleUI:
     
     def draw_screen(self, current_input: str = "", input_prompt: str = "Type your message", show_welcome: bool = False, force_redraw: bool = False):
         """Draw the complete enhanced screen with smart updates"""
+        
+        # Check for terminal resize
+        if self._resize_flag:
+            self._resize_flag = False
+            self._update_terminal_size()
+            force_redraw = True
         
         # Show welcome message on first run
         if show_welcome:
@@ -1653,7 +1718,7 @@ class ConsoleUI:
                 
                 if choice == "1":
                     # Model selection
-                    self._select_model()
+                    await self._select_model()
                 elif choice == "2":
                     # Style selection
                     self._select_style()
@@ -1669,34 +1734,166 @@ class ConsoleUI:
             except (ValueError, KeyboardInterrupt):
                 break
     
-    def _select_model(self):
-        """Model selection submenu"""
-        self.clear_screen()
-        print("=" * self.width)
-        print("MODEL SELECTION".center(self.width))
-        print("=" * self.width)
+    def _process_fetched_models(self, dynamic_models, force_refresh=False):
+        """Process fetched models and update configuration
         
-        models = list(CONFIG["available_models"].keys())
-        for i, model in enumerate(models):
-            marker = "►" if model == self.selected_model else " "
-            display_name = CONFIG["available_models"][model]["display_name"]
-            provider = CONFIG["available_models"][model]["provider"]
-            print(f"{marker} {i+1:2d}. {display_name} ({provider})")
+        Args:
+            dynamic_models: Formatted models for config
+            force_refresh: Whether to save config immediately
+            
+        Returns:
+            dict: Available models dictionary
+        """
+        providers_to_refresh = ['openai', 'anthropic']
         
-        print("\nEnter model number to select (or press Enter to cancel):")
+        # Merge with existing static models (like Ollama)
+        available_models = CONFIG["available_models"].copy()
         
+        # Remove old dynamic models and add fresh ones
+        for model_id in list(available_models.keys()):
+            if available_models[model_id].get('provider') in providers_to_refresh:
+                del available_models[model_id]
+        
+        # Add fetched models
+        available_models.update(dynamic_models)
+        
+        # Update global config
+        CONFIG["available_models"] = available_models
+        
+        if force_refresh:
+            save_config(CONFIG)
+        
+        return available_models
+    
+    async def _fetch_and_update_models_async(self, force_refresh=False):
+        """Async version - Fetch and update models from APIs
+        
+        Returns:
+            dict: Available models dictionary
+        """
         try:
-            choice = input("> ").strip()
-            if choice and choice.isdigit():
-                idx = int(choice) - 1
-                if 0 <= idx < len(models):
-                    old_model = self.selected_model
-                    self.selected_model = models[idx]
-                    update_last_used_model(self.selected_model)
-                    print(f"Model changed from {old_model} to {self.selected_model}")
+            all_models = await model_manager.get_all_models(force_refresh)
+            dynamic_models = model_manager.format_models_for_config(all_models)
+            return self._process_fetched_models(dynamic_models, force_refresh)
+            
+        except Exception as e:
+            print(f"{self.theme['error']}Failed to fetch models: {e}{self.theme['reset']}")
+            print(f"{self.theme['muted']}Using cached models...{self.theme['reset']}")
+            return CONFIG["available_models"]
+    
+    def _fetch_and_update_models(self, force_refresh=False):
+        """Sync wrapper - Fetch and update models from APIs
+        
+        Returns:
+            dict: Available models dictionary
+        """
+        try:
+            # Use asyncio.run for synchronous contexts
+            all_models = asyncio.run(model_manager.get_all_models(force_refresh))
+            dynamic_models = model_manager.format_models_for_config(all_models)
+            return self._process_fetched_models(dynamic_models, force_refresh)
+            
+        except Exception as e:
+            print(f"{self.theme['error']}Failed to fetch models: {e}{self.theme['reset']}")
+            print(f"{self.theme['muted']}Using cached models...{self.theme['reset']}")
+            return CONFIG["available_models"]
+    
+    def _display_provider_models(self, provider, models, model_list):
+        """Display models for a specific provider
+        
+        Args:
+            provider: Provider name
+            models: List of (model_id, info) tuples
+            model_list: List to append model IDs to
+        """
+        print(f"\n{self.theme['primary']}{provider.upper()}{self.theme['reset']}")
+        for model_id, info in models:
+            model_list.append(model_id)
+            idx = len(model_list)
+            marker = f"{self.theme['accent']}►{self.theme['reset']}" if model_id == self.selected_model else " "
+            display_name = info.get("display_name", model_id)
+            print(f"{marker} {idx:2d}. {display_name}")
+    
+    async def _select_model(self):
+        """Enhanced model selection submenu with dynamic model fetching"""
+        
+        while True:  # Use loop instead of recursion
+            self.clear_screen()
+            print("=" * self.width)
+            print("MODEL SELECTION".center(self.width))
+            print("=" * self.width)
+            
+            print(f"{self.theme['muted']}Fetching latest models...{self.theme['reset']}")
+            
+            # Fetch latest models using async helper method
+            available_models = await self._fetch_and_update_models_async()
+            
+            self.clear_screen()
+            print("=" * self.width)
+            print("MODEL SELECTION".center(self.width))
+            print("=" * self.width)
+            
+            # Group models by provider
+            models_by_provider = {}
+            for model_id, info in available_models.items():
+                provider = info.get('provider', 'unknown')
+                if provider not in models_by_provider:
+                    models_by_provider[provider] = []
+                models_by_provider[provider].append((model_id, info))
+            
+            # Sort models within each provider by creation date and name
+            for provider in models_by_provider:
+                models_by_provider[provider].sort(
+                    key=lambda x: (-x[1].get('created', 0), x[1].get('display_name', x[0]))
+                )
+            
+            # Display models grouped by provider using helper method
+            model_list = []
+            
+            # Show preferred providers first
+            for provider in ['openai', 'anthropic', 'ollama']:
+                if provider in models_by_provider:
+                    self._display_provider_models(provider, models_by_provider[provider], model_list)
+            
+            # Show models from other providers
+            for provider, models in models_by_provider.items():
+                if provider not in ['openai', 'anthropic', 'ollama']:
+                    self._display_provider_models(provider, models, model_list)
+            
+            print(f"\n{self.theme['muted']}Enter model number to select (r to refresh, Enter to cancel):{self.theme['reset']}")
+            
+            try:
+                choice = input("> ").strip()
+                if choice.lower() == 'r':
+                    # Force refresh models using async helper method
+                    print(f"{self.theme['muted']}Refreshing models from APIs...{self.theme['reset']}")
+                    try:
+                        await self._fetch_and_update_models_async(force_refresh=True)
+                        print(f"{self.theme['success']}Models refreshed successfully!{self.theme['reset']}")
+                    except Exception as e:
+                        print(f"{self.theme['error']}Failed to refresh models: {e}{self.theme['reset']}")
                     input("Press Enter to continue...")
-        except (ValueError, KeyboardInterrupt):
-            pass
+                    continue  # Loop back to show refreshed models
+                
+                elif choice and choice.isdigit():
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(model_list):
+                        self.selected_model = model_list[idx]
+                        update_last_used_model(self.selected_model)
+                        
+                        # Save updated config
+                        save_config(CONFIG)
+                        
+                        display_name = CONFIG["available_models"][self.selected_model]["display_name"]
+                        print(f"{self.theme['success']}Model changed to: {display_name}{self.theme['reset']}")
+                        input("Press Enter to continue...")
+                        break  # Exit the loop after successful selection
+                else:
+                    # User pressed Enter or invalid option - exit
+                    break
+                    
+            except (ValueError, KeyboardInterrupt):
+                break  # Exit on error or interrupt
     
     def _select_style(self):
         """Style selection submenu"""
@@ -2854,6 +3051,12 @@ class ConsoleUI:
         
         while self.running:
             try:
+                # Check for resize before getting input
+                if self._resize_flag:
+                    self._resize_flag = False
+                    self._update_terminal_size()
+                    self.draw_screen("")
+                
                 user_input = self.get_input("Type your message")
                 
                 if not user_input:
