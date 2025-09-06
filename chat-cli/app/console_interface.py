@@ -3302,10 +3302,7 @@ class ConsoleUI:
                         await self.show_settings()
                         continue
                     elif user_input.lower() == '/models':
-                        await self.show_model_browser()
-                        if self._exit_to_chat:
-                            self._exit_to_chat = False
-                            self.draw_screen("", f"Ready to chat with {self.selected_model}", force_redraw=True)
+                        await self._select_model()
                         continue
                     elif user_input.lower() == '/history':
                         self.show_history()

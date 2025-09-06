@@ -77,6 +77,30 @@ class CustomOpenAIClient(BaseModelClient):
                         'owned_by': getattr(model, 'owned_by', self.provider_name)
                     })
             
+            # Add OpenAI-compatible models that work via mapping but aren't in /models
+            if self.provider_name == "openai-compatible":
+                openai_compatible_models = [
+                    {
+                        'id': 'gpt-4o',
+                        'name': 'GPT-4o (OpenAI Compatible)',
+                        'created': 0,
+                        'owned_by': 'openai-compatible'
+                    },
+                    {
+                        'id': 'gpt-4',
+                        'name': 'GPT-4 (OpenAI Compatible)', 
+                        'created': 0,
+                        'owned_by': 'openai-compatible'
+                    },
+                    {
+                        'id': 'gpt-3.5-turbo',
+                        'name': 'GPT-3.5 Turbo (OpenAI Compatible)',
+                        'created': 0,
+                        'owned_by': 'openai-compatible'
+                    }
+                ]
+                models.extend(openai_compatible_models)
+            
             # Sort by name
             models.sort(key=lambda x: x['name'])
             
