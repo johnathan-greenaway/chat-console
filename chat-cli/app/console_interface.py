@@ -20,7 +20,8 @@ import shutil
 
 from .models import Message, Conversation
 from .database import ChatDatabase
-from .config import CONFIG, save_config, update_last_used_model
+from .config import CONFIG, save_config, update_last_used_model, check_provider_availability, OLLAMA_BASE_URL
+from .config import OPENAI_API_KEY, ANTHROPIC_API_KEY, CUSTOM_PROVIDERS
 from .utils import resolve_model_id, generate_conversation_title
 from .console_utils import console_streaming_response, apply_style_prefix
 from .api.base import BaseModelClient
@@ -1108,7 +1109,6 @@ class ConsoleUI:
             title_model = None
             
             # Import needed components
-            from .config import OPENAI_API_KEY, ANTHROPIC_API_KEY
             
             # Prioritize faster, cheaper models for title generation
             if OPENAI_API_KEY:
@@ -1723,7 +1723,7 @@ class ConsoleUI:
         input()
     
     async def show_settings(self):
-        """Show enhanced settings menu with style selection and persistence"""
+        """Show streamlined provider-first settings menu"""
         while True:
             self.clear_screen()
             print("=" * self.width)
@@ -1732,9 +1732,12 @@ class ConsoleUI:
             
             # Get current model display name with fallback
             try:
-                current_model_name = CONFIG['available_models'][self.selected_model]['display_name']
+                current_model_info = CONFIG['available_models'][self.selected_model]
+                current_model_name = current_model_info['display_name']
+                current_provider = current_model_info.get('provider', 'unknown')
             except KeyError:
                 current_model_name = f"{self.selected_model} (Ollama)"
+                current_provider = 'ollama'
             
             # Get current style name with fallback
             try:
@@ -1742,31 +1745,37 @@ class ConsoleUI:
             except KeyError:
                 current_style_name = self.selected_style
                 
+            print(f"Current Provider: {current_provider.title()}")
             print(f"Current Model: {current_model_name}")
             print(f"Current Style: {current_style_name}")
             print()
-            print("What would you like to change?")
-            print("1. Model")
-            print("2. Response Style")
-            print("3. Advanced Settings")
-            print("4. Save Settings")
+            print("Settings Menu:")
+            print("1. Select Provider & Model")
+            print("2. Configure API Keys")
+            print("3. Response Style")
+            print("4. Advanced Settings")
+            print("5. Save & Exit")
             print("0. Back to Chat")
             
             try:
                 choice = input("\n> ").strip()
                 
                 if choice == "1":
-                    # Model selection
-                    await self._select_model()
+                    # Provider and model selection in one flow
+                    await self._select_provider_and_model()
                 elif choice == "2":
+                    # API Key configuration
+                    await self._configure_api_keys()
+                elif choice == "3":
                     # Style selection
                     self._select_style()
-                elif choice == "3":
+                elif choice == "4":
                     # Advanced settings
                     await self._show_advanced_settings()
-                elif choice == "4":
+                elif choice == "5":
                     # Save settings
                     self._save_settings()
+                    break
                 elif choice == "0" or choice == "":
                     break
                     
@@ -1974,6 +1983,389 @@ class ConsoleUI:
         except Exception as e:
             print(f"Error saving settings: {e}")
         input("Press Enter to continue...")
+
+    async def _select_provider_and_model(self):
+        """Unified provider and model selection in one flow"""
+        while True:
+            self.clear_screen()
+            print("=" * self.width)
+            print("SELECT PROVIDER & MODEL".center(self.width))
+            print("=" * self.width)
+            
+            # Check available providers
+            available_providers = check_provider_availability()
+            providers = []
+            
+            if available_providers.get("openai"):
+                providers.append(("openai", "OpenAI (GPT Models)"))
+            if available_providers.get("anthropic"):
+                providers.append(("anthropic", "Anthropic (Claude Models)"))
+            if available_providers.get("ollama"):
+                providers.append(("ollama", "Ollama (Local Models)"))
+            
+            # Add custom providers
+            for provider_name, config in CUSTOM_PROVIDERS.items():
+                if config.get("api_key"):
+                    display_name = config.get("display_name", provider_name)
+                    providers.append((provider_name, f"{display_name} (Custom API)"))
+            
+            if not providers:
+                print("No providers available. Please configure API keys first.")
+                input("Press Enter to continue...")
+                return
+            
+            print("Available Providers:")
+            for i, (provider_id, display_name) in enumerate(providers, 1):
+                print(f"{i}. {display_name}")
+            print("0. Back to Settings")
+            
+            try:
+                choice = input("\n> ").strip()
+                if choice == "0" or choice == "":
+                    return
+                
+                choice_num = int(choice)
+                if 1 <= choice_num <= len(providers):
+                    provider_id, _ = providers[choice_num - 1]
+                    # Now show models for this provider
+                    if await self._select_model_for_provider(provider_id):
+                        return  # Exit if model was selected
+                else:
+                    print("Invalid choice. Please try again.")
+                    input("Press Enter to continue...")
+                    
+            except (ValueError, KeyboardInterrupt):
+                return
+
+    async def _select_model_for_provider(self, provider_id):
+        """Select a model from a specific provider"""
+        self.clear_screen()
+        print("=" * self.width)
+        print(f"MODELS FOR {provider_id.upper()}".center(self.width))
+        print("=" * self.width)
+        
+        print(f"{self.theme['muted']}Fetching latest models...{self.theme['reset']}")
+        
+        try:
+            # Fetch models for this specific provider
+            if provider_id == "ollama":
+                # Use existing Ollama logic
+                await self.show_model_browser()
+                return True
+            else:
+                # Fetch models from API providers
+                available_models = await self._fetch_and_update_models_async()
+                provider_models = [(model_id, info) for model_id, info in available_models.items() 
+                                 if info.get('provider') == provider_id]
+                
+                if not provider_models:
+                    print(f"No models available for {provider_id}")
+                    input("Press Enter to continue...")
+                    return False
+                
+                self.clear_screen()
+                print("=" * self.width)
+                print(f"MODELS FOR {provider_id.upper()} ({len(provider_models)} available)".center(self.width))
+                print("=" * self.width)
+                
+                for i, (model_id, info) in enumerate(provider_models, 1):
+                    display_name = info.get('display_name', model_id)
+                    print(f"{i}. {display_name}")
+                
+                print("0. Back to Provider Selection")
+                
+                choice = input("\n> ").strip()
+                if choice == "0" or choice == "":
+                    return False
+                
+                try:
+                    choice_num = int(choice)
+                    if 1 <= choice_num <= len(provider_models):
+                        model_id, _ = provider_models[choice_num - 1]
+                        self.selected_model = model_id
+                        print(f"Selected model: {model_id}")
+                        input("Press Enter to continue...")
+                        return True
+                    else:
+                        print("Invalid choice.")
+                        input("Press Enter to continue...")
+                        return False
+                except ValueError:
+                    print("Invalid input.")
+                    input("Press Enter to continue...")
+                    return False
+                    
+        except Exception as e:
+            print(f"Error fetching models: {e}")
+            input("Press Enter to continue...")
+            return False
+
+    async def _configure_api_keys(self):
+        """Configure API keys for different providers"""
+        while True:
+            self.clear_screen()
+            print("=" * self.width)
+            print("API KEY CONFIGURATION".center(self.width))
+            print("=" * self.width)
+            
+            print("Current API Key Status:")
+            print(f"  OpenAI: {'✓ Set' if OPENAI_API_KEY else '✗ Not Set'}")
+            print(f"  Anthropic: {'✓ Set' if ANTHROPIC_API_KEY else '✗ Not Set'}")
+            
+            # Show custom providers
+            for provider_name, config in CUSTOM_PROVIDERS.items():
+                display_name = config.get("display_name", provider_name)
+                api_key_set = bool(config.get("api_key"))
+                print(f"  {display_name}: {'✓ Set' if api_key_set else '✗ Not Set'}")
+            
+            print("\nConfiguration Options:")
+            print("1. Set OpenAI API Key")
+            print("2. Set Anthropic API Key") 
+            print("3. Configure Custom API Provider")
+            print("4. Set Ollama Base URL")
+            print("5. Test API Connections")
+            print("0. Back to Settings")
+            
+            try:
+                choice = input("\n> ").strip()
+                
+                if choice == "1":
+                    await self._set_openai_key()
+                elif choice == "2":
+                    await self._set_anthropic_key()
+                elif choice == "3":
+                    await self._configure_custom_provider()
+                elif choice == "4":
+                    await self._set_ollama_url()
+                elif choice == "5":
+                    await self._test_api_connections()
+                elif choice == "0" or choice == "":
+                    break
+                    
+            except (ValueError, KeyboardInterrupt):
+                break
+
+    async def _set_openai_key(self):
+        """Set OpenAI API key"""
+        global OPENAI_API_KEY
+        
+        self.clear_screen()
+        print("=" * self.width)
+        print("OPENAI API KEY".center(self.width))
+        print("=" * self.width)
+        
+        current_key = OPENAI_API_KEY
+        if current_key:
+            masked = current_key[:8] + "..." + current_key[-4:] if len(current_key) > 12 else "***"
+            print(f"Current key: {masked}")
+        else:
+            print("No API key currently set")
+        
+        print("\nEnter new API key (or press Enter to skip):")
+        new_key = input("> ").strip()
+        
+        if new_key:
+            # Update environment and config
+            import os
+            os.environ["OPENAI_API_KEY"] = new_key
+            CONFIG["openai_api_key"] = new_key
+            
+            # Update global variable
+            OPENAI_API_KEY = new_key
+            
+            print("✓ OpenAI API key updated!")
+        else:
+            print("No changes made.")
+        
+        input("Press Enter to continue...")
+
+    async def _set_anthropic_key(self):
+        """Set Anthropic API key"""
+        global ANTHROPIC_API_KEY
+        
+        self.clear_screen()
+        print("=" * self.width)
+        print("ANTHROPIC API KEY".center(self.width))
+        print("=" * self.width)
+        
+        current_key = ANTHROPIC_API_KEY
+        if current_key:
+            masked = current_key[:8] + "..." + current_key[-4:] if len(current_key) > 12 else "***"
+            print(f"Current key: {masked}")
+        else:
+            print("No API key currently set")
+        
+        print("\nEnter new API key (or press Enter to skip):")
+        new_key = input("> ").strip()
+        
+        if new_key:
+            # Update environment and config
+            import os
+            os.environ["ANTHROPIC_API_KEY"] = new_key
+            CONFIG["anthropic_api_key"] = new_key
+            
+            # Update global variable  
+            ANTHROPIC_API_KEY = new_key
+            
+            print("✓ Anthropic API key updated!")
+        else:
+            print("No changes made.")
+        
+        input("Press Enter to continue...")
+
+    async def _configure_custom_provider(self):
+        """Configure custom API provider"""
+        self.clear_screen()
+        print("=" * self.width)
+        print("CUSTOM API PROVIDER".center(self.width))
+        print("=" * self.width)
+        
+        # Get current custom provider info
+        custom_config = CUSTOM_PROVIDERS.get("openai-compatible", {})
+        current_url = custom_config.get("base_url", "")
+        current_key = custom_config.get("api_key", "")
+        current_name = custom_config.get("display_name", "Custom API")
+        
+        print("Current Configuration:")
+        print(f"  Name: {current_name}")
+        print(f"  URL: {current_url}")
+        print(f"  API Key: {'Set' if current_key else 'Not Set'}")
+        print()
+        
+        # Configure display name
+        print("Display Name (or press Enter to keep current):")
+        new_name = input(f"> [{current_name}] ").strip() or current_name
+        
+        # Configure base URL
+        print("Base URL (or press Enter to keep current):")
+        new_url = input(f"> [{current_url}] ").strip() or current_url
+        
+        # Configure API key
+        print("API Key (or press Enter to keep current):")
+        new_key = input("> ").strip() or current_key
+        
+        if new_url and new_key:
+            # Update custom provider config
+            CUSTOM_PROVIDERS["openai-compatible"] = {
+                "base_url": new_url,
+                "api_key": new_key,
+                "type": "openai_compatible", 
+                "display_name": new_name
+            }
+            
+            # Save to config
+            CONFIG["custom_api_enabled"] = True
+            CONFIG["custom_api_base_url"] = new_url
+            CONFIG["custom_api_key"] = new_key
+            CONFIG["custom_api_display_name"] = new_name
+            
+            # Update environment variables
+            import os
+            os.environ["CUSTOM_API_BASE_URL"] = new_url
+            os.environ["CUSTOM_API_KEY"] = new_key
+            
+            print("✓ Custom API provider configured!")
+        else:
+            print("❌ Both URL and API key are required.")
+        
+        input("Press Enter to continue...")
+
+    async def _set_ollama_url(self):
+        """Set Ollama base URL"""
+        global OLLAMA_BASE_URL
+        
+        self.clear_screen()
+        print("=" * self.width)
+        print("OLLAMA BASE URL".center(self.width))
+        print("=" * self.width)
+        
+        current_url = OLLAMA_BASE_URL
+        print(f"Current URL: {current_url}")
+        
+        print("\nEnter new URL (or press Enter to keep current):")
+        new_url = input(f"> [{current_url}] ").strip() or current_url
+        
+        if new_url != current_url:
+            # Update config
+            CONFIG["ollama_base_url"] = new_url
+            
+            # Update environment variable
+            import os
+            os.environ["OLLAMA_BASE_URL"] = new_url
+            
+            # Update global variable
+            OLLAMA_BASE_URL = new_url
+            
+            print("✓ Ollama URL updated!")
+        else:
+            print("No changes made.")
+        
+        input("Press Enter to continue...")
+
+    async def _test_api_connections(self):
+        """Test connections to all configured APIs"""
+        self.clear_screen()
+        print("=" * self.width)
+        print("API CONNECTION TESTS".center(self.width))
+        print("=" * self.width)
+        
+        # Test OpenAI
+        if OPENAI_API_KEY:
+            print("Testing OpenAI...")
+            try:
+                from .api.openai import OpenAIClient
+                client = await OpenAIClient.create()
+                models = await client.list_models()
+                print(f"✓ OpenAI: Connected ({len(models)} models)")
+            except Exception as e:
+                print(f"❌ OpenAI: Failed - {str(e)[:50]}")
+        else:
+            print("⚠ OpenAI: No API key set")
+        
+        # Test Anthropic
+        if ANTHROPIC_API_KEY:
+            print("Testing Anthropic...")
+            try:
+                from .api.anthropic import AnthropicClient
+                client = await AnthropicClient.create()
+                models = await client.list_models()
+                print(f"✓ Anthropic: Connected ({len(models)} models)")
+            except Exception as e:
+                print(f"❌ Anthropic: Failed - {str(e)[:50]}")
+        else:
+            print("⚠ Anthropic: No API key set")
+        
+        # Test custom providers
+        for provider_name, config in CUSTOM_PROVIDERS.items():
+            if config.get("api_key"):
+                display_name = config.get("display_name", provider_name)
+                print(f"Testing {display_name}...")
+                try:
+                    from .api.custom_openai import CustomOpenAIClient
+                    client = await CustomOpenAIClient.create(provider_name)
+                    models = await client.list_models()
+                    print(f"✓ {display_name}: Connected ({len(models)} models)")
+                except Exception as e:
+                    print(f"❌ {display_name}: Failed - {str(e)[:50]}")
+            else:
+                display_name = config.get("display_name", provider_name)
+                print(f"⚠ {display_name}: No API key set")
+        
+        # Test Ollama
+        print("Testing Ollama...")
+        try:
+            import requests
+            response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get("models", [])
+                print(f"✓ Ollama: Connected ({len(models)} models)")
+            else:
+                print(f"❌ Ollama: HTTP {response.status_code}")
+        except Exception as e:
+            print(f"❌ Ollama: Failed - {str(e)[:50]}")
+        
+        input("\nPress Enter to continue...")
     
     async def _show_advanced_settings(self):
         """Show advanced settings configuration panel"""
