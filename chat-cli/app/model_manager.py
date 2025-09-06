@@ -8,9 +8,10 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 import logging
 
-from .config import AVAILABLE_PROVIDERS
+from .config import AVAILABLE_PROVIDERS, get_custom_providers
 from .api.openai import OpenAIClient
 from .api.anthropic import AnthropicClient
+from .api.custom_openai import CustomOpenAIClient
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,45 @@ class ModelManager:
         # We'll return an empty list here and let the existing system handle it
         return []
     
+    async def get_custom_models(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Get models from custom OpenAI-compatible providers"""
+        provider = 'openai-compatible'
+        
+        # Check if custom providers are configured
+        custom_providers = get_custom_providers()
+        if not custom_providers or provider not in custom_providers:
+            logger.info("No custom providers configured")
+            return []
+        
+        # Check if the custom API is enabled
+        provider_config = custom_providers[provider]
+        if not provider_config.get('api_key'):
+            logger.info("Custom API key not configured")
+            return []
+        
+        # Check cache unless force refresh
+        if not force_refresh and self._is_cache_valid(provider):
+            logger.info(f"Using cached custom models (valid for {self.cache_duration/60:.0f} minutes)")
+            return self._models_cache.get(provider, [])
+        
+        try:
+            logger.info("Fetching models from custom API...")
+            client = await CustomOpenAIClient.create(provider)
+            models = await client.list_models()
+            
+            # Cache the results
+            self._models_cache[provider] = models
+            self._cache_timestamps[provider] = time.time()
+            self._save_cache_to_disk()
+            
+            logger.info(f"Fetched {len(models)} custom models from {provider_config.get('display_name', 'Custom API')}")
+            return models
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch custom models: {e}")
+            # Return cached models if available, otherwise empty list
+            return self._models_cache.get(provider, [])
+    
     async def get_all_models(self, force_refresh: bool = False) -> Dict[str, List[Dict[str, Any]]]:
         """Get models from all available providers"""
         self._load_cache_from_disk()
@@ -134,6 +174,11 @@ class ModelManager:
             ('openai', self.get_openai_models(force_refresh)),
             ('anthropic', self.get_anthropic_models(force_refresh))
         ]
+        
+        # Add custom providers if configured
+        custom_providers = get_custom_providers()
+        if custom_providers and 'openai-compatible' in custom_providers:
+            tasks.append(('openai-compatible', self.get_custom_models(force_refresh)))
         
         # Run concurrent fetches with timeout
         if tasks:
@@ -203,6 +248,22 @@ class ModelManager:
                 return 200000  # Claude 3.5 models have 200k context
             else:
                 return 100000  # Conservative default
+        elif provider == 'openai-compatible':
+            # Estimates for common custom/Groq models
+            if 'llama-3' in model_id_lower and '70b' in model_id_lower:
+                return 128000
+            elif 'llama' in model_id_lower:
+                return 32768
+            elif 'mixtral' in model_id_lower:
+                return 32768
+            elif 'qwen' in model_id_lower:
+                return 32768
+            elif 'deepseek' in model_id_lower:
+                return 64000
+            elif 'gemma' in model_id_lower:
+                return 8192
+            else:
+                return 8192  # Conservative default for custom models
         else:
             return 4096  # Default fallback
 

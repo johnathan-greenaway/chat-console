@@ -6,7 +6,7 @@ from textual.widgets import Select, Label, Input
 from textual.widget import Widget
 from textual.message import Message
 
-from ..config import CONFIG
+from ..config import CONFIG, CUSTOM_PROVIDERS, AVAILABLE_PROVIDERS
 from ..utils import resolve_model_id  # Import the resolve_model_id function
 from ..api.ollama import OllamaClient
 from .chat_interface import ChatInterface
@@ -117,8 +117,22 @@ class ModelSelector(Container):
         if self.selected_model in CONFIG["available_models"]:
             self.selected_provider = CONFIG["available_models"][self.selected_model]["provider"]
         else:
-            # Default to Ollama for unknown models since it's more flexible
-            self.selected_provider = "ollama"
+            # Check if this model belongs to a custom provider based on name patterns
+            found_provider = None
+            for provider_name in CUSTOM_PROVIDERS.keys():
+                if AVAILABLE_PROVIDERS.get(provider_name, False):
+                    # Check config models for this provider
+                    provider_models = [model_id for model_id, info in CONFIG["available_models"].items() 
+                                     if info.get("provider") == provider_name]
+                    if self.selected_model in provider_models:
+                        found_provider = provider_name
+                        break
+            
+            if found_provider:
+                self.selected_provider = found_provider
+            else:
+                # Default to Ollama for unknown models since it's more flexible
+                self.selected_provider = "ollama"
         
     def compose(self) -> ComposeResult:
         """Set up the two-step model selector"""
@@ -126,12 +140,19 @@ class ModelSelector(Container):
         with Container(id="provider-container"):
             yield Label("Provider:", id="provider-label")
             
-            # Provider options including Ollama
+            # Provider options including custom providers
             provider_options = [
                 ("OpenAI", "openai"),
                 ("Anthropic", "anthropic"), 
                 ("Ollama", "ollama")
             ]
+            
+            # Add custom providers that are available
+            for provider_name, provider_config in CUSTOM_PROVIDERS.items():
+                if AVAILABLE_PROVIDERS.get(provider_name, False):
+                    # Use the display name from config, or create one from the provider name
+                    display_name = provider_config.get("display_name", provider_name.replace("-", " ").title())
+                    provider_options.append((display_name, provider_name))
             
             yield Select(
                 provider_options,
@@ -287,7 +308,46 @@ class ModelSelector(Container):
             options.append(("Custom Model...", "custom"))
             return options
 
-        # For Anthropic and others, allow custom model
+        # Handle custom providers
+        if provider in CUSTOM_PROVIDERS:
+            try:
+                logger.info(f"Getting models for custom provider: {provider}")
+                
+                # Always try to fetch models from the custom provider's API for live updates
+                from ..api.custom_openai import CustomOpenAIClient
+                client = await CustomOpenAIClient.create(provider)
+                models = await client.list_models()
+                logger.info(f"Found {len(models)} models from {provider} API")
+                
+                # Use API models dynamically
+                options = []
+                for model in models:
+                    options.append((model["name"], model["id"]))
+                    
+                # If no models from API, fall back to config
+                if not options:
+                    logger.info(f"No models from API, using config-based models for {provider}")
+                    options = [
+                        (model_info["display_name"], model_id)
+                        for model_id, model_info in CONFIG["available_models"].items()
+                        if model_info["provider"] == provider
+                    ]
+                    
+            except Exception as e:
+                logger.error(f"Error getting {provider} models from API: {str(e)}")
+                # Fallback to config-based models for this provider
+                logger.info(f"Using config-based models for {provider}")
+                options = [
+                    (model_info["display_name"], model_id)
+                    for model_id, model_info in CONFIG["available_models"].items()
+                    if model_info["provider"] == provider
+                ]
+            
+            # Always allow custom model input for flexibility
+            options.append(("Custom Model...", "custom"))
+            return options
+
+        # For Anthropic and other standard providers, allow custom model
         options.append(("Custom Model...", "custom"))
         return options
         

@@ -17,6 +17,40 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
+# Custom provider configurations - load from config or environment
+def get_custom_providers():
+    """Get custom provider configuration from config or environment"""
+    # Try to load from saved config first
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                saved_config = json.load(f)
+                if saved_config.get("custom_api_enabled", True):
+                    return {
+                        "openai-compatible": {
+                            "base_url": saved_config.get("custom_api_base_url", 
+                                                        os.getenv("CUSTOM_API_BASE_URL", "https://api.example.com/v1")),
+                            "api_key": saved_config.get("custom_api_key", 
+                                                       os.getenv("CUSTOM_API_KEY", "")),
+                            "type": "openai_compatible",
+                            "display_name": saved_config.get("custom_api_display_name", "Custom API")
+                        }
+                    }
+        except:
+            pass
+    
+    # Fallback to environment variables
+    return {
+        "openai-compatible": {
+            "base_url": os.getenv("CUSTOM_API_BASE_URL", "https://api.example.com/v1"),
+            "api_key": os.getenv("CUSTOM_API_KEY", ""),
+            "type": "openai_compatible",
+            "display_name": "Custom API"
+        }
+    }
+
+CUSTOM_PROVIDERS = get_custom_providers()
+
 def check_provider_availability():
     """Check which providers are available"""
     providers = {
@@ -24,6 +58,13 @@ def check_provider_availability():
         "anthropic": bool(ANTHROPIC_API_KEY),
         "ollama": False
     }
+    
+    # Check custom providers
+    for provider_name, config in CUSTOM_PROVIDERS.items():
+        if config.get("api_key"):
+            providers[provider_name] = True
+        else:
+            providers[provider_name] = False
     
     # Check if Ollama is running at configured URL
     import requests
@@ -78,6 +119,57 @@ DEFAULT_CONFIG = {
             "provider": "openai",
             "max_tokens": 128000,
             "display_name": "o4-mini (Reasoning)"
+        },
+        # OpenAI-Compatible API models
+        "qwen/qwen3-32b": {
+            "provider": "openai-compatible",
+            "max_tokens": 131072,
+            "display_name": "Qwen 3 32B (Reasoning & Code)"
+        },
+        "qwen2.5-coder-32b-instruct": {
+            "provider": "openai-compatible",
+            "max_tokens": 32768,
+            "display_name": "Qwen 2.5 Coder 32B"
+        },
+        "qwen-2.5-coder-14b-instruct": {
+            "provider": "openai-compatible",
+            "max_tokens": 32768,
+            "display_name": "Qwen 2.5 Coder 14B"
+        },
+        "qwen-2.5-coder-7b-instruct": {
+            "provider": "openai-compatible",
+            "max_tokens": 32768,
+            "display_name": "Qwen 2.5 Coder 7B"
+        },
+        "llama-3.3-70b-versatile": {
+            "provider": "openai-compatible",
+            "max_tokens": 131072,
+            "display_name": "Llama 3.3 70B Versatile"
+        },
+        "llama-3.2-90b-vision-preview": {
+            "provider": "openai-compatible",
+            "max_tokens": 131072,
+            "display_name": "Llama 3.2 90B Vision"
+        },
+        "llama3-groq-70b-8192-tool-use-preview": {
+            "provider": "openai-compatible",
+            "max_tokens": 8192,
+            "display_name": "Llama 3 70B Tool Use"
+        },
+        "llama-3.1-8b-instant": {
+            "provider": "openai-compatible",
+            "max_tokens": 131072,
+            "display_name": "Llama 3.1 8B Instant"
+        },
+        "mixtral-8x7b-32768": {
+            "provider": "openai-compatible",
+            "max_tokens": 32768,
+            "display_name": "Mixtral 8x7B"
+        },
+        "deepseek-r1-lite-preview": {
+            "provider": "openai-compatible",
+            "max_tokens": 65536,
+            "display_name": "DeepSeek R1 Lite (Reasoning)"
         },
         # Use the corrected keys from anthropic.py
         "claude-3-opus-20240229": {
@@ -185,6 +277,24 @@ def load_config():
             config = json.load(f)
         # Merge with defaults to ensure all keys exist
         merged_config = DEFAULT_CONFIG.copy()
+        
+        # Special handling for available_models to merge rather than replace
+        if "available_models" in config:
+            # Start with default models
+            merged_models = DEFAULT_CONFIG["available_models"].copy()
+            
+            # Migrate old provider names to new ones
+            saved_models = config["available_models"].copy()
+            for model_id, model_info in saved_models.items():
+                if model_info.get("provider") == "uplink":
+                    # Migrate uplink to openai-compatible
+                    model_info["provider"] = "openai-compatible"
+                    saved_models[model_id] = model_info
+            
+            # Update with any saved models (preserves user additions/modifications)
+            merged_models.update(saved_models)
+            config["available_models"] = merged_models
+        
         merged_config.update(config)
         # Validate and fix any issues
         validated_config = validate_config(merged_config)

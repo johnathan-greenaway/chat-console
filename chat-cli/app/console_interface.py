@@ -1683,6 +1683,45 @@ class ConsoleUI:
         except (ValueError, KeyboardInterrupt):
             pass
     
+    def _show_help(self):
+        """Display help information about available commands"""
+        self.clear_screen()
+        print("=" * self.width)
+        print("HELP - Available Commands".center(self.width))
+        print("=" * self.width)
+        print()
+        
+        commands = [
+            ("Slash Commands:", ""),
+            ("/help", "Show this help message"),
+            ("/settings", "Open settings menu"),
+            ("/models", "Browse and select models"),
+            ("/history", "View conversation history"),
+            ("/new", "Start a new conversation"),
+            ("/quit or /exit", "Exit the application"),
+            ("", ""),
+            ("Keyboard Shortcuts:", ""),
+            ("Tab", "Access menu mode"),
+            ("Ctrl+B", "Toggle scroll mode"),
+            ("Shift+Enter", "Multi-line input"),
+            ("q", "Quick quit"),
+            ("n", "Quick new conversation"),
+            ("h", "Quick history"),
+            ("s", "Quick settings"),
+        ]
+        
+        for cmd, desc in commands:
+            if not cmd and not desc:
+                print()
+            elif not desc:
+                print(f"{self.theme['accent']}{cmd}{self.theme['reset']}")
+            else:
+                print(f"  {self.theme['primary']}{cmd:<20}{self.theme['reset']} {desc}")
+        
+        print()
+        print(f"{self.theme['muted']}Press Enter to continue...{self.theme['reset']}")
+        input()
+    
     async def show_settings(self):
         """Show enhanced settings menu with style selection and persistence"""
         while True:
@@ -1987,14 +2026,19 @@ class ConsoleUI:
         print("Current Provider Settings:")
         print(f"  OpenAI API Key: {'Set' if CONFIG.get('openai_api_key') else 'Not Set'}")
         print(f"  Anthropic API Key: {'Set' if CONFIG.get('anthropic_api_key') else 'Not Set'}")
+        print(f"  Custom API: {'Enabled' if CONFIG.get('custom_api_enabled', True) else 'Disabled'}")
+        print(f"  Custom API URL: {CONFIG.get('custom_api_base_url', 'https://api.example.com/v1')}")
+        print(f"  Custom API Key: {'Set' if CONFIG.get('custom_api_key') else 'Not Set'}")
         print(f"  Ollama Base URL: {CONFIG.get('ollama_base_url', 'http://localhost:11434')}")
         print()
         
         print("Options:")
         print("1. Set OpenAI API Key")
         print("2. Set Anthropic API Key")
-        print("3. Set Ollama Base URL")
-        print("4. Clear API Keys")
+        print("3. Configure Custom API")
+        print("4. Set Ollama Base URL")
+        print("5. Test Custom API Connection")
+        print("6. Clear API Keys")
         print("0. Back")
         
         choice = input("\n> ").strip()
@@ -2012,20 +2056,188 @@ class ConsoleUI:
                 print("Anthropic API Key updated!")
                 
         elif choice == "3":
+            await self._configure_custom_api()
+            return  # Return early to avoid the continue prompt
+                
+        elif choice == "4":
             url = input(f"Enter Ollama Base URL (current: {CONFIG.get('ollama_base_url', 'http://localhost:11434')}): ").strip()
             if url:
                 CONFIG["ollama_base_url"] = url
                 print("Ollama Base URL updated!")
                 
-        elif choice == "4":
+        elif choice == "5":
+            await self._test_custom_api_connection()
+            return  # Return early to avoid the continue prompt
+                
+        elif choice == "6":
             confirm = input("Clear all API keys? (y/N): ").strip().lower()
             if confirm == 'y':
                 CONFIG.pop("openai_api_key", None)
                 CONFIG.pop("anthropic_api_key", None)
+                CONFIG.pop("custom_api_key", None)
                 print("API keys cleared!")
         
-        if choice in ["1", "2", "3", "4"]:
+        if choice in ["1", "2", "4", "6"]:
             input("\nPress Enter to continue...")
+    
+    async def _configure_custom_api(self):
+        """Configure Custom API settings"""
+        while True:
+            self.clear_screen()
+            print("=" * self.width)
+            print("CUSTOM API CONFIGURATION".center(self.width))
+            print("=" * self.width)
+            
+            current_enabled = CONFIG.get("custom_api_enabled", True)
+            current_url = CONFIG.get("custom_api_base_url", "https://api.example.com/v1")
+            current_key = CONFIG.get("custom_api_key")
+            current_name = CONFIG.get("custom_api_display_name", "Custom API")
+            
+            print("Current Custom API Settings:")
+            print(f"  Status: {'Enabled' if current_enabled else 'Disabled'}")
+            print(f"  Display Name: {current_name}")
+            print(f"  Base URL: {current_url}")
+            print(f"  API Key: {'Set (' + current_key[:10] + '...)' if current_key else 'Not Set'}")
+            print()
+            
+            print("Options:")
+            print("1. Enable/Disable Custom API")
+            print("2. Set Display Name")
+            print("3. Set Base URL")
+            print("4. Set API Key")
+            print("5. Test Connection")
+            print("6. Reset to Defaults")
+            print("0. Back")
+            
+            choice = input("\n> ").strip()
+            
+            if choice == "1":
+                new_status = not current_enabled
+                CONFIG["custom_api_enabled"] = new_status
+                status_text = "enabled" if new_status else "disabled"
+                print(f"Custom API {status_text}!")
+                input("Press Enter to continue...")
+                
+            elif choice == "2":
+                name = input(f"Enter display name (current: {current_name}): ").strip()
+                if name:
+                    CONFIG["custom_api_display_name"] = name
+                    print("Display name updated!")
+                    input("Press Enter to continue...")
+                    
+            elif choice == "3":
+                print("Enter the base URL for your Custom API endpoint.")
+                print("Example: https://api.example.com/v1")
+                url = input(f"Base URL (current: {current_url}): ").strip()
+                if url:
+                    if not url.endswith('/'):
+                        url = url.rstrip('/') + ''  # Ensure proper URL format
+                    CONFIG["custom_api_base_url"] = url
+                    print("Base URL updated!")
+                    input("Press Enter to continue...")
+                    
+            elif choice == "4":
+                print("Enter your Custom API key.")
+                key = input(f"API Key (current: {current_key[:10]}...): ").strip()
+                if key:
+                    CONFIG["custom_api_key"] = key
+                    print("API key updated!")
+                    input("Press Enter to continue...")
+                    
+            elif choice == "5":
+                await self._test_custom_api_connection()
+                
+            elif choice == "6":
+                confirm = input("Reset to default settings? (y/N): ").strip().lower()
+                if confirm == 'y':
+                    CONFIG["custom_api_enabled"] = True
+                    CONFIG["custom_api_base_url"] = "https://api.example.com/v1"
+                    CONFIG["custom_api_key"] = ""
+                    CONFIG["custom_api_display_name"] = "Custom API"
+                    print("Settings reset to defaults!")
+                    input("Press Enter to continue...")
+                    
+            elif choice == "0" or choice == "":
+                break
+                
+            # Save settings after each change
+            save_config(CONFIG)
+    
+    async def _test_custom_api_connection(self):
+        """Test connection to the Custom API"""
+        self.clear_screen()
+        print("=" * self.width)
+        print("TESTING CUSTOM API CONNECTION".center(self.width))
+        print("=" * self.width)
+        
+        if not CONFIG.get("custom_api_enabled", True):
+            print("❌ Custom API is disabled. Enable it first.")
+            input("\nPress Enter to continue...")
+            return
+        
+        base_url = CONFIG.get("custom_api_base_url", "https://api.example.com/v1")
+        api_key = CONFIG.get("custom_api_key", "")
+        
+        if not base_url or not api_key:
+            print("❌ Custom API URL or key not configured.")
+            input("\nPress Enter to continue...")
+            return
+        
+        print(f"Testing connection to: {base_url}")
+        print("Please wait...")
+        
+        try:
+            # Update environment variables temporarily for the test
+            import os
+            old_url = os.environ.get("CUSTOM_API_BASE_URL")
+            old_key = os.environ.get("CUSTOM_API_KEY")
+            
+            os.environ["CUSTOM_API_BASE_URL"] = base_url
+            os.environ["CUSTOM_API_KEY"] = api_key
+            
+            # Update CUSTOM_PROVIDERS for the test
+            from .config import CUSTOM_PROVIDERS
+            old_provider = CUSTOM_PROVIDERS.get("openai-compatible", {}).copy()
+            CUSTOM_PROVIDERS["openai-compatible"] = {
+                "base_url": base_url,
+                "api_key": api_key,
+                "type": "openai_compatible",
+                "display_name": CONFIG.get("custom_api_display_name", "Custom API")
+            }
+            
+            # Test the connection
+            from .api.custom_openai import CustomOpenAIClient
+            client = await CustomOpenAIClient.create("openai-compatible")
+            models = await client.list_models()
+            
+            # Restore old values
+            if old_url is not None:
+                os.environ["CUSTOM_API_BASE_URL"] = old_url
+            else:
+                os.environ.pop("CUSTOM_API_BASE_URL", None)
+                
+            if old_key is not None:
+                os.environ["CUSTOM_API_KEY"] = old_key
+            else:
+                os.environ.pop("CUSTOM_API_KEY", None)
+                
+            CUSTOM_PROVIDERS["openai-compatible"] = old_provider
+            
+            print(f"✅ Connection successful!")
+            print(f"Found {len(models)} available models:")
+            for i, model in enumerate(models[:5]):
+                print(f"  {i+1}. {model['name']} ({model['id']})")
+            if len(models) > 5:
+                print(f"  ... and {len(models) - 5} more models")
+                
+        except Exception as e:
+            print(f"❌ Connection failed: {str(e)}")
+            print("\nPlease check:")
+            print("• Base URL is correct and accessible")
+            print("• API key is valid")
+            print("• Network connection is working")
+            
+        input("\nPress Enter to continue...")
     
     async def _configure_ui_settings(self):
         """Configure UI and display settings"""
@@ -3084,6 +3296,35 @@ class ConsoleUI:
                         self.draw_screen("", f"Ready to chat with {self.selected_model}", force_redraw=True)
                     continue
                 
+                # Handle slash commands
+                if user_input.lower().startswith('/'):
+                    if user_input.lower() == '/settings':
+                        await self.show_settings()
+                        continue
+                    elif user_input.lower() == '/models':
+                        await self.show_model_browser()
+                        if self._exit_to_chat:
+                            self._exit_to_chat = False
+                            self.draw_screen("", f"Ready to chat with {self.selected_model}", force_redraw=True)
+                        continue
+                    elif user_input.lower() == '/history':
+                        self.show_history()
+                        continue
+                    elif user_input.lower() == '/help':
+                        self._show_help()
+                        continue
+                    elif user_input.lower() in ['/quit', '/exit']:
+                        self.running = False
+                        break
+                    elif user_input.lower() == '/new':
+                        await self.create_new_conversation()
+                        continue
+                    else:
+                        print(f"Unknown command: {user_input}")
+                        print("Available commands: /settings, /models, /history, /help, /new, /quit")
+                        input("Press Enter to continue...")
+                        continue
+
                 # Handle legacy single-letter commands for backward compatibility
                 if user_input.lower() == 'q':
                     self.running = False
