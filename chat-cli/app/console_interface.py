@@ -107,11 +107,76 @@ class ConsoleUI:
             ]}
     
     def _update_terminal_size(self):
-        """Update terminal dimensions with bounds checking"""
+        """Update terminal dimensions with responsive bounds checking"""
         size = shutil.get_terminal_size()
-        # Set reasonable bounds - minimum 40 columns, 10 lines
-        self.width = min(max(size.columns, 40), 200)  # Cap at 200 for readability
-        self.height = max(size.lines, 10)
+        # More forgiving minimum width for better mobile/narrow terminal support
+        self.width = min(max(size.columns, 20), 200)  # Minimum 20, cap at 200 for readability
+        self.height = max(size.lines, 8)  # Minimum 8 lines for basic functionality
+        
+        # Define responsive breakpoints
+        self.is_minimal = self.width < 30  # Very narrow - minimal mode
+        self.is_narrow = 30 <= self.width < 50  # Narrow but functional
+        self.is_medium = 50 <= self.width < 80  # Medium sized
+        self.is_wide = self.width >= 80  # Full featured
+    
+    def responsive_text_wrap(self, text: str, max_width: int = None) -> List[str]:
+        """Wrap text responsively based on terminal width"""
+        if max_width is None:
+            max_width = max(10, self.width - 4)  # Leave room for borders
+        
+        # Handle empty or very short text
+        if not text or len(text) <= max_width:
+            return [text]
+        
+        # Simple word wrapping that respects word boundaries
+        words = text.split()
+        lines = []
+        current_line = ""
+        
+        for word in words:
+            # If single word is longer than max_width, break it
+            if len(word) > max_width:
+                if current_line:
+                    lines.append(current_line.strip())
+                    current_line = ""
+                # Break long word
+                while word:
+                    lines.append(word[:max_width])
+                    word = word[max_width:]
+                continue
+            
+            # Check if adding word would exceed width
+            test_line = current_line + (" " if current_line else "") + word
+            if len(test_line) <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line.strip())
+                current_line = word
+        
+        if current_line:
+            lines.append(current_line.strip())
+        
+        return lines if lines else [""]
+    
+    def responsive_center(self, text: str, width: int = None) -> str:
+        """Center text responsively, truncating if too long"""
+        if width is None:
+            width = self.width
+        
+        # Remove ANSI color codes for length calculation
+        clean_text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+        
+        if len(clean_text) > width - 2:
+            # Truncate and add ellipsis
+            available = max(3, width - 5)  # Leave room for "..."
+            clean_truncated = clean_text[:available] + "..."
+            # Reapply colors if they existed (simplified approach)
+            if len(text) > len(clean_text):
+                return f"{self.theme.get('primary', '')}{clean_truncated}{self.theme.get('reset', '')}"
+            return clean_truncated
+        
+        return text.center(width)
     
     def _setup_resize_handler(self):
         """Setup terminal resize signal handler"""
@@ -356,8 +421,24 @@ class ConsoleUI:
                 "     ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝         ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚══════╝╚══════╝"
             ]
             
-            # Scale ASCII art for terminal width
-            if self.width < 100:
+            # Responsive ASCII art scaling
+            if self.is_minimal:  # < 30 columns - ultra minimal
+                ascii_art = [
+                    "CHAT"
+                ]
+            elif self.is_narrow:  # 30-50 columns
+                ascii_art = [
+                    "░▒▓ CHAT ▓▒░"
+                ]
+            elif self.is_medium:  # 50-80 columns  
+                ascii_art = [
+                    "  ╔═══╗╦ ╦╔═══╗╔════╗",
+                    "  ║   ║║ ║║   ║║    ║",
+                    "  ║   ║███║███████║  ║", 
+                    "  ║   ║║ ║║   ║║    ║",
+                    "  ╚═══╝╩ ╩╩   ╩╚════╝"
+                ]
+            elif self.width < 100:  # 80-100 columns
                 ascii_art = [
                     "  ██████╗██╗  ██╗ █████╗ ████████╗",
                     "  ██╔════╝██║  ██║██╔══██╗╚══██╔══╝",
@@ -399,12 +480,27 @@ class ConsoleUI:
         # Top border with title and model info
         title = f" {self.theme['bold']}Chat Console v{__version__}{self.theme['reset']} "
         
-        # Truncate model name if needed for narrow terminals
-        max_model_len = max(10, self.width - 40)  # Reserve space for title and scroll
-        model_display = self.selected_model
-        if len(model_display) > max_model_len:
-            model_display = model_display[:max_model_len-3] + "..."
-        model_info = f" {self.theme['primary']}Model: {model_display}{self.theme['reset']} "
+        # Responsive model name display
+        if self.is_narrow:
+            # Very abbreviated for narrow terminals
+            model_display = self.selected_model.split('/')[-1]  # Remove provider prefix
+            if len(model_display) > 10:
+                model_display = model_display[:7] + "..."
+            model_info = f" {self.theme['primary']}{model_display}{self.theme['reset']} "
+        elif self.is_medium:
+            # Moderate truncation for medium terminals
+            max_model_len = max(15, self.width - 30)
+            model_display = self.selected_model
+            if len(model_display) > max_model_len:
+                model_display = model_display[:max_model_len-3] + "..."
+            model_info = f" {self.theme['primary']}M: {model_display}{self.theme['reset']} "
+        else:
+            # Full display for wide terminals
+            max_model_len = max(20, self.width - 40)
+            model_display = self.selected_model
+            if len(model_display) > max_model_len:
+                model_display = model_display[:max_model_len-3] + "..."
+            model_info = f" {self.theme['primary']}Model: {model_display}{self.theme['reset']} "
         
         # Add scroll indicator if in scroll mode
         if self.scroll_mode or self.scroll_offset > 0:
@@ -423,11 +519,25 @@ class ConsoleUI:
         header_line = chars['top_left'] + title + spacing + scroll_info + model_info + chars['top_right']
         lines.append(header_line)
         
-        # Conversation title with color and truncation for narrow terminals
+        # Responsive conversation title display
         conv_title = self.current_conversation.title if self.current_conversation else "New Conversation"
-        max_title_len = max(20, self.width - 4)
-        if len(conv_title) > max_title_len:
-            conv_title = conv_title[:max_title_len-3] + "..."
+        
+        if self.is_narrow:
+            # Very short titles for narrow terminals
+            max_title_len = max(8, self.width - 8)
+            if len(conv_title) > max_title_len:
+                conv_title = conv_title[:max_title_len-3] + "..."
+        elif self.is_medium:
+            # Moderate length for medium terminals
+            max_title_len = max(15, self.width - 6)
+            if len(conv_title) > max_title_len:
+                conv_title = conv_title[:max_title_len-3] + "..."
+        else:
+            # Full length for wide terminals
+            max_title_len = max(20, self.width - 4)
+            if len(conv_title) > max_title_len:
+                conv_title = conv_title[:max_title_len-3] + "..."
+        
         colored_title = f" {self.theme['secondary']}{conv_title}{self.theme['reset']} "
         title_line = chars['vertical'] + colored_title.ljust(self.width - 2 + len(self.theme['secondary']) + len(self.theme['reset'])) + chars['vertical']
         lines.append(title_line)
@@ -444,7 +554,7 @@ class ConsoleUI:
         # Show different controls based on mode and terminal width
         if self.scroll_mode or self.scroll_offset > 0:
             # Scroll mode controls - adapt to terminal width
-            if self.width >= 80:
+            if self.is_wide:
                 controls = (
                     f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] Line ↓/↑  "
                     f"[{self.theme['accent']}Ctrl+U/D{self.theme['muted']}] Page ↑/↓  "
@@ -453,22 +563,25 @@ class ConsoleUI:
                     f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
                 )
                 clean_controls = "[j/i] Line ↓/↑  [Ctrl+U/D] Page ↑/↓  [Ctrl+G] Top  [Ctrl+E] End  [Esc] Exit"
-            elif self.width >= 60:
+            elif self.is_medium:
                 controls = (
                     f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] ↓/↑  "
                     f"[{self.theme['accent']}U/D{self.theme['muted']}] Page  "
                     f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
                 )
                 clean_controls = "[j/i] ↓/↑  [U/D] Page  [Esc] Exit"
-            else:
+            elif self.is_narrow:
                 controls = (
-                    f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}] ↓/↑  "
-                    f"[{self.theme['accent']}Esc{self.theme['muted']}] Exit{self.theme['reset']}"
+                    f"{self.theme['muted']}[{self.theme['accent']}j/i{self.theme['muted']}]↓↑ "
+                    f"[{self.theme['accent']}Esc{self.theme['muted']}]Exit{self.theme['reset']}"
                 )
-                clean_controls = "[j/i] ↓/↑  [Esc] Exit"
+                clean_controls = "[j/i]↓↑ [Esc]Exit"
+            else:  # minimal
+                controls = f"{self.theme['muted']}j/i ↓↑{self.theme['reset']}"
+                clean_controls = "j/i ↓↑"
         else:
             # Normal controls - adapt to terminal width
-            if self.width >= 80:
+            if self.is_wide:
                 controls = (
                     f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
                     f"[{self.theme['accent']}Ctrl+B{self.theme['muted']}] Scroll  "
@@ -478,7 +591,7 @@ class ConsoleUI:
                     f"[{self.theme['accent']}s{self.theme['muted']}] Settings{self.theme['reset']}"
                 )
                 clean_controls = "[Tab] Menu  [Ctrl+B] Scroll  [q] Quit  [n] New  [h] History  [s] Settings"
-            elif self.width >= 60:
+            elif self.is_medium:
                 controls = (
                     f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
                     f"[{self.theme['accent']}q{self.theme['muted']}] Quit  "
@@ -486,12 +599,15 @@ class ConsoleUI:
                     f"[{self.theme['accent']}h{self.theme['muted']}] History{self.theme['reset']}"
                 )
                 clean_controls = "[Tab] Menu  [q] Quit  [n] New  [h] History"
-            else:
+            elif self.is_narrow:
                 controls = (
-                    f"{self.theme['muted']}[{self.theme['accent']}Tab{self.theme['muted']}] Menu  "
-                    f"[{self.theme['accent']}q{self.theme['muted']}] Quit{self.theme['reset']}"
+                    f"{self.theme['muted']}[{self.theme['accent']}q{self.theme['muted']}]Quit "
+                    f"[{self.theme['accent']}n{self.theme['muted']}]New{self.theme['reset']}"
                 )
-                clean_controls = "[Tab] Menu  [q] Quit"
+                clean_controls = "[q]Quit [n]New"
+            else:  # minimal
+                controls = f"{self.theme['muted']}q=quit{self.theme['reset']}"
+                clean_controls = "q=quit"
         
         # Calculate clean length for padding
         color_padding = len(controls) - len(clean_controls)
@@ -593,8 +709,13 @@ class ConsoleUI:
         timestamp = datetime.now().strftime("%H:%M")
         chars = self.get_border_chars()
         
-        # Calculate available width for content
-        content_width = self.width - 12  # Account for borders, timestamp, and role
+        # Calculate available width for content with responsive padding
+        if self.is_minimal:
+            content_width = max(10, self.width - 4)  # Minimal padding for very narrow
+        elif self.is_narrow:
+            content_width = max(15, self.width - 8)  # Less padding for narrow
+        else:
+            content_width = self.width - 12  # Full padding for normal width
         
         # Apply code highlighting if enabled
         highlighted_content = self._detect_and_highlight_code(message.content)
