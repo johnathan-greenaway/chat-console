@@ -19,8 +19,18 @@ Chat CLI is a Python-based terminal application that provides an interactive int
 - `make test` - Run tests with pytest
 
 ### Application Entry Points
-- `chat-console` - Main CLI command (Textual UI version)
-- `c-c` - Short alias for the main command
+
+#### Primary Interface (Console)
+- `c-c` - **Main command** - Pure console interface (no Textual dependencies)
+- `chat-console` - Main CLI command (pure console version)
+- `python -m app.main` - Direct execution of console interface
+
+#### Legacy Interface (Textual UI)
+- `c-c-c` - **Legacy Textual UI** - Rich terminal interface using Textual library  
+- `chat-console-classic` - Legacy Textual version entry point
+- `python -m app.classic_main` - Direct execution of legacy Textual UI
+
+#### Alternative Entry Points
 - `chat-console-pure` - Pure console version (no Textual dependencies)
 - `c-c-pure` - Short alias for pure console version
 - `python main.py` - Direct execution from chat-cli directory
@@ -37,18 +47,20 @@ Chat CLI is a Python-based terminal application that provides an interactive int
 ## Architecture
 
 ### Core Structure
-- **Entry Point**: `chat-cli/app/main.py` - Main application with SimpleChatApp class (Textual UI)
-- **Console Entry Point**: `chat-cli/console_chat.py` - Pure console version (no Textual dependencies)
+- **Primary Entry Point**: `chat-cli/app/main.py` - Main console interface application (no Textual dependencies)
+- **Legacy Entry Point**: `chat-cli/app/classic_main.py` - Legacy Textual UI version with SimpleChatApp class
+- **Console Interface**: `chat-cli/app/console_interface.py` - Core console UI implementation
 - **Configuration**: `chat-cli/app/config.py` - Handles API keys, model definitions, and user settings
 - **Database**: `chat-cli/app/database.py` - SQLite operations for conversation history
 - **Models**: `chat-cli/app/models.py` - Data models for conversations and messages
 - **Console Utils**: `chat-cli/app/console_utils.py` - Pure console utilities without Textual dependencies
 
 ### API Clients (`chat-cli/app/api/`)
-- `base.py` - Abstract base class for all model clients with provider detection
+- `base.py` - Abstract base class for all model clients with provider detection and factory methods
 - `openai.py` - OpenAI API client supporting GPT models and reasoning models (o1, o3, o4-mini)
 - `anthropic.py` - Anthropic API client for Claude models
 - `ollama.py` - Ollama client for local models with model management features
+- `custom_openai.py` - Custom OpenAI-compatible API client for drop-in replacements
 
 ### UI Components (`chat-cli/app/ui/`)
 - `chat_interface.py` - Main chat display and input components (Textual)
@@ -109,18 +121,18 @@ The application includes comprehensive error handling with:
 
 ## Dual UI Architecture
 
-### Textual UI Version (`app/main.py`)
-- Rich terminal user interface using Textual library
-- Advanced widgets, mouse support, animations
-- Best for desktop development environments
-- Entry points: `chat-console`, `c-c`
+### Primary Console Interface (`app/main.py` → `console_interface.py`)
+- **Current main interface** - Pure terminal interface with no external UI dependencies
+- ASCII art borders, real-time screen updates, slash command support
+- Works on any terminal, optimized for SSH/remote sessions and production use
+- Entry points: `c-c`, `chat-console`, `python -m app.main`
+- Features: `/settings` menu, dynamic model fetching, custom API configuration
 
-### Pure Console Version (`console_chat.py`)
-- No external UI dependencies - pure terminal interface
-- ASCII art borders and real-time screen updates
-- Works on any terminal, better for SSH/remote sessions
-- Entry points: `chat-console-pure`, `c-c-pure`, `python console_chat.py`
-- Console flag: `python -m app.main --console`
+### Legacy Textual UI Version (`app/classic_main.py`)
+- **Legacy interface** - Rich terminal user interface using Textual library
+- Advanced widgets, mouse support, animations
+- Best for desktop development environments but being phased out
+- Entry points: `c-c-c`, `chat-console-classic`, `python -m app.classic_main`
 
 ## Key Patterns
 
