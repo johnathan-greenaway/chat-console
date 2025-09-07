@@ -330,6 +330,8 @@ class ConsoleUI:
         if not hasattr(self, '_welcome_shown'):
             self._welcome_shown = True
             
+            from . import __version__
+            
             ascii_art = [
                 "    ███████╗██╗  ██╗ █████╗ ████████╗      ██████╗ ██████╗ ███╗   ██╗███████╗ ██████╗ ██╗     ███████╗",
                 "    ██╔════╝██║  ██║██╔══██╗╚══██╔══╝     ██╔════╝██╔═══██╗████╗  ██║██╔════╝██╔═══██╗██║     ██╔════╝",
@@ -355,6 +357,11 @@ class ConsoleUI:
                 colored_line = f"{self.theme['accent']}{line.center(self.width)}{self.theme['reset']}"
                 welcome_lines.append(colored_line)
                 
+            # Add version number subtly
+            welcome_lines.append("")
+            version_text = f"{self.theme['muted']}v{__version__}{self.theme['reset']}"
+            welcome_lines.append(version_text.center(self.width))
+            
             # Add welcome message
             welcome_lines.append("")
             welcome_text = f"{self.theme['primary']}✨ Welcome to Chat Console - Pure Terminal AI Experience ✨{self.theme['reset']}"
@@ -652,6 +659,9 @@ class ConsoleUI:
         chars = self.get_border_chars()
         lines = []
         
+        # Add top border for input area
+        lines.append(self.draw_border_line(self.width, 'middle'))
+        
         # Input prompt with enhanced mode indicator
         if self.input_mode == "text":
             if len(self.multi_line_input) > 0:
@@ -798,16 +808,20 @@ class ConsoleUI:
             self.clear_screen()
             self._screen_initialized = True
         
-        # Draw all regions
+        # Draw all regions with seamless borders
+        # Draw header (includes bottom separator)
         for line in self.screen_regions['header']:
             print(line)
         
+        # Draw messages
         for line in self.screen_regions['messages']:
             print(line)
         
+        # Draw input
         for line in self.screen_regions['input']:
             print(line)
         
+        # Draw footer (includes top and bottom borders)
         for line in self.screen_regions['footer']:
             print(line)
         

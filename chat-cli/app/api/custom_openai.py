@@ -230,7 +230,13 @@ class CustomOpenAIClient(BaseModelClient):
                 api_messages = []
                 for m in processed_messages:
                     if isinstance(m, dict) and "role" in m and "content" in m:
-                        api_messages.append({"role": m["role"], "content": m["content"]})
+                        # Sanitize content to remove control characters
+                        content = m["content"]
+                        if isinstance(content, str):
+                            # Remove control characters except for tab, newline, and carriage return
+                            import re
+                            content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
+                        api_messages.append({"role": m["role"], "content": content})
                     else:
                         debug_log(f"{self.provider_name}: skipping invalid message: {m}")
                 
@@ -244,7 +250,7 @@ class CustomOpenAIClient(BaseModelClient):
             debug_log(f"{self.provider_name}: requesting stream")
             
             # Use more robust error handling with retry for connection issues
-            max_retries = 2
+            max_retries = 3
             retry_count = 0
             
             while retry_count <= max_retries:
