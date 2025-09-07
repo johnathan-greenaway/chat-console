@@ -177,8 +177,23 @@ class ConsoleUI:
         return suppress()
         
     def clear_screen(self):
-        """Clear the terminal screen"""
-        os.system('cls' if os.name == 'nt' else 'clear')
+        """Clear the terminal screen using ANSI escape sequences for smoother operation"""
+        # Use ANSI escape sequences instead of os.system for smoother clearing
+        # This prevents the bouncing/scrolling effect on Windows terminals
+        if os.name == 'nt':
+            # Windows-specific: Use more compatible ANSI sequences
+            print('\033[2J\033[1;1H', end='', flush=True)
+        else:
+            print('\033[2J\033[H', end='', flush=True)
+    
+    def soft_clear(self):
+        """Soft clear that just moves cursor to top without full screen clear"""
+        # Move cursor to top-left without clearing (reduces flicker)
+        if os.name == 'nt':
+            # Windows-specific positioning
+            print('\033[1;1H', end='', flush=True)
+        else:
+            print('\033[H', end='', flush=True)
     
     def _rebuild_message_cache(self):
         """Rebuild the formatted message cache when messages change"""
@@ -802,10 +817,14 @@ class ConsoleUI:
         # Render all regions
         self._render_regions(current_input, input_prompt)
         
-        # For now, do a full redraw when needed
-        # Later we can optimize this to only update changed regions
+        # Smart clearing strategy to reduce bouncing on Windows
         if force_redraw or not hasattr(self, '_screen_initialized'):
-            self.clear_screen()
+            if show_welcome or not hasattr(self, '_screen_initialized'):
+                # Only do full clear for welcome screen or initial setup
+                self.clear_screen()
+            else:
+                # Use soft clear for regular updates to reduce flicker
+                self.soft_clear()
             self._screen_initialized = True
         
         # Draw all regions with seamless borders
@@ -1739,7 +1758,7 @@ class ConsoleUI:
     async def show_settings(self):
         """Show streamlined provider-first settings menu"""
         while True:
-            self.clear_screen()
+            self.soft_clear()
             print("=" * self.width)
             print("SETTINGS".center(self.width))
             print("=" * self.width)
@@ -2001,7 +2020,7 @@ class ConsoleUI:
     async def _select_provider_and_model(self):
         """Unified provider and model selection in one flow"""
         while True:
-            self.clear_screen()
+            self.soft_clear()
             print("=" * self.width)
             print("SELECT PROVIDER & MODEL".center(self.width))
             print("=" * self.width)
@@ -2053,7 +2072,7 @@ class ConsoleUI:
 
     async def _select_model_for_provider(self, provider_id):
         """Select a model from a specific provider"""
-        self.clear_screen()
+        self.soft_clear()
         print("=" * self.width)
         print(f"MODELS FOR {provider_id.upper()}".center(self.width))
         print("=" * self.width)
@@ -2818,7 +2837,7 @@ class ConsoleUI:
             if self._exit_to_chat:
                 self._exit_to_chat = False  # Reset flag
                 break
-            self.clear_screen()
+            self.soft_clear()
             print("=" * self.width)
             print("OLLAMA MODEL BROWSER".center(self.width))
             print("=" * self.width)
@@ -2855,7 +2874,7 @@ class ConsoleUI:
     
     async def _list_local_models(self):
         """List locally installed Ollama models"""
-        self.clear_screen()
+        self.soft_clear()
         print("=" * self.width)
         print("LOCAL OLLAMA MODELS".center(self.width))
         print("=" * self.width)
@@ -2903,7 +2922,7 @@ class ConsoleUI:
     
     async def _list_available_models(self):
         """List available models for download from Ollama registry"""
-        self.clear_screen()
+        self.soft_clear()
         print("=" * self.width)
         print("AVAILABLE OLLAMA MODELS".center(self.width))
         print("=" * self.width)
