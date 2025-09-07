@@ -47,6 +47,7 @@ from app.ui.chat_interface import MessageDisplay, InputWithFocus
 from app.ui.model_selector import ModelSelector, StyleSelector
 from app.ui.chat_list import ChatList
 from app.ui.model_browser import ModelBrowser
+from app.ui.settings import SettingsScreen
 from app.api.base import BaseModelClient
 from app.utils import generate_streaming_response, save_settings_to_config, generate_conversation_title, resolve_model_id # Import resolver
 # Import version here to avoid potential circular import issues at top level
@@ -734,6 +735,40 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
         if not content or not self.current_conversation: # Keep SimpleChatApp action_send_message
             return # Keep SimpleChatApp action_send_message
 
+        # Check for commands
+        if content.lower() == "/settings":
+            input_widget.value = ""  # Clear input
+            self.push_screen(SettingsScreen())
+            return
+        elif content.lower() == "/models":
+            input_widget.value = ""  # Clear input  
+            self.action_model_browser()
+            return
+        elif content.lower() == "/history":
+            input_widget.value = ""  # Clear input
+            await self.view_chat_history()
+            return
+        elif content.lower() == "/help":
+            input_widget.value = ""  # Clear input
+            # Display help message
+            help_text = """Available commands:
+• /settings - Open settings to configure Custom API
+• /models - Browse available models
+• /history - View chat history
+• /help - Show this help message
+
+Keyboard shortcuts:
+• s - Open settings
+• m - Browse models
+• h - View history
+• c - New conversation
+• q - Quit"""
+            help_message = Message(role="assistant", content=help_text)
+            self.messages.append(help_message)
+            message_display = self.query_one("#message-display", MessageDisplay)
+            await message_display.display_message(help_message)
+            return
+
         # Clear input # Keep SimpleChatApp action_send_message
         input_widget.value = "" # Keep SimpleChatApp action_send_message
 
@@ -1396,6 +1431,29 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
             debug_log(f"State change event from unrelated worker: {event.worker.name}")
 
 
+    async def on_settings_screen_settings_updated(self, event: SettingsScreen.SettingsUpdated) -> None:
+        """Handle settings update from SettingsScreen"""
+        # Reload provider availability
+        from app.config import check_provider_availability, AVAILABLE_PROVIDERS, CONFIG
+        
+        # Update available providers
+        new_providers = check_provider_availability()
+        AVAILABLE_PROVIDERS.clear()
+        AVAILABLE_PROVIDERS.update(new_providers)
+        
+        # Refresh the model selector if it exists
+        try:
+            model_selector = self.query_one(ModelSelector)
+            # Force refresh by re-getting model options
+            current_provider = model_selector.selected_provider
+            if current_provider == "openai-compatible":
+                # Refresh the model options for custom provider
+                model_options = await model_selector._get_model_options(current_provider)
+                model_select = model_selector.query_one("#model-select", Select)
+                model_select.set_options(model_options)
+        except Exception as e:
+            logger.debug(f"Could not refresh model selector: {e}")
+    
     def on_model_selector_model_selected(self, event: ModelSelector.ModelSelected) -> None:
         """Handle model selection"""
         self.selected_model = event.model_id
@@ -1649,21 +1707,12 @@ class SimpleChatApp(App): # Keep SimpleChatApp class definition
                 pass
 
     def action_settings(self) -> None: # Modify SimpleChatApp action_settings
-        """Action to open/close settings panel via key binding."""
+        """Action to open settings screen via key binding."""
         # Only trigger if message input is not focused
         input_widget = self.query_one("#message-input", Input)
         if not input_widget.has_focus:
-            settings_panel = self.query_one("#settings-panel")
-            settings_panel.toggle_class("visible") # Toggle visibility class
-            if settings_panel.has_class("visible"):
-                 # Try focusing the first element in the panel (e.g., ModelSelector)
-                 try:
-                     model_selector = settings_panel.query_one(ModelSelector)
-                     model_selector.focus()
-                 except Exception:
-                     pass # Ignore if focus fails
-            else:
-                 input_widget.focus() # Focus input when closing
+            # Push the SettingsScreen
+            self.push_screen(SettingsScreen())
 
     async def action_update_title(self) -> None:
         """Allow users to manually change the conversation title"""

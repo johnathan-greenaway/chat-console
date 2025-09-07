@@ -35,10 +35,11 @@ class BaseModelClient(ABC):
     @staticmethod
     def get_client_type_for_model(model_name: str) -> type:
         """Get the client class for a model without instantiating it"""
-        from ..config import CONFIG, AVAILABLE_PROVIDERS
+        from ..config import CONFIG, AVAILABLE_PROVIDERS, CUSTOM_PROVIDERS
         from .anthropic import AnthropicClient
         from .openai import OpenAIClient
         from .ollama import OllamaClient
+        from .custom_openai import CustomOpenAIClient
         import logging
         
         logger = logging.getLogger(__name__)
@@ -108,16 +109,21 @@ class BaseModelClient(ABC):
             return OpenAIClient
         elif provider == "anthropic":
             return AnthropicClient
+        elif provider in CUSTOM_PROVIDERS:
+            # Check if it's an OpenAI-compatible custom provider
+            if CUSTOM_PROVIDERS[provider].get("type") == "openai_compatible":
+                return CustomOpenAIClient
         else:
             return None
             
     @staticmethod
     async def get_client_for_model(model_name: str) -> 'BaseModelClient':
         """Factory method to get appropriate client for model"""
-        from ..config import CONFIG, AVAILABLE_PROVIDERS
+        from ..config import CONFIG, AVAILABLE_PROVIDERS, CUSTOM_PROVIDERS
         from .anthropic import AnthropicClient
         from .openai import OpenAIClient
         from .ollama import OllamaClient
+        from .custom_openai import CustomOpenAIClient
         import logging
         
         logger = logging.getLogger(__name__)
@@ -201,5 +207,31 @@ class BaseModelClient(ABC):
             return await OpenAIClient.create()
         elif provider == "anthropic":
             return await AnthropicClient.create()
+        elif provider in CUSTOM_PROVIDERS:
+            # Check if it's an OpenAI-compatible custom provider
+            if CUSTOM_PROVIDERS[provider].get("type") == "openai_compatible":
+                return await CustomOpenAIClient.create(provider)
+        else:
+            raise ValueError(f"Unknown provider: {provider}")
+    
+    @staticmethod
+    async def create(provider: str) -> 'BaseModelClient':
+        """Create a client for a specific provider ID"""
+        from ..config import AVAILABLE_PROVIDERS, CUSTOM_PROVIDERS
+        from .anthropic import AnthropicClient
+        from .openai import OpenAIClient
+        from .ollama import OllamaClient
+        from .custom_openai import CustomOpenAIClient
+        
+        if provider == "ollama":
+            return await OllamaClient.create()
+        elif provider == "openai":
+            return await OpenAIClient.create()
+        elif provider == "anthropic":
+            return await AnthropicClient.create()
+        elif provider in CUSTOM_PROVIDERS:
+            # Check if it's an OpenAI-compatible custom provider
+            if CUSTOM_PROVIDERS[provider].get("type") == "openai_compatible":
+                return await CustomOpenAIClient.create(provider)
         else:
             raise ValueError(f"Unknown provider: {provider}")
