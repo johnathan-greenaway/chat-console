@@ -929,8 +929,8 @@ class ConsoleUI:
                                 self.input_history.append(result)
                             self.history_index = len(self.input_history)
                             return result
-                        # If empty, switch to menu mode
-                        self.input_mode = "menu"
+                        # Don't automatically switch to menu mode on empty input
+                        # User must explicitly press Tab to switch to menu mode
                         continue
                 else:
                     # In menu mode, Enter does nothing
@@ -2097,7 +2097,12 @@ class ConsoleUI:
                     if 1 <= choice_num <= len(provider_models):
                         model_id, _ = provider_models[choice_num - 1]
                         self.selected_model = model_id
+                        # Save the selection to config immediately
+                        CONFIG["default_model"] = model_id
+                        save_config(CONFIG)
+                        update_last_used_model(model_id)
                         print(f"Selected model: {model_id}")
+                        print("Settings saved successfully!")
                         input("Press Enter to continue...")
                         return True
                     else:
@@ -3640,8 +3645,12 @@ class ConsoleUI:
             if 0 <= idx < len(local_models):
                 old_model = self.selected_model
                 self.selected_model = local_models[idx].get("id", "unknown")
+                # Save the selection to config immediately
+                CONFIG["default_model"] = self.selected_model
+                save_config(CONFIG)
                 update_last_used_model(self.selected_model)
                 print(f"\n✓ Switched from {old_model} to {self.selected_model}")
+                print("Settings saved successfully!")
     
     async def _switch_model(self):
         """Switch current model (combines local and available models)"""
